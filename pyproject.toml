@@ -1,0 +1,13 @@
+[project]
+name = "pyharness"
+version = "0.1.0"
+description = "A minimal harness where agents act by writing and running Python."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
