@@ -7,24 +7,13 @@ Requires ANTHROPIC_API_KEY and the `anthropic` extra:
 
 from pathlib import Path
 
-from pyharness import AnthropicProvider, Master, RulePolicy, Session
+from pyharness import Agent, AnthropicLLM, Workspace
 
 
 def main() -> None:
-    session = Session(Path("./.sessions/demo"))
-    ws = session.workspace
-    policy = RulePolicy(
-        allow=[
-            "bash:*",
-            f"file.read:{ws}/*",
-            f"file.write:{ws}/*",
-            f"file.edit:{ws}/*",
-            "search:*",
-            "llm:*",
-        ]
-    )
-    master = Master(AnthropicProvider(), session, policy)
-    answer = master.run(
+    workspace = Workspace(Path("./.sessions/demo"))
+    agent = Agent(AnthropicLLM(), workspace)
+    answer = agent.run(
         "Write a Python script fib.py that prints the first 10 Fibonacci "
         "numbers, run it, and confirm the output looks correct."
     )

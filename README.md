@@ -1,40 +1,35 @@
 # pyharness
 
-A minimal harness where an agent acts **exclusively by writing Python code**.
+`pyharness` is a tiny loop for AI agents that can do exactly two things:
 
-The core loop has one move: the model writes a `python` block, the harness runs
-it in a persistent namespace, and the captured output is fed back. When the
-model replies with no code block, that text is the final answer. Tools, nested
-LLM calls, sub-agents, and self-modification are all just Python the agent
-writes — not special harness machinery.
+- Reply with plain text.
+- Reply with one fenced `python` block, which the harness runs in a persistent
+  namespace.
 
-## Core components
+The captured output from Python code is fed back to the model. Mixed text and
+code is rejected, so the loop stays predictable.
 
-| Module | Role |
-|---|---|
-| `agent.py` (`Master`) | the loop: LLM → run code → feed back → repeat |
-| `llm.py` | pluggable `LLMProvider`; `AnthropicProvider` (fast/smart tiers) + `FakeProvider` |
-| `session.py` | a folder on disk; the agent's workspace |
-| `permissions.py` (`RulePolicy`) | fine-grained allow/deny over `action:resource` keys |
-| `tools.py` (`Toolbox`) | the capability API injected into agent code, every call gated |
-| `executor.py` | runs the code, captures stdout/stderr/tracebacks |
-
-The agent's namespace exposes: `bash`, `read`, `write`, `edit`, `search`,
-`http_get`, `http_post`, `llm`, `Tier`, `session`.
-
-## Permissions
-
-Every capability call routes through `RulePolicy.check(action, resource)` — the
-single chokepoint. Denials raise `PermissionDenied`, which surfaces back to the
-agent as feedback so it can adapt.
+## Usage
 
 ```python
-RulePolicy(allow=["bash:*", "file.write:/work/*"], deny=["bash:rm *"])
+from pyharness import Agent, AnthropicLLM, Workspace
+
+workspace = Workspace(".sessions/demo")
+agent = Agent(AnthropicLLM(), workspace)
+
+answer = agent.run("Write and run a Python script that prints hello.")
+print(answer)
 ```
 
-> **Note:** code runs in-process, so the policy mediates the *provided*
-> capabilities — it is not a hard OS sandbox. Process/container isolation is a
-> clean later upgrade since capabilities are already a single boundary.
+Agent-written Python receives these helpers:
+
+- `bash(cmd, timeout=60)`
+- `read(path)`
+- `write(path, content)`
+- `edit(path, old, new)`
+- `search(pattern, path=".")`
+
+Relative paths resolve inside the workspace.
 
 ## Run
 
