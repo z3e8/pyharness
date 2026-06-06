@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from importlib import import_module
+from typing import Protocol
+
+from ..budget import Budget
+
+# Tiers let the agent reason about cost/capability instead of model strings.
+TIERS = {
+    "smart": "claude-opus-4-8",
+    "mid": "claude-sonnet-4-6",
+    "cheap": "claude-haiku-4-5",
+}
+
+# USD per token (input, output). Verify against current pricing as needed.
+PRICING = {
+    "claude-opus-4-8": (5.0 / 1e6, 25.0 / 1e6),
+    "claude-sonnet-4-6": (3.0 / 1e6, 15.0 / 1e6),
+    "claude-haiku-4-5": (1.0 / 1e6, 5.0 / 1e6),
+}
+
+
+def _supports_adaptive_thinking(model: str) -> bool:
+    return "opus" in model or "sonnet" in model
+
+
+@dataclass(frozen=True)
+class Usage:
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+    @classmethod
+    def from_response(cls, usage: object, model: str) -> "Usage":
+        in_tok = getattr(usage, "input_tokens", 0) or 0
+        out_tok = getattr(usage, "output_tokens", 0) or 0
+        cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        in_rate, out_rate = PRICING.get(model, (0.0, 0.0))
+        cost = (
+            in_tok * in_rate
+            + cache_create * 1.25 * in_rate
+            + cache_read * 0.1 * in_rate
+            + out_tok * out_rate
+        )
+        return cls(model, in_tok, out_tok, cost)
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    input: dict
+
+
+@dataclass(frozen=True)
+class Completion:
+    text: str
+    tool_calls: list[ToolCall]
+    content: object  # raw provider content blocks, appended verbatim to history
+    stop_reason: str | None = None
+
+
+class LLM(Protocol):
+    def complete(self, *, system, messages, tier=..., tools=..., max_tokens=...) -> Completion: ...
+
+
+class AnthropicLLM:
+    """Anthropic-backed LLM. Every call records usage to the shared Budget, so
+    metering is centralized in one place regardless of who made the call (the
+    orchestrator, the llm() capability, or a sub-agent)."""
+
+    def __init__(self, budget: Budget | None = None, max_tokens: int = 8000):
+        anthropic = import_module("anthropic")
+        self._client = anthropic.Anthropic()
+        self._budget = budget
+        self._max_tokens = max_tokens
+
+    def _record(self, usage: object, model: str) -> None:
+        if self._budget is not None:
+            u = Usage.from_response(usage, model)
+            self._budget.record(u.model, u.cost_usd)
+
+    def complete(
+        self,
+        *,
+        system: str | None = None,
+        messages: list[dict],
+        tier: str = "smart",
+        tools: list[dict] | None = None,
+        max_tokens: int | None = None,
+    ) -> Completion:
+        model = TIERS.get(tier, tier)
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": max_tokens or self._max_tokens,
+            "messages": messages,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = tools
+        if _supports_adaptive_thinking(model):
+            kwargs["thinking"] = {"type": "adaptive"}
+
+        resp = self._client.messages.create(**kwargs)
+        self._record(resp.usage, model)
+
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        tool_calls = [
+            ToolCall(b.id, b.name, dict(b.input))
+            for b in resp.content
+            if b.type == "tool_use"
+        ]
+        return Completion(text, tool_calls, resp.content, resp.stop_reason)
+
+    def web_search(self, query: str, tier: str = "mid", max_rounds: int = 6) -> str:
+        """Search the web via Anthropic's server-side tool — no extra API key."""
+        model = TIERS.get(tier, tier)
+        messages: list[dict] = [{"role": "user", "content": query}]
+        tools = [{"type": "web_search_20260209", "name": "web_search"}]
+        for _ in range(max_rounds):
+            resp = self._client.messages.create(
+                model=model, max_tokens=4000, messages=messages, tools=tools
+            )
+            self._record(resp.usage, model)
+            if resp.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": resp.content})
+                continue
+            return "".join(b.text for b in resp.content if b.type == "text")
+        return "(web_search: max rounds reached)"

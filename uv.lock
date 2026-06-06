@@ -327,15 +327,12 @@ wheels = [
 name = "pyharness"
 version = "0.1.0"
 source = { editable = "." }
-
-[package.optional-dependencies]
-anthropic = [
+dependencies = [
     { name = "anthropic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40" }]
-provides-extras = ["anthropic"]
+requires-dist = [{ name = "anthropic", specifier = ">=0.40" }]
 
 [[package]]
 name = "sniffio"

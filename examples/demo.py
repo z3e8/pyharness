@@ -1,23 +1,24 @@
-"""Run the harness against a real task.
+"""Run pyharness against a real task.
 
-Requires ANTHROPIC_API_KEY and the `anthropic` extra:
-    uv pip install -e '.[anthropic]'
-    uv run python examples/demo.py
+    uv pip install -e .
+    ANTHROPIC_API_KEY=... uv run python examples/demo.py
 """
 
-from pathlib import Path
+from pyharness import Budget, Session
 
-from pyharness import Agent, AnthropicLLM, Workspace
+
+def _trace(kind: str, text: str) -> None:
+    print(f"--- {kind} ---\n{text}\n")
 
 
 def main() -> None:
-    workspace = Workspace(Path("./.sessions/demo"))
-    agent = Agent(AnthropicLLM(), workspace)
-    answer = agent.run(
+    session = Session(".sessions/demo", budget=Budget(limit_usd=2.0), on_event=_trace)
+    answer = session.run(
         "Write a Python script fib.py that prints the first 10 Fibonacci "
         "numbers, run it, and confirm the output looks correct."
     )
-    print("\n=== FINAL ANSWER ===\n" + answer)
+    print("\n=== ANSWER ===\n" + answer)
+    print(f"\nspent ${session.budget.spent_usd:.4f}")
 
 
 if __name__ == "__main__":

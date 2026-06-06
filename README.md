@@ -1,41 +1,43 @@
 # pyharness
 
-`pyharness` is a tiny loop for AI agents that can do exactly two things:
+An AI agent whose **action space is Python**. The orchestrator does exactly two
+things: reply with text, or emit one `run_python` call the harness executes in a
+persistent kernel. There are no fine-grained JSON tool calls — when the agent
+needs a capability, it writes Python (`web_search(q)`, `read(path)`,
+`map_agents(tasks)`).
 
-- Reply with plain text.
-- Reply with one fenced `python` block, which the harness runs in a persistent
-  namespace.
+See [`docs/design.md`](docs/design.md) for the full design and the V1-vs-later split.
 
-The captured output from Python code is fed back to the model. Mixed text and
-code is rejected, so the loop stays predictable.
+## How it works
+
+- **Session = a Jupyter kernel.** Each `run_python` is a cell; variables persist
+  across cells. Only what the agent `print()`s returns to its context, so large
+  data lives in variables, unseen.
+- **One broker, every side effect.** Files, shell, web, LLM calls, sub-agents,
+  and tools all route through a single dispatch that does policy → audit →
+  budget → execute. In-process today; swappable for an isolated child later.
+- **Delegation.** `llm()`, `agent()`, and `map_agents()` let the orchestrator
+  fan out bulk work to cheaper models without filling its own context.
 
 ## Usage
 
 ```python
-from pyharness import Agent, AnthropicLLM, Workspace
+from pyharness import Session, Budget
 
-workspace = Workspace(".sessions/demo")
-agent = Agent(AnthropicLLM(), workspace)
-
-answer = agent.run("Write and run a Python script that prints hello.")
-print(answer)
+session = Session(".sessions/demo", budget=Budget(limit_usd=2.0))
+print(session.run("Write fib.py, run it, and confirm the output."))
 ```
 
-Agent-written Python receives these helpers:
-
-- `bash(cmd, timeout=60)`
-- `read(path)`
-- `write(path, content)`
-- `edit(path, old, new)`
-- `search(pattern, path=".")`
-
-Relative paths resolve inside the workspace.
+Functions available to agent-written Python: `read` `write` `edit` `bash`
+`search` `web_search` `web_fetch` `llm` `agent` `map_agents` `search_tools`
+`use_tool`. Relative paths resolve inside the session workspace.
 
 ## Run
 
 ```bash
-uv venv && uv pip install -e '.[anthropic]'
-uv run python examples/demo.py    # needs ANTHROPIC_API_KEY
+uv venv && uv pip install -e .
+ANTHROPIC_API_KEY=... uv run python examples/demo.py   # one task
+ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 
-uv pip install pytest && uv run pytest -q
+uv pip install pytest && uv run pytest -q               # tests (no API key)
 ```
