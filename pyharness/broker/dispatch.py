@@ -52,6 +52,18 @@ class Broker:
         this broker."""
         return {name: self._proxy(cap, name) for (cap, name) in self._ops}
 
+    def op_names(self) -> list[str]:
+        """The flat operation names the agent calls (`read`, `bash`, ...). The
+        out-of-process child binds a proxy for each and addresses calls by name;
+        names are unique across capabilities, matching `namespace()`."""
+        return [op for (_cap, op) in self._ops]
+
+    def call_op(self, op: str, *args, **kwargs):
+        """Dispatch by operation name alone — the address the child sends over
+        IPC. Resolves to the owning capability, then runs the full `call` path."""
+        cap = next(c for (c, o) in self._ops if o == op)
+        return self.call(cap, op, *args, **kwargs)
+
     def _proxy(self, cap: str, op: str) -> Callable:
         def proxy(*args, **kwargs):
             return self.call(cap, op, *args, **kwargs)

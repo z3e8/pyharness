@@ -14,6 +14,7 @@ from ..broker.capabilities import (
     WebCapability,
 )
 from ..broker.dispatch import Approver, Broker
+from ..broker.remote import RemoteKernel
 from ..budget import Budget
 from ..llm.client import AnthropicLLM
 from ..security.policy import Policy
@@ -40,6 +41,7 @@ class Session:
         registry: Registry | None = None,
         approver: Approver | None = None,
         on_event: Callable[[str, str], None] | None = None,
+        out_of_process: bool = False,
     ):
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
@@ -61,9 +63,19 @@ class Session:
         ):
             self.broker.register(capability)
 
-        self.kernel = Kernel(self.broker.namespace())
+        # In-process: the broker's proxies run directly in the host namespace.
+        # Out-of-process: agent code runs in a restricted child and every call
+        # crosses IPC back to the same broker (see broker/remote).
+        self.kernel = (
+            RemoteKernel(self.broker) if out_of_process else Kernel(self.broker.namespace())
+        )
         self.agent = Agent(self.llm, self.kernel, self.budget, on_event=on_event)
         self.messages: list[dict] = []
 
     def run(self, task: str) -> str:
         return self.agent.run(task, self.messages)
+
+    def close(self) -> None:
+        """Tear down session resources (the child process, if out-of-process)."""
+        if hasattr(self.kernel, "close"):
+            self.kernel.close()

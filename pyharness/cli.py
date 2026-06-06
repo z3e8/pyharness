@@ -42,24 +42,33 @@ def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".sessions/cli")
-    session = Session(root, budget=Budget(limit_usd=5.0), approver=_approve, on_event=_trace)
+    session = Session(
+        root,
+        budget=Budget(limit_usd=5.0),
+        approver=_approve,
+        on_event=_trace,
+        out_of_process=True,
+    )
 
     print("pyharness — type a task, or Ctrl-D to exit.")
-    while True:
-        try:
-            task = input("\n> ").strip()
-        except EOFError:
-            print()
-            break
-        if not task:
-            continue
-        try:
-            answer = session.run(task)
-        except BudgetExceeded as exc:
-            print(f"\n[budget] {exc}")
-            continue
-        print(f"\n{answer}")
-        print(f"\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
+    try:
+        while True:
+            try:
+                task = input("\n> ").strip()
+            except EOFError:
+                print()
+                break
+            if not task:
+                continue
+            try:
+                answer = session.run(task)
+            except BudgetExceeded as exc:
+                print(f"\n[budget] {exc}")
+                continue
+            print(f"\n{answer}")
+            print(f"\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":
