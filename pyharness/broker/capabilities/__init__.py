@@ -1,4 +1,4 @@
-from .agents import AgentsCapability, Result
+from .agents import AgentsCapability, Result, SubAgentLimitExceeded
 from .files import FilesCapability
 from .llm import LLMCapability
 from .search import SearchCapability
@@ -13,6 +13,7 @@ __all__ = [
     "Result",
     "SearchCapability",
     "ShellCapability",
+    "SubAgentLimitExceeded",
     "ToolsCapability",
     "WebCapability",
 ]

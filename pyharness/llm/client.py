@@ -13,6 +13,14 @@ TIERS = {
     "cheap": "claude-haiku-4-5",
 }
 
+# Default output ceiling per tier. Smarter tiers get more room to reason and act;
+# the cheap tier is for bulk work where short answers are the norm.
+TIER_MAX_TOKENS = {
+    "smart": 32000,
+    "mid": 16000,
+    "cheap": 8000,
+}
+
 # USD per token (input, output). Verify against current pricing as needed.
 PRICING = {
     "claude-opus-4-8": (5.0 / 1e6, 25.0 / 1e6),
@@ -95,7 +103,7 @@ class AnthropicLLM:
         model = TIERS.get(tier, tier)
         kwargs: dict = {
             "model": model,
-            "max_tokens": max_tokens or self._max_tokens,
+            "max_tokens": max_tokens or TIER_MAX_TOKENS.get(tier, self._max_tokens),
             "messages": messages,
         }
         if system:
@@ -105,7 +113,11 @@ class AnthropicLLM:
         if _supports_adaptive_thinking(model):
             kwargs["thinking"] = {"type": "adaptive"}
 
-        resp = self._client.messages.create(**kwargs)
+        # Stream and reassemble: the SDK refuses non-streaming requests whose
+        # max_tokens could exceed its timeout, so streaming is what lets the
+        # large per-tier ceilings above work.
+        with self._client.messages.stream(**kwargs) as stream:
+            resp = stream.get_final_message()
         self._record(resp.usage, model)
 
         text = "".join(b.text for b in resp.content if b.type == "text")

@@ -67,7 +67,7 @@ class Agent:
         kernel: Kernel,
         budget: Budget,
         *,
-        tier: str = "smart",
+        tier: str = "mid",
         max_steps: int = 30,
         on_event: Callable[[str, str], None] | None = None,
     ):

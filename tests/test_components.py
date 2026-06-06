@@ -27,6 +27,16 @@ def test_workspace_confines_relative_paths(tmp_path):
     assert (ws.dir / "a.txt").read_text() == "bye"
 
 
+def test_workspace_rejects_escape(tmp_path):
+    ws = Workspace(tmp_path)
+    import pytest
+
+    with pytest.raises(ValueError):
+        ws.path("../escape.txt")
+    with pytest.raises(ValueError):
+        ws.path("/etc/passwd")
+
+
 def test_broker_routes_and_audits(tmp_path):
     broker = _broker(tmp_path)
     broker.register(FilesCapability(Workspace(tmp_path)))
@@ -75,6 +85,37 @@ def test_registry_discovers_builtin_calc():
     assert "calc" in reg.search()
     assert "evaluate" in reg.search("calc")
     assert reg.use("calc").evaluate("2 + 3 * 4") == 14
+
+
+def test_registry_discovers_multiple_tools():
+    reg = Registry()
+    listing = reg.search()
+    for name in ("calc", "clock", "text"):
+        assert name in listing
+    assert reg.use("text").counts("a b c\nd") == {"chars": 7, "words": 4, "lines": 2}
+
+
+def test_subagent_session_cap():
+    from pyharness.broker.capabilities import AgentsCapability, SubAgentLimitExceeded
+
+    class StubLLM:
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None):
+            from pyharness.llm.client import Completion
+
+            return Completion(text="ok", tool_calls=[], content=[])
+
+    import pytest
+
+    agents = AgentsCapability(StubLLM(), session_cap=2)
+    assert agents.agent("one") == "ok"
+    assert agents.agent("two") == "ok"
+    with pytest.raises(SubAgentLimitExceeded):
+        agents.agent("three")
+
+    # In fan-out the cap surfaces as failed Results, not an exception.
+    results = AgentsCapability(StubLLM(), session_cap=1).map_agents(["a", "b", "c"])
+    assert sum(r.ok for r in results) == 1
+    assert any("cap reached" in (r.error or "") for r in results)
 
 
 def test_vault_never_via_namespace(tmp_path):

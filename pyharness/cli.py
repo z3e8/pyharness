@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +9,19 @@ from .core.session import Session
 
 _COLORS = {"note": "\033[2m", "code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
+
+
+def _load_dotenv(path: Path = Path(".env")) -> None:
+    """Load KEY=VALUE lines from a .env file into the environment so the API key
+    is picked up without sourcing it first. Existing env vars win."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def _trace(kind: str, text: str) -> None:
@@ -24,6 +38,9 @@ def _approve(action: str, args: tuple, kwargs: dict) -> bool:
 
 
 def main() -> None:
+    _load_dotenv()
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".sessions/cli")
     session = Session(root, budget=Budget(limit_usd=5.0), approver=_approve, on_event=_trace)
 
