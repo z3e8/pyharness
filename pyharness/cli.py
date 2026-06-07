@@ -42,12 +42,14 @@ def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".sessions/cli")
+    mcp_config = Path(os.environ.get("PYHARNESS_MCP_CONFIG", ".mcp.json"))
     session = Session(
         root,
         budget=Budget(limit_usd=5.0),
         approver=_approve,
         on_event=_trace,
         out_of_process=True,
+        mcp_config=mcp_config if mcp_config.exists() else None,
     )
 
     print("pyharness — type a task, or Ctrl-D to exit.")

@@ -42,6 +42,7 @@ class Session:
         approver: Approver | None = None,
         on_event: Callable[[str, str], None] | None = None,
         out_of_process: bool = False,
+        mcp_config: str | Path | dict | None = None,
     ):
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
@@ -50,6 +51,10 @@ class Session:
         self.policy = policy or Policy()
         self.vault = vault or Vault()
         self.registry = registry or Registry()
+        if mcp_config is not None:
+            from ..tools.mcp import mount_config
+
+            mount_config(self.registry, mcp_config, vault=self.vault)
 
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
         for capability in (
@@ -76,6 +81,8 @@ class Session:
         return self.agent.run(task, self.messages)
 
     def close(self) -> None:
-        """Tear down session resources (the child process, if out-of-process)."""
+        """Tear down session resources (the child process, if out-of-process,
+        and any MCP server connections)."""
         if hasattr(self.kernel, "close"):
             self.kernel.close()
+        self.registry.close()
