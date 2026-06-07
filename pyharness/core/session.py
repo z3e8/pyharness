@@ -20,6 +20,7 @@ from ..llm.client import AnthropicLLM
 from ..security.policy import Policy
 from ..security.vault import Vault
 from ..tools.registry import Registry
+from ..trace import TraceLog
 from .agent import Agent
 from .kernel import Kernel
 from .workspace import Workspace
@@ -47,6 +48,7 @@ class Session:
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
+        self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
         self.policy = policy or Policy()
         self.vault = vault or Vault()
@@ -74,11 +76,26 @@ class Session:
         self.kernel = (
             RemoteKernel(self.broker) if out_of_process else Kernel(self.broker.namespace())
         )
-        self.agent = Agent(self.llm, self.kernel, self.budget, on_event=on_event)
+
+        def on_event_traced(kind: str, text: str, **extra) -> None:
+            self.trace.record(kind, text, **extra)
+            if on_event is not None:
+                on_event(kind, text)
+
+        self.agent = Agent(self.llm, self.kernel, self.budget, on_event=on_event_traced)
         self.messages: list[dict] = []
 
     def run(self, task: str) -> str:
-        return self.agent.run(task, self.messages)
+        self.trace.record("task", task)
+        answer = self.agent.run(task, self.messages)
+        self.trace.record("answer", answer)
+        self.trace.record(
+            "budget",
+            spent_usd=self.budget.spent_usd,
+            calls=self.budget.calls,
+            by_model=self.budget.by_model,
+        )
+        return answer
 
     def close(self) -> None:
         """Tear down session resources (the child process, if out-of-process,

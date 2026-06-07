@@ -41,7 +41,7 @@ def test_agent_runs_code_then_answers(tmp_path):
     broker = Broker(Policy(), AuditLog(tmp_path / "a.jsonl"), Budget())
     broker.register(FilesCapability(ws))
     kernel = Kernel(broker.namespace())
-    agent = Agent(llm, kernel, Budget(), on_event=lambda k, t: events.append((k, t)))
+    agent = Agent(llm, kernel, Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
 
     answer = agent.run("create hello.txt", [])
 

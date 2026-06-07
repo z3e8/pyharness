@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 from ..budget import Budget
+from ..llm.client import TIERS
 from .kernel import Kernel
 
 SYSTEM_PROMPT = """\
@@ -76,19 +78,37 @@ class Agent:
         self.budget = budget
         self.tier = tier
         self.max_steps = max_steps
-        self.on_event = on_event or (lambda kind, text: None)
+        self.on_event = on_event or (lambda kind, text, **kw: None)
 
     def run(self, task: str, messages: list[dict]) -> str:
         messages.append({"role": "user", "content": task})
 
         for _ in range(self.max_steps):
             self.budget.check()
+
+            t0 = time.time()
+            cost_before = self.budget.spent_usd
+            prompt_snapshot = _serialize_messages(messages)
+
             completion = self.llm.complete(
                 system=SYSTEM_PROMPT,
                 messages=messages,
                 tier=self.tier,
                 tools=[RUN_PYTHON_TOOL],
             )
+
+            self.on_event(
+                "llm_call",
+                completion.text or "",
+                model=TIERS.get(self.tier, self.tier),
+                tier=self.tier,
+                system=SYSTEM_PROMPT,
+                messages=prompt_snapshot,
+                tool_calls=[{"name": tc.name, "input": tc.input} for tc in completion.tool_calls],
+                cost_usd=round(self.budget.spent_usd - cost_before, 6),
+                latency_s=round(time.time() - t0, 3),
+            )
+
             messages.append({"role": "assistant", "content": completion.content})
 
             if not completion.tool_calls:
@@ -109,3 +129,33 @@ class Agent:
             messages.append({"role": "user", "content": results})
 
         return "(stopped: reached max_steps)"
+
+
+def _serialize_messages(msgs: list[dict]) -> list[dict]:
+    result = []
+    for m in msgs:
+        role = m["role"]
+        content = m["content"]
+        if isinstance(content, str):
+            result.append({"role": role, "text": content})
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    parts.append(block)
+                elif hasattr(block, "type"):
+                    t = block.type
+                    if t == "text":
+                        parts.append({"type": "text", "text": block.text})
+                    elif t == "tool_use":
+                        parts.append({"type": "tool_use", "name": block.name, "input": dict(block.input)})
+                    elif t == "thinking":
+                        parts.append({"type": "thinking", "thinking": getattr(block, "thinking", "")[:500]})
+                    else:
+                        parts.append({"type": t})
+                else:
+                    parts.append({"raw": str(block)})
+            result.append({"role": role, "content": parts})
+        else:
+            result.append({"role": role, "text": str(content)})
+    return result

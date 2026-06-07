@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .budget import Budget, BudgetExceeded
@@ -41,7 +42,8 @@ def main() -> None:
     _load_dotenv()
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".sessions/cli")
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(f".sessions/cli-{ts}")
     mcp_config = Path(os.environ.get("PYHARNESS_MCP_CONFIG", ".mcp.json"))
     session = Session(
         root,
