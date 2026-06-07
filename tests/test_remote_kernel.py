@@ -4,6 +4,7 @@ byte-for-byte what the in-process kernel runs — only the execution boundary mo
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +17,13 @@ from pyharness.broker.capabilities import (
     ToolsCapability,
 )
 from pyharness.broker.remote import RemoteKernel
+from pyharness.broker.remote.sandbox import macos_sandbox_supported
 from pyharness.llm.client import Completion
 from pyharness.tools.registry import Registry
+
+requires_sandbox = pytest.mark.skipif(
+    not macos_sandbox_supported(), reason="OS sandbox only built for macOS"
+)
 
 
 class StubLLM:
@@ -109,6 +115,54 @@ def test_map_agents_returns_results(kernel_factory, tmp_path):
         "print(sum(r.ok for r in rs), rs[0].value)"
     )
     assert out == "3 worked"
+
+
+@requires_sandbox
+@pytest.mark.parametrize("where", ["home", "temp"])
+def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where):
+    # The child reaches around the broker and writes straight to disk. The OS
+    # sandbox denies *every* write — both a sensitive user path (home) and an
+    # ephemeral one (temp). The temp case matters most: such a file would be
+    # invisible to the agent and the human and bypass the broker, so it is denied
+    # deliberately rather than waved through as "just scratch".
+    kernel = kernel_factory(_broker(tmp_path))
+    # tmp_path lives under the OS temp root (/var/folders); home is a real file.
+    escape = (Path.home() / ".pyharness_sandbox_escape_test") if where == "home" else (tmp_path / "escape.txt")
+    out = kernel.run(
+        f"try:\n"
+        f"    open({str(escape)!r}, 'w').write('x')\n"
+        f"    print('WROTE')\n"
+        f"except OSError as e:\n"
+        f"    print('denied', e.errno)\n"
+    )
+    assert out.startswith("denied")
+    assert not escape.exists()
+
+
+@requires_sandbox
+def test_sandbox_denies_outbound_network(kernel_factory, tmp_path):
+    kernel = kernel_factory(_broker(tmp_path))
+    out = kernel.run(
+        "import socket\n"
+        "try:\n"
+        "    socket.create_connection(('1.1.1.1', 80), timeout=3)\n"
+        "    print('CONNECTED')\n"
+        "except OSError:\n"
+        "    print('denied')\n"
+    )
+    assert out == "denied"
+
+
+@requires_sandbox
+def test_sandbox_still_allows_broker_writes_and_compute(kernel_factory, tmp_path):
+    # The sandbox blocks the child's own writes, not the broker's: `write()`
+    # executes parent-side (unsandboxed), and pure compute is untouched.
+    kernel = kernel_factory(_broker(tmp_path))
+    out = kernel.run(
+        "write('note.txt', 'data')\nprint(read('note.txt'), sum(range(5)))"
+    )
+    assert out == "data 10"
+    assert (Workspace(tmp_path).dir / "note.txt").read_text() == "data"
 
 
 def test_child_restarts_after_crash(kernel_factory, tmp_path):

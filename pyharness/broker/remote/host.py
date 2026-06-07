@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import shutil
+import sys
+import tempfile
+from pathlib import Path
 from types import ModuleType
 
 from ...tools.registry import _public_functions
 from .child import child_main
 from .protocol import RemoteToolSpec
+from .sandbox import make_child_executable
 
 
 class RemoteKernel:
@@ -22,13 +27,26 @@ class RemoteKernel:
     child dies mid-session its variables are lost (no durable resume in V1). The
     next `run` starts a fresh child."""
 
-    def __init__(self, broker):
+    def __init__(self, broker, *, sandbox: bool = True):
         self.broker = broker
+        self.sandbox = sandbox
         self._ctx = mp.get_context("spawn")
         self._proc = None
         self._conn = None
+        self._sbdir = None
 
     def _start(self) -> None:
+        # Launch the child under the OS sandbox when enabled and supported.
+        # set_executable mutates the spawn context's launcher, so we set it just
+        # before each start (sequential) — to the sandbox wrapper, or back to the
+        # real interpreter if sandboxing is off/unsupported.
+        exe = None
+        if self.sandbox:
+            if self._sbdir is None:
+                self._sbdir = tempfile.mkdtemp(prefix="pyharness-sb-")
+            exe = make_child_executable(Path(self._sbdir))
+        self._ctx.set_executable(exe or sys.executable)
+
         parent_conn, child_conn = self._ctx.Pipe()
         proc = self._ctx.Process(
             target=child_main,
@@ -78,6 +96,9 @@ class RemoteKernel:
         if self._proc.is_alive():
             self._proc.terminate()
         self._proc, self._conn = None, None
+        if self._sbdir is not None:
+            shutil.rmtree(self._sbdir, ignore_errors=True)
+            self._sbdir = None
 
 
 def _seal_for_wire(value):

@@ -6,6 +6,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from ...util import truncate
 from .protocol import RemoteToolSpec
+from .sandbox import apply_resource_limits
 
 
 def child_main(conn, op_names: list[str]) -> None:
@@ -16,6 +17,7 @@ def child_main(conn, op_names: list[str]) -> None:
     code. Every side effect is a proxy call that crosses the pipe to the parent;
     pure computation (loops, data wrangling, the agent's own variables) stays
     here, unseen by the orchestrator."""
+    apply_resource_limits()
     namespace = {op: _make_proxy(conn, op) for op in op_names}
     while True:
         msg = conn.recv()
