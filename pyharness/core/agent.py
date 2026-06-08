@@ -90,12 +90,31 @@ class Agent:
             cost_before = self.budget.spent_usd
             prompt_snapshot = _serialize_messages(messages)
 
-            completion = self.llm.complete(
-                system=SYSTEM_PROMPT,
-                messages=messages,
-                tier=self.tier,
-                tools=[RUN_PYTHON_TOOL],
-            )
+            # Streaming token accumulator: emits live tokens for the CLI and
+            # periodic llm_partial events for the observe UI.
+            _buf: list[str] = []
+            _chars_at_last_partial = [0]
+            _PARTIAL_EVERY = 100  # chars between llm_partial trace entries
+
+            def _on_token(chunk: str) -> None:
+                _buf.append(chunk)
+                self.on_event("llm_token", chunk)
+                total = sum(len(s) for s in _buf)
+                if total - _chars_at_last_partial[0] >= _PARTIAL_EVERY:
+                    _chars_at_last_partial[0] = total
+                    self.on_event("llm_partial", "".join(_buf))
+
+            try:
+                completion = self.llm.complete(
+                    system=SYSTEM_PROMPT,
+                    messages=messages,
+                    tier=self.tier,
+                    tools=[RUN_PYTHON_TOOL],
+                    on_token=_on_token,
+                )
+            except Exception as exc:
+                self.on_event("error", f"LLM call failed: {exc}")
+                raise
 
             self.on_event(
                 "llm_call",

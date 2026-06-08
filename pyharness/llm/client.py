@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ..budget import Budget
 
@@ -72,7 +72,7 @@ class Completion:
 
 
 class LLM(Protocol):
-    def complete(self, *, system, messages, tier=..., tools=..., max_tokens=...) -> Completion: ...
+    def complete(self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...) -> Completion: ...
 
 
 class AnthropicLLM:
@@ -99,6 +99,7 @@ class AnthropicLLM:
         tier: str = "smart",
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
+        on_token: "Callable[[str], None] | None" = None,
     ) -> Completion:
         model = TIERS.get(tier, tier)
         kwargs: dict = {
@@ -117,6 +118,9 @@ class AnthropicLLM:
         # max_tokens could exceed its timeout, so streaming is what lets the
         # large per-tier ceilings above work.
         with self._client.messages.stream(**kwargs) as stream:
+            if on_token is not None:
+                for chunk in stream.text_stream:
+                    on_token(chunk)
             resp = stream.get_final_message()
         self._record(resp.usage, model)
 
@@ -129,17 +133,22 @@ class AnthropicLLM:
         return Completion(text, tool_calls, resp.content, resp.stop_reason)
 
     def web_search(self, query: str, tier: str = "mid", max_rounds: int = 6) -> str:
-        """Search the web via Anthropic's server-side tool — no extra API key."""
+        """Search the web via Anthropic's server-side tool — no extra API key.
+
+        Uses streaming so the HTTP connection stays active while the server
+        executes the search (non-streaming hangs when the server goes silent
+        during tool execution)."""
         model = TIERS.get(tier, tier)
         messages: list[dict] = [{"role": "user", "content": query}]
         tools = [{"type": "web_search_20260209", "name": "web_search"}]
         for _ in range(max_rounds):
-            resp = self._client.messages.create(
+            with self._client.messages.stream(
                 model=model, max_tokens=4000, messages=messages, tools=tools
-            )
+            ) as stream:
+                resp = stream.get_final_message()
             self._record(resp.usage, model)
             if resp.stop_reason == "pause_turn":
-                messages.append({"role": "assistant", "content": resp.content})
+                messages.append({"role": "assistant", "content": list(resp.content)})
                 continue
             return "".join(b.text for b in resp.content if b.type == "text")
         return "(web_search: max rounds reached)"

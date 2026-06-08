@@ -26,9 +26,17 @@ def _load_dotenv(path: Path = Path(".env")) -> None:
 
 
 def _trace(kind: str, text: str) -> None:
+    if kind == "llm_token":
+        # Stream LLM tokens inline as they arrive — no box frame, no newline
+        print(text, end="", flush=True)
+        return
+    if kind in ("llm_partial", "llm_call"):
+        # llm_partial is for the observe UI; llm_call fires after streaming is done.
+        # Both are already visible via streamed tokens above, so suppress here.
+        return
     color = _COLORS.get(kind, "")
     label = {"code": "python", "output": "output", "note": "note"}.get(kind, kind)
-    print(f"{color}┌─ {label} ─{_RESET}")
+    print(f"\n{color}┌─ {label} ─{_RESET}")
     print(f"{color}{text}{_RESET}")
 
 

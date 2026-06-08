@@ -78,7 +78,9 @@ class Session:
         )
 
         def on_event_traced(kind: str, text: str, **extra) -> None:
-            self.trace.record(kind, text, **extra)
+            # llm_token fires once per streaming chunk — too frequent for trace
+            if kind != "llm_token":
+                self.trace.record(kind, text, **extra)
             if on_event is not None:
                 on_event(kind, text)
 
@@ -87,14 +89,19 @@ class Session:
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)
-        answer = self.agent.run(task, self.messages)
+        try:
+            answer = self.agent.run(task, self.messages)
+        except Exception as exc:
+            self.trace.record("error", f"{type(exc).__name__}: {exc}")
+            raise
+        finally:
+            self.trace.record(
+                "budget",
+                spent_usd=self.budget.spent_usd,
+                calls=self.budget.calls,
+                by_model=self.budget.by_model,
+            )
         self.trace.record("answer", answer)
-        self.trace.record(
-            "budget",
-            spent_usd=self.budget.spent_usd,
-            calls=self.budget.calls,
-            by_model=self.budget.by_model,
-        )
         return answer
 
     def close(self) -> None:

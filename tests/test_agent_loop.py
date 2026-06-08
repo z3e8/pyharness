@@ -11,7 +11,7 @@ class ScriptedLLM:
         self.completions = list(completions)
         self.calls = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
         self.calls.append(list(messages))
         return self.completions.pop(0)
 

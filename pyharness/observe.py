@@ -70,6 +70,23 @@ def build_timeline(session_dir: Path) -> dict:
         events.append({"source": "audit", "kind": "call", **row})
     events.sort(key=lambda e: e.get("ts", 0))
 
+    # Collapse llm_partial events: keep only the latest one if it's still live
+    # (i.e., no llm_call has arrived after it). Once the full llm_call lands,
+    # all preceding llm_partial entries are noise.
+    last_llm_call_ts = max(
+        (e.get("ts", 0) for e in events if e.get("kind") == "llm_call"), default=0
+    )
+    last_partial = max(
+        (e for e in events if e.get("kind") == "llm_partial"),
+        key=lambda e: e.get("ts", 0),
+        default=None,
+    )
+    events = [
+        e for e in events
+        if e.get("kind") != "llm_partial"
+        or (e is last_partial and e.get("ts", 0) > last_llm_call_ts)
+    ]
+
     llm_calls = [e for e in events if e.get("kind") == "llm_call"]
     audit_calls = [e for e in events if e.get("source") == "audit"]
     budget_events = [e for e in events if e.get("kind") == "budget"]
@@ -206,12 +223,20 @@ _PAGE = """\
   .code   { border-left-color: #d29922; } .code .tag { color: #e3b341; } .code pre { color: #e3b341; }
   .output { border-left-color: #30363d; } .output pre { color: #9aa4af; }
   .output.is-error { border-left-color: #f85149; } .output.is-error .tag { color: #f85149; } .output.is-error pre { color: #ffa198; }
+  .error { border-left-color: #f85149; background: #1a0a0a; } .error .tag { color: #f85149; } .error pre { color: #ffa198; }
   .budget { border-left-color: #3fb950; color: #8b949e; }
 
   /* Audit call events */
   .call   { border-left-color: #8957e5; } .call .tag { color: #a371f7; }
   .call.deny { border-left-color: #f85149; } .call.deny .tag { color: #f85149; }
   .call .args { color: #8b949e; font-size: 11px; margin-top: 3px; }
+
+  /* Streaming in-progress */
+  .llm-streaming { border-left-color: #8957e5; padding: 8px 0 8px 12px; opacity: 0.8; }
+  .llm-streaming .tag { color: #a371f7; }
+  .llm-streaming .stream-text { color: #d7dde5; white-space: pre-wrap; word-break: break-word; font-size: 12px; margin-top: 6px; }
+  .llm-streaming .pulse { display: inline-block; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
   /* LLM call events */
   .llm-call { border-left-color: #8957e5; padding: 8px 0 8px 12px; }
@@ -335,6 +360,13 @@ function renderEvent(e) {
     return `<div class="ev call ${deny ? 'deny' : ''}">
       ${tsSpan}<span class="tag">${esc(e.action || 'call')}${dec}</span>
       <div class="args">${detail}</div>
+    </div>`;
+  }
+
+  if (e.kind === "llm_partial") {
+    return `<div class="ev llm-streaming">
+      ${tsSpan}<span class="tag">streaming <span class="pulse">▌</span></span>
+      ${e.text ? `<div class="stream-text">${esc(e.text)}</div>` : ""}
     </div>`;
   }
 
