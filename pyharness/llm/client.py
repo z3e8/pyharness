@@ -96,7 +96,7 @@ class AnthropicLLM:
         *,
         system: str | None = None,
         messages: list[dict],
-        tier: str = "smart",
+        tier: str = "cheap",
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
         on_token: "Callable[[str], None] | None" = None,
@@ -132,7 +132,7 @@ class AnthropicLLM:
         ]
         return Completion(text, tool_calls, resp.content, resp.stop_reason)
 
-    def web_search(self, query: str, tier: str = "mid", max_rounds: int = 6) -> str:
+    def web_search(self, query: str, tier: str = "cheap", max_rounds: int = 6) -> str:
         """Search the web via Anthropic's server-side tool — no extra API key.
 
         Uses streaming so the HTTP connection stays active while the server

@@ -4,7 +4,7 @@ from __future__ import annotations
 class LLMCapability:
     name = "llm"
 
-    def __init__(self, llm, default_tier: str = "smart"):
+    def __init__(self, llm, default_tier: str = "cheap"):
         self.llm = llm
         self.default_tier = default_tier
 
