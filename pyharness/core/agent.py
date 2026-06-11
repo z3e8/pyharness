@@ -21,13 +21,19 @@ data in variables and pass it between calls; never print large data back to
 yourself.
 
 Functions available in the kernel (paths are relative to the session workspace):
+  These are already injected in the kernel namespace; call them directly.
+  Do not import them from `pyharness`.
   Files & shell:
     read(path) / write(path, content) / edit(path, old, new)
     bash(cmd, timeout=60)
     search(pattern, path=".")
   Web:
     web_search(query) -> str
-    web_fetch(url) -> str
+    web_fetch(url, auth=None, auth_style="bearer", auth_name=None, user=None) -> str
+        # auth names a secret (see secrets()); it is injected parent-side, never shown to you.
+        # auth_style: "bearer" | "header" (auth_name=header) | "query" (auth_name=param) | "basic" (user=...)
+  Credentials:
+    secrets() -> list[str]   # names of secrets you may reference (never the values)
   Delegation — do bulk work without filling your own context:
     llm(prompt, tier="smart"|"cheap", system=None) -> str
     agent(task, tier=..., context=None) -> str
@@ -69,7 +75,7 @@ class Agent:
         kernel: Kernel,
         budget: Budget,
         *,
-        tier: str = "mid",
+        tier: str = "cheap",
         max_steps: int = 30,
         on_event: Callable[[str, str], None] | None = None,
     ):

@@ -9,6 +9,7 @@ from ..broker.capabilities import (
     FilesCapability,
     LLMCapability,
     SearchCapability,
+    SecretsCapability,
     ShellCapability,
     ToolsCapability,
     WebCapability,
@@ -51,7 +52,7 @@ class Session:
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
         self.policy = policy or Policy()
-        self.vault = vault or Vault()
+        self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:
             from ..tools.mcp import mount_config
@@ -67,6 +68,7 @@ class Session:
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
+            SecretsCapability(self.vault),
         ):
             self.broker.register(capability)
 
