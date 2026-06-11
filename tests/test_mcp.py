@@ -54,6 +54,12 @@ def test_registry_discovery_and_use():
         registry.use("demo")._mcp_client.close()
 
 
+def test_registry_search_wildcard_lists_tools():
+    registry = Registry()
+    listing = registry.search("*")
+    assert "# calc" in listing
+
+
 def test_remote_seal_yields_tool_spec():
     """Out-of-process, the wrapped module crosses the wire as a RemoteToolSpec
     (rebuilt child-side as a proxy that routes back through tools.invoke)."""

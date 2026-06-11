@@ -13,3 +13,4 @@ dist/
 agents/
 docs/
 personal-old/
+.tmp-session/

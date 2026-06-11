@@ -1,3 +1,5 @@
+import pytest
+
 from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
@@ -124,3 +126,72 @@ def test_vault_never_via_namespace(tmp_path):
     broker.register(FilesCapability(Workspace(tmp_path)))
     assert "get" not in broker.namespace()
     assert Vault({"token": "secret"}).get("token") == "secret"
+
+
+def test_encrypted_file_roundtrip_and_wrong_passphrase(tmp_path):
+    from pyharness.security.vault import EncryptedFile
+
+    path = tmp_path / "secrets.enc"
+    EncryptedFile(path, "correct horse").save({"github": "ghp_123", "openai": "sk-xyz"})
+    assert EncryptedFile(path, "correct horse").load() == {"github": "ghp_123", "openai": "sk-xyz"}
+    assert EncryptedFile(path, "correct horse").names() == ["github", "openai"]
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+    with pytest.raises(Exception):  # authenticated decryption fails on wrong passphrase
+        EncryptedFile(path, "wrong").load()
+
+
+def test_vault_resolution_order_and_names(tmp_path, monkeypatch):
+    from pyharness.security.vault import EncryptedFile
+
+    path = tmp_path / "secrets.enc"
+    EncryptedFile(path, "pw").save({"only_in_file": "F", "shared": "from_file"})
+    monkeypatch.setenv("PYHARNESS_SECRET_ONLY_IN_ENV", "E")
+    vault = Vault({"shared": "from_dict"}, file=EncryptedFile(path, "pw"))
+
+    assert vault.get("shared") == "from_dict"  # dict wins
+    assert vault.get("only_in_env") == "E"  # env next
+    assert vault.get("only_in_file") == "F"  # file last
+    assert vault.names() == ["only_in_env", "only_in_file", "shared"]
+
+
+def test_secrets_capability_exposes_names_not_values(tmp_path):
+    from pyharness.broker.capabilities import SecretsCapability
+
+    broker = _broker(tmp_path)
+    broker.register(SecretsCapability(Vault({"github": "ghp_secret"})))
+    ns = broker.namespace()
+    assert ns["secrets"]() == ["github"]
+    assert "get" not in ns  # the value-returning method is never exposed
+
+
+def test_web_fetch_injects_auth_parent_side(tmp_path, monkeypatch):
+    import httpx
+
+    from pyharness.broker.capabilities import WebCapability
+
+    captured = {}
+
+    class FakeResp:
+        text = "ok"
+
+    def fake_get(url, **kwargs):
+        captured.update(url=url, headers=kwargs.get("headers"), params=kwargs.get("params"))
+        return FakeResp()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    web = WebCapability(llm=None, vault=Vault({"k": "S3CRET"}))
+
+    web.web_fetch("http://x", auth="k")
+    assert captured["headers"]["Authorization"] == "Bearer S3CRET"
+
+    web.web_fetch("http://x", auth="k", auth_style="header", auth_name="X-API-Key")
+    assert captured["headers"]["X-API-Key"] == "S3CRET"
+
+    web.web_fetch("http://x", auth="k", auth_style="query", auth_name="api_key")
+    assert captured["params"] == {"api_key": "S3CRET"}
+
+    web.web_fetch("http://x", auth="k", auth_style="basic", user="alice")
+    import base64
+
+    assert captured["headers"]["Authorization"] == "Basic " + base64.b64encode(b"alice:S3CRET").decode()

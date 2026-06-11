@@ -106,7 +106,10 @@ class Registry:
         signature + first docstring line of each public function. Matching a
         lazy tool resolves it (connecting an MCP server); one that can't connect
         is shown as unavailable rather than breaking the search."""
-        q = query.lower()
+        q = query.strip().lower()
+        # Treat "*" as "show everything" for CLI ergonomics.
+        if q == "*":
+            q = ""
         lines: list[str] = []
         for info in self._tools.values():
             if q and q not in info.name.lower() and q not in info.summary.lower():
