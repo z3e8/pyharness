@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import os
 import sys
 from datetime import datetime
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from .budget import Budget, BudgetExceeded
 from .core.session import Session
+from .security.vault import _DEFAULT_FILE
 
 _COLORS = {"note": "\033[2m", "code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
@@ -40,6 +42,17 @@ def _trace(kind: str, text: str) -> None:
     print(f"{color}{text}{_RESET}")
 
 
+def _prompt_vault_passphrase() -> None:
+    """If an encrypted vault file exists but no passphrase is set, prompt once and
+    put it in the env so Session's Vault.from_env() picks it up. No file → no-op,
+    so the dict/env backends still work without a passphrase."""
+    if os.environ.get("PYHARNESS_VAULT_PASSPHRASE"):
+        return
+    path = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
+    if path.exists():
+        os.environ["PYHARNESS_VAULT_PASSPHRASE"] = getpass.getpass("vault passphrase: ")
+
+
 def _approve(action: str, args: tuple, kwargs: dict) -> bool:
     print(f"\n⚠ approval required: {action}")
     print(f"  args: {args}  kwargs: {kwargs}")
@@ -50,6 +63,7 @@ def main() -> None:
     _load_dotenv()
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
+    _prompt_vault_passphrase()
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(f".sessions/cli-{ts}")
     mcp_config = Path(os.environ.get("PYHARNESS_MCP_CONFIG", ".mcp.json"))

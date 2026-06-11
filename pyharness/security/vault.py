@@ -1,6 +1,65 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
+from pathlib import Path
+
+# scrypt KDF parameters (interactive-login class; ~tens of ms to derive).
+_SCRYPT_N = 16384
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_DEFAULT_FILE = Path.home() / ".pyharness" / "secrets.enc"
+
+
+class EncryptedFile:
+    """A passphrase-encrypted JSON map of secret name -> cleartext value.
+
+    The key is derived from the passphrase with scrypt (stdlib); the plaintext
+    map is sealed with Fernet (AES-128-CBC + HMAC, from `cryptography`). The file
+    is a JSON envelope so it stays portable and the KDF salt/params travel with
+    it — only the passphrase is needed to open it elsewhere. A wrong passphrase
+    fails to decrypt rather than returning garbage (Fernet is authenticated)."""
+
+    def __init__(self, path: str | Path, passphrase: str):
+        self.path = Path(path)
+        self._passphrase = passphrase
+
+    def _fernet(self, salt: bytes):
+        from cryptography.fernet import Fernet
+
+        key = hashlib.scrypt(
+            self._passphrase.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
+        )
+        return Fernet(base64.urlsafe_b64encode(key))
+
+    def load(self) -> dict[str, str]:
+        if not self.path.exists():
+            return {}
+        envelope = json.loads(self.path.read_text())
+        salt = base64.b64decode(envelope["salt"])
+        plaintext = self._fernet(salt).decrypt(envelope["ciphertext"].encode())
+        return json.loads(plaintext)
+
+    def save(self, secrets: dict[str, str]) -> None:
+        salt = os.urandom(16)
+        ciphertext = self._fernet(salt).encrypt(json.dumps(secrets).encode())
+        envelope = {
+            "version": 1,
+            "kdf": "scrypt",
+            "salt": base64.b64encode(salt).decode(),
+            "n": _SCRYPT_N,
+            "r": _SCRYPT_R,
+            "p": _SCRYPT_P,
+            "ciphertext": ciphertext.decode(),
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(envelope, indent=2))
+        os.chmod(self.path, 0o600)
+
+    def names(self) -> list[str]:
+        return sorted(self.load())
 
 
 class Vault:
@@ -9,16 +68,39 @@ class Vault:
 
     The agent references a secret by name; the broker/tools resolve it here, in
     the parent, and inject it at the point of use (see web.web_fetch). `get` is
-    deliberately NOT placed in the agent's kernel namespace.
+    deliberately NOT placed in the agent's kernel namespace — only `names()` is
+    exposed (via the vault capability), and that returns names, never values.
 
-    V1 backend: an in-memory dict plus environment variables
-    (PYHARNESS_SECRET_<NAME>). Swap for 1Password / Bitwarden / Hashicorp later
-    behind this same interface.
+    Resolution order, first hit wins: in-memory dict, then environment
+    (PYHARNESS_SECRET_<NAME>), then the encrypted file backend. Swap any backend
+    for 1Password / Bitwarden / Hashicorp later behind this same interface.
     """
 
-    def __init__(self, secrets: dict[str, str] | None = None, env_prefix: str = "PYHARNESS_SECRET_"):
+    def __init__(
+        self,
+        secrets: dict[str, str] | None = None,
+        env_prefix: str = "PYHARNESS_SECRET_",
+        file: EncryptedFile | None = None,
+    ):
         self._secrets = dict(secrets or {})
         self._env_prefix = env_prefix
+        self._file = file
+        self._file_cache: dict[str, str] | None = None
+
+    @classmethod
+    def from_env(cls, *, env_prefix: str = "PYHARNESS_SECRET_") -> "Vault":
+        """Build the default vault. Attaches the encrypted-file backend only when
+        both a passphrase (PYHARNESS_VAULT_PASSPHRASE) and the file are present,
+        so non-interactive and test use fall back to dict + env transparently."""
+        passphrase = os.environ.get("PYHARNESS_VAULT_PASSPHRASE")
+        path = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
+        file = EncryptedFile(path, passphrase) if passphrase and path.exists() else None
+        return cls(env_prefix=env_prefix, file=file)
+
+    def _file_secrets(self) -> dict[str, str]:
+        if self._file_cache is None:
+            self._file_cache = self._file.load() if self._file else {}
+        return self._file_cache
 
     def get(self, name: str) -> str:
         if name in self._secrets:
@@ -26,4 +108,17 @@ class Vault:
         env = os.environ.get(self._env_prefix + name.upper())
         if env is not None:
             return env
+        file_secrets = self._file_secrets()
+        if name in file_secrets:
+            return file_secrets[name]
         raise KeyError(f"secret {name!r} not found")
+
+    def names(self) -> list[str]:
+        """Every secret name available to inject — never the values. Env-derived
+        names are lowercased to match how `get` upper-cases the lookup."""
+        names = set(self._secrets)
+        for key in os.environ:
+            if key.startswith(self._env_prefix):
+                names.add(key[len(self._env_prefix):].lower())
+        names.update(self._file_secrets())
+        return sorted(names)
