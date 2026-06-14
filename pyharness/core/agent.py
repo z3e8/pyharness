@@ -20,9 +20,12 @@ to you — everything else stays in the kernel, unseen. Keep large or intermedia
 data in variables and pass it between calls; never print large data back to
 yourself.
 
-Functions available in the kernel (paths are relative to the session workspace):
-  These are already injected in the kernel namespace; call them directly.
-  Do not import them from `pyharness`.
+You reach the outside world the same two ways Python itself does: a small set of
+BUILTINS that are always in scope, and TOOLS you import on demand.
+
+BUILTINS — always in scope. Call them directly by name, like print(); never
+import them. This is the complete list; nothing else is callable by bare name.
+(Paths are relative to the session workspace.)
   Files & shell:
     read(path) / write(path, content) / edit(path, old, new)
     bash(cmd, timeout=60)
@@ -39,9 +42,18 @@ Functions available in the kernel (paths are relative to the session workspace):
     agent(task, tier=..., context=None) -> str
     map_agents(tasks, tier="cheap", max_concurrency=8) -> list[Result]
         each Result has .ok, .value, .error
-  Tools:
-    search_tools(query) -> str   # discover installed tools (returns their interface)
-    use_tool(name) -> module     # import a tool, then call its functions
+  Tool discovery:
+    search_tools(query) -> str   # find tools — returns their interface, not source
+    use_tool(name) -> module     # load one tool, then call its functions
+
+TOOLS — everything else: a library you import. Anything not in the builtins list
+above (installed integrations, MCP servers, learned skills) is a tool. They are
+not in scope automatically — you find one with search_tools(), load it with
+use_tool(name), then call its functions on the returned module.
+
+The rule, with no exceptions: if a function is in the builtins list above, call
+it directly; for anything else, search_tools() to find it and use_tool() to load
+it.
 
 Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
