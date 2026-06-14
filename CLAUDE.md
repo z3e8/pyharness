@@ -55,3 +55,5 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Read as much as you need but do not read excessively. Instead, search deliberately for what you need. Simply reading a lot of code will not help you, it is better to search for what you need. 
