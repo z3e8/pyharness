@@ -59,10 +59,15 @@ class Session:
 
             mount_config(self.registry, mcp_config, vault=self.vault)
 
+        # Variables agent-controlled code must never see: env-backed secrets
+        # (the vault's prefix) and the file-vault passphrase. Stripped from the
+        # child's environment and from any shell subprocess.
+        secret_prefixes = (self.vault.env_prefix,)
+
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
         for capability in (
             FilesCapability(self.workspace),
-            ShellCapability(self.workspace),
+            ShellCapability(self.workspace, secret_env_prefixes=secret_prefixes),
             SearchCapability(self.workspace),
             WebCapability(self.llm, vault=self.vault),
             LLMCapability(self.llm),
@@ -76,7 +81,9 @@ class Session:
         # Out-of-process: agent code runs in a restricted child and every call
         # crosses IPC back to the same broker (see broker/remote).
         self.kernel = (
-            RemoteKernel(self.broker) if out_of_process else Kernel(self.broker.namespace())
+            RemoteKernel(self.broker, secret_env_prefixes=secret_prefixes)
+            if out_of_process
+            else Kernel(self.broker.namespace())
         )
 
         def on_event_traced(kind: str, text: str, **extra) -> None:

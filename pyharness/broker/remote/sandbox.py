@@ -68,6 +68,34 @@ def make_child_executable(workdir: Path) -> str | None:
     return str(launcher)
 
 
+def _secret_env_keys(prefixes: tuple[str, ...], names: tuple[str, ...]) -> list[str]:
+    blocked = set(names)
+    return [
+        key
+        for key in os.environ
+        if key in blocked or any(key.startswith(p) for p in prefixes)
+    ]
+
+
+def scrub_secret_env(prefixes: tuple[str, ...], names: tuple[str, ...]) -> None:
+    """Delete secret-bearing variables from *this* process's environment.
+
+    Called in the child before any agent code runs, so neither `os.environ` nor a
+    subprocess the child spawns can read an env-backed secret or the file-vault
+    passphrase. The parent keeps its own environment intact (the vault resolves
+    secrets there); only the child's copy is stripped."""
+    for key in _secret_env_keys(prefixes, names):
+        os.environ.pop(key, None)
+
+
+def scrubbed_environ(prefixes: tuple[str, ...], names: tuple[str, ...]) -> dict[str, str]:
+    """A copy of the environment with secret-bearing variables removed, for a
+    subprocess run on the agent's behalf (e.g. shell.bash) — so a command like
+    `printenv` cannot read a vault secret the parent legitimately holds."""
+    blocked = set(_secret_env_keys(prefixes, names))
+    return {key: value for key, value in os.environ.items() if key not in blocked}
+
+
 def apply_resource_limits() -> None:
     """Bound the child's blast radius with POSIX rlimits. Each is guarded: a
     platform (or value) the kernel rejects is simply skipped, never fatal."""

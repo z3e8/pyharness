@@ -195,3 +195,19 @@ def test_web_fetch_injects_auth_parent_side(tmp_path, monkeypatch):
     import base64
 
     assert captured["headers"]["Authorization"] == "Basic " + base64.b64encode(b"alice:S3CRET").decode()
+
+
+def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):
+    # shell.bash runs commands parent-side, where vault secrets live in the
+    # environment. The subprocess must get a scrubbed environment so a command
+    # like `echo $SECRET` can't read a secret the agent only knows by name.
+    from pyharness.broker.capabilities import ShellCapability
+
+    monkeypatch.setenv("PYHARNESS_SECRET_TOKEN", "supersecret")
+    monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "hunter2")
+    monkeypatch.setenv("PATH_KEPT", "ok")
+    shell = ShellCapability(Workspace(tmp_path))
+    out = shell.bash('echo "tok=$PYHARNESS_SECRET_TOKEN pass=$PYHARNESS_VAULT_PASSPHRASE kept=$PATH_KEPT"')
+    assert "supersecret" not in out
+    assert "hunter2" not in out
+    assert "kept=ok" in out  # non-secret env still passes through

@@ -12,6 +12,10 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 _DEFAULT_FILE = Path.home() / ".pyharness" / "secrets.enc"
 
+# Environment that carries cleartext secrets and must never reach agent code.
+DEFAULT_ENV_PREFIX = "PYHARNESS_SECRET_"
+PASSPHRASE_ENV = "PYHARNESS_VAULT_PASSPHRASE"
+
 
 class EncryptedFile:
     """A passphrase-encrypted JSON map of secret name -> cleartext value.
@@ -79,7 +83,7 @@ class Vault:
     def __init__(
         self,
         secrets: dict[str, str] | None = None,
-        env_prefix: str = "PYHARNESS_SECRET_",
+        env_prefix: str = DEFAULT_ENV_PREFIX,
         file: EncryptedFile | None = None,
     ):
         self._secrets = dict(secrets or {})
@@ -87,12 +91,18 @@ class Vault:
         self._file = file
         self._file_cache: dict[str, str] | None = None
 
+    @property
+    def env_prefix(self) -> str:
+        """The prefix under which env-backed secrets live. Agent-controlled code
+        must never see these variables (see broker/remote env scrubbing)."""
+        return self._env_prefix
+
     @classmethod
-    def from_env(cls, *, env_prefix: str = "PYHARNESS_SECRET_") -> "Vault":
+    def from_env(cls, *, env_prefix: str = DEFAULT_ENV_PREFIX) -> "Vault":
         """Build the default vault. Attaches the encrypted-file backend only when
         both a passphrase (PYHARNESS_VAULT_PASSPHRASE) and the file are present,
         so non-interactive and test use fall back to dict + env transparently."""
-        passphrase = os.environ.get("PYHARNESS_VAULT_PASSPHRASE")
+        passphrase = os.environ.get(PASSPHRASE_ENV)
         path = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
         file = EncryptedFile(path, passphrase) if passphrase and path.exists() else None
         return cls(env_prefix=env_prefix, file=file)

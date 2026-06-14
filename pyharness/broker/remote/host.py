@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
+from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
 from ...tools.registry import _public_functions
 from .child import child_main
 from .protocol import RemoteToolSpec, recv_json
@@ -27,9 +28,17 @@ class RemoteKernel:
     child dies mid-session its variables are lost (no durable resume in V1). The
     next `run` starts a fresh child."""
 
-    def __init__(self, broker, *, sandbox: bool = True):
+    def __init__(
+        self,
+        broker,
+        *,
+        sandbox: bool = True,
+        secret_env_prefixes: tuple[str, ...] = (DEFAULT_ENV_PREFIX,),
+        secret_env_names: tuple[str, ...] = (PASSPHRASE_ENV,),
+    ):
         self.broker = broker
         self.sandbox = sandbox
+        self._secret_env = (secret_env_prefixes, secret_env_names)
         self._ctx = mp.get_context("spawn")
         self._proc = None
         self._conn = None
@@ -48,9 +57,10 @@ class RemoteKernel:
         self._ctx.set_executable(exe or sys.executable)
 
         parent_conn, child_conn = self._ctx.Pipe()
+        prefixes, names = self._secret_env
         proc = self._ctx.Process(
             target=child_main,
-            args=(child_conn, self.broker.op_names()),
+            args=(child_conn, self.broker.op_names(), prefixes, names),
             daemon=True,
         )
         proc.start()
