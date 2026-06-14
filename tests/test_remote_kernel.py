@@ -4,6 +4,8 @@ byte-for-byte what the in-process kernel runs — only the execution boundary mo
 """
 
 import json
+import multiprocessing as mp
+import pickle
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ from pyharness.broker.capabilities import (
     ToolsCapability,
 )
 from pyharness.broker.remote import RemoteKernel
+from pyharness.broker.remote.protocol import recv_json
 from pyharness.broker.remote.sandbox import macos_sandbox_supported
 from pyharness.llm.client import Completion
 from pyharness.tools.registry import Registry
@@ -163,6 +166,34 @@ def test_sandbox_still_allows_broker_writes_and_compute(kernel_factory, tmp_path
     )
     assert out == "data 10"
     assert (Workspace(tmp_path).dir / "note.txt").read_text() == "data"
+
+
+def test_parent_never_unpickles_child_bytes(tmp_path):
+    # Regression for the IPC trust inversion: the child is untrusted, so the
+    # parent decodes its messages as JSON, never pickle. A pickle whose
+    # __reduce__ runs code — exactly what a hostile child would craft — must fail
+    # to decode in the parent rather than execute.
+    parent_conn, child_conn = mp.get_context("spawn").Pipe()
+    sentinel = tmp_path / "pwned"
+
+    class Exploit:
+        def __reduce__(self):
+            import os
+
+            return (os.system, (f"touch {sentinel}",))
+
+    child_conn.send_bytes(pickle.dumps(Exploit()))
+    with pytest.raises(Exception):
+        recv_json(parent_conn)
+    assert not sentinel.exists()
+
+
+def test_non_transferable_argument_fails_cleanly(kernel_factory, tmp_path):
+    # An argument that can't cross the JSON wire surfaces a clear error in the
+    # cell, not a crashed child or a silent pickle.
+    kernel = kernel_factory(_broker(tmp_path))
+    out = kernel.run("write('x.txt', {1, 2, 3})")
+    assert "not transferable" in out
 
 
 def test_child_restarts_after_crash(kernel_factory, tmp_path):

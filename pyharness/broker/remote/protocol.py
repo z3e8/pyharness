@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 # Wire protocol between the parent (kernel/broker) and the child (agent userland).
@@ -9,13 +10,50 @@ from dataclasses import dataclass
 #   ("shutdown",)            stop the serve loop and exit
 #
 # child -> parent (while a cell runs):
-#   ("call", op:str, args:tuple, kwargs:dict)   a capability call to dispatch
+#   ("call", op:str, args:list, kwargs:dict)   a capability call to dispatch
 # parent -> child reply:
 #   ("ok", value)            the (picklable) result
 #   ("err", exception)       re-raised inside the child so the cell sees it
 #
 # child -> parent (cell finished):
 #   ("done", output:str)     captured stdout/stderr/traceback for the orchestrator
+#
+# Trust boundary (see docs/design.md §3/§11). The parent is privileged (vault,
+# broker, LLM client) and runs *unsandboxed*; the child runs LLM-authored code
+# and is the thing we don't trust. The two directions are therefore encoded
+# differently:
+#
+#   child -> parent  is UNTRUSTED. It is framed as JSON (`send_json`/`recv_json`)
+#       over the connection's raw byte channel. JSON has no code-execution hook,
+#       so nothing the child sends can run in the parent — closing the pickle
+#       deserialization RCE that an arbitrary `recv()` would expose. The cost is
+#       that capability *arguments* must be JSON values (str/number/bool/None/
+#       list/dict); tuples arrive as lists. This is what real call arguments
+#       (paths, URLs, code) already are.
+#
+#   parent -> child  is TRUSTED. It stays on the connection's pickle channel
+#       (`send`/`recv`), so capability return values and exception types reach
+#       the child intact. The child unpickling parent data is not an escalation:
+#       the child is the sandbox, and a compromised parent already owns it.
+#
+# `send_bytes`/`recv_bytes` (JSON) and `send`/`recv` (pickle) share one framing
+# format on a Connection, so using one per direction on the same pipe is safe.
+
+
+def send_json(conn, msg: tuple) -> None:
+    """Send an untrusted-direction message (child -> parent) as a JSON frame.
+
+    Raises TypeError if `msg` contains a non-JSON value — callers turn that into
+    a clear error for the agent rather than letting it cross the wire."""
+    conn.send_bytes(json.dumps(msg).encode("utf-8"))
+
+
+def recv_json(conn):
+    """Receive a JSON frame from the untrusted direction (parent reading child).
+
+    Decodes with `json.loads`, never `pickle`, so a hostile child cannot execute
+    code in the parent by crafting the payload."""
+    return json.loads(conn.recv_bytes())
 
 
 @dataclass(frozen=True)

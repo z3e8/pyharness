@@ -5,7 +5,7 @@ import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
 from ...util import truncate
-from .protocol import RemoteToolSpec
+from .protocol import RemoteToolSpec, send_json
 from .sandbox import apply_resource_limits
 
 
@@ -24,7 +24,7 @@ def child_main(conn, op_names: list[str]) -> None:
         if msg[0] == "shutdown":
             return
         if msg[0] == "run":
-            conn.send(("done", _run_cell(conn, namespace, msg[1])))
+            send_json(conn, ("done", _run_cell(conn, namespace, msg[1])))
 
 
 def _run_cell(conn, namespace: dict, code: str) -> str:
@@ -40,10 +40,20 @@ def _run_cell(conn, namespace: dict, code: str) -> str:
     return truncate(out.getvalue().rstrip()) or "(no output)"
 
 
+def _call(conn, op: str, args, kwargs):
+    """Send a capability call to the parent and return its result. Arguments
+    must be JSON-transferable (the parent never unpickles child data); a
+    non-transferable one fails here with a clear error instead of crossing."""
+    try:
+        send_json(conn, ("call", op, args, kwargs))
+    except TypeError as exc:
+        raise TypeError(f"argument to {op!r} is not transferable to the broker: {exc}") from None
+    return _recv_result(conn)
+
+
 def _make_proxy(conn, op: str):
     def proxy(*args, **kwargs):
-        conn.send(("call", op, args, kwargs))
-        return _recv_result(conn)
+        return _call(conn, op, args, kwargs)
 
     proxy.__name__ = op
     return proxy
@@ -73,8 +83,7 @@ class _RemoteModule:
             raise AttributeError(attr)
 
         def call(*args, **kwargs):
-            self._conn.send(("call", "invoke", (self._name, attr, args, kwargs), {}))
-            return _recv_result(self._conn)
+            return _call(self._conn, "invoke", (self._name, attr, args, kwargs), {})
 
         call.__name__ = attr
         return call

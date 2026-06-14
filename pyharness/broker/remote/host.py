@@ -9,7 +9,7 @@ from types import ModuleType
 
 from ...tools.registry import _public_functions
 from .child import child_main
-from .protocol import RemoteToolSpec
+from .protocol import RemoteToolSpec, recv_json
 from .sandbox import make_child_executable
 
 
@@ -67,8 +67,11 @@ class RemoteKernel:
         """Service the child's capability calls until the cell reports done."""
         while True:
             try:
-                msg = self._conn.recv()
-            except EOFError:
+                # The child is untrusted: decode its messages as JSON, never via
+                # pickle, so a crafted payload cannot execute in this (privileged,
+                # unsandboxed) parent. See protocol.py.
+                msg = recv_json(self._conn)
+            except (EOFError, OSError):
                 return "(kernel process died — session state lost)"
             if msg[0] == "done":
                 return msg[1]
