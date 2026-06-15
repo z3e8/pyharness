@@ -18,13 +18,19 @@ class ToolInfo:
     source: str = "core"  # core | installed | learned
     loader: Callable[[], ModuleType] | None = None  # set for lazy (e.g. MCP) tools
     error: str | None = None  # last failure, if a lazy load could not connect
+    keywords: tuple[str, ...] = ()  # synonyms/aliases, so intent words still match
+    category: str | None = None  # intent group (e.g. "chat", "vcs") for grouping
+    featured: bool = False  # surfaced by default and ranked first (the common set)
 
 
 class Registry:
     """Index of tools. A tool is a Python module exposing functions; built-in,
-    installed, and agent-authored skills all live here. Discovery returns the
-    interface (signatures + docstrings), never the source — so searching tools
-    doesn't flood the agent's context."""
+    installed, and agent-authored skills all live here.
+
+    Discovery is two-level so a large catalog never floods the agent's context:
+    `search()` returns ranked *headers only* (name, summary, source/category) and
+    never connects a lazy tool; `describe()` then expands the one chosen tool to
+    its full interface (signatures + docstrings), connecting it if needed."""
 
     def __init__(self):
         self._tools: dict[str, ToolInfo] = {}
@@ -38,13 +44,34 @@ class Registry:
             module = importlib.import_module(f"{package.__name__}.{mod.name}")
             self.register(module, source=source, name=mod.name)
 
-    def register(self, module: ModuleType, *, source: str = "installed", name: str | None = None) -> str:
+    def register(
+        self,
+        module: ModuleType,
+        *,
+        source: str = "installed",
+        name: str | None = None,
+        keywords: tuple[str, ...] = (),
+        category: str | None = None,
+        featured: bool = False,
+    ) -> str:
         """Add a tool module to the registry. Built-ins, locally installed
         modules, and MCP-wrapped servers all enter the same index — distinguished
-        only by `source`. Returns the name under which it was registered."""
+        only by `source`. Returns the name under which it was registered.
+
+        Discovery metadata (`keywords`, `category`, `featured`) may be passed here
+        or declared on the module as `__keywords__` / `__category__` /
+        `__featured__`; explicit arguments win."""
         name = name or module.__name__.rsplit(".", 1)[-1]
         summary = (module.__doc__ or "").strip().splitlines()[0] if module.__doc__ else ""
-        self._tools[name] = ToolInfo(name, summary, module, source)
+        self._tools[name] = ToolInfo(
+            name,
+            summary,
+            module,
+            source,
+            keywords=tuple(keywords) or tuple(getattr(module, "__keywords__", ())),
+            category=category or getattr(module, "__category__", None),
+            featured=featured or bool(getattr(module, "__featured__", False)),
+        )
         return name
 
     def add_mcp_server(
@@ -58,6 +85,9 @@ class Registry:
         headers: dict | None = None,
         cwd: str | None = None,
         summary: str | None = None,
+        keywords: tuple[str, ...] = (),
+        category: str | None = None,
+        featured: bool = False,
         timeout: float = 30.0,
     ) -> str:
         """Connect to an MCP server — local (`command`) or remote (`url`) — wrap
@@ -70,16 +100,30 @@ class Registry:
             summary=summary, timeout=timeout,
         )
         self._mcp_clients.append(module._mcp_client)
-        return self.register(module, source="installed", name=name)
+        return self.register(
+            module, source="installed", name=name,
+            keywords=keywords, category=category, featured=featured,
+        )
 
     def register_lazy(
-        self, name: str, loader: Callable[[], ModuleType], *, source: str = "installed", summary: str = ""
+        self,
+        name: str,
+        loader: Callable[[], ModuleType],
+        *,
+        source: str = "installed",
+        summary: str = "",
+        keywords: tuple[str, ...] = (),
+        category: str | None = None,
+        featured: bool = False,
     ) -> str:
         """Register a tool whose module is built on first use, not now. The
-        `loader` is called the first time the tool is searched or used; until
-        then nothing is connected, so a server that is slow or down can neither
-        delay nor abort registration."""
-        self._tools[name] = ToolInfo(name, summary, source=source, loader=loader)
+        `loader` is called the first time the tool is *used or described* (never
+        by `search`), so a server that is slow or down can neither delay nor abort
+        registration, and merely browsing the catalog never connects it."""
+        self._tools[name] = ToolInfo(
+            name, summary, source=source, loader=loader,
+            keywords=tuple(keywords), category=category, featured=featured,
+        )
         return name
 
     def _resolve(self, info: ToolInfo) -> ModuleType | None:
@@ -101,32 +145,62 @@ class Registry:
             self._mcp_clients.append(client)
         return module
 
-    def search(self, query: str = "") -> str:
-        """Return the interface of matching tools: name, summary, and the
-        signature + first docstring line of each public function. Matching a
-        lazy tool resolves it (connecting an MCP server); one that can't connect
-        is shown as unavailable rather than breaking the search."""
+    def search(self, query: str = "", *, limit: int = 10, include_all: bool = False) -> str:
+        """Return ranked **headers** for matching tools — name, summary, and
+        tags (source, category, status) — never function signatures and never
+        connecting a lazy tool. Use `describe()` to expand one tool.
+
+        An empty query lists the *featured* tools (the common set); a real query
+        ranks the whole catalog with featured tools breaking ties. Results are
+        capped at `limit`; `include_all=True` (or query `"*"`) lifts the cap and
+        the featured-only default. A query that matches nothing falls back to the
+        featured set rather than a dead end."""
         q = query.strip().lower()
-        # Treat "*" as "show everything" for CLI ergonomics.
         if q == "*":
-            q = ""
-        lines: list[str] = []
+            q, include_all = "", True
+        words = q.split()
+
+        scored: list[tuple[float, ToolInfo]] = []
         for info in self._tools.values():
-            if q and q not in info.name.lower() and q not in info.summary.lower():
+            score = _score(info, q, words)
+            if score <= 0:
                 continue
-            module = self._resolve(info)
-            if module is None:
-                note = f"(unavailable: {info.error})" if info.error else "(not loaded)"
-                lines.append(f"# {info.name} — {info.summary} {note}".rstrip())
-                lines.append("")
-                continue
-            lines.append(f"# {info.name} — {info.summary}")
-            for fname, func in _public_functions(module):
-                doc = (func.__doc__ or "").strip().splitlines()
-                first = doc[0] if doc else ""
-                lines.append(f"    {fname}{inspect.signature(func)}  # {first}")
-            lines.append("")
-        return "\n".join(lines).strip() or "(no matching tools)"
+            if not q and not include_all and not info.featured:
+                continue  # browse mode shows only the common (featured) tools
+            scored.append((score, info))
+        scored.sort(key=lambda t: (-t[0], not t[1].featured, t[1].name))
+
+        shown = scored if include_all else scored[:limit]
+        if not shown:
+            return self._no_match(q)
+
+        lines = [self._header(info) for _, info in shown]
+        notes = []
+        more = len(scored) - len(shown)
+        if more > 0:
+            notes.append(
+                f"+{more} more — narrow the query or call "
+                f'search_tools({query!r}, include_all=True).'
+            )
+        notes.append("describe_tool(name) shows a tool's functions; use_tool(name) loads it.")
+        return "\n".join(lines) + "\n\n" + "\n".join(notes)
+
+    def describe(self, name: str) -> str:
+        """Expand one tool to its full interface: each public function's signature
+        and first docstring line. Connects a lazy tool if it isn't loaded yet; an
+        unreachable one is reported rather than raising."""
+        if name not in self._tools:
+            raise KeyError(f"tool {name!r} not found; try search_tools()")
+        info = self._tools[name]
+        module = self._resolve(info)
+        if module is None:
+            return f"# {name} — {info.summary} (unavailable: {info.error})"
+        lines = [self._header(info)]
+        for fname, func in _public_functions(module):
+            doc = (func.__doc__ or "").strip().splitlines()
+            first = doc[0] if doc else ""
+            lines.append(f"    {fname}{inspect.signature(func)}  # {first}".rstrip())
+        return "\n".join(lines)
 
     def use(self, name: str) -> ModuleType:
         if name not in self._tools:
@@ -136,6 +210,31 @@ class Registry:
             raise RuntimeError(f"tool {name!r} is unavailable: {self._tools[name].error}")
         return module
 
+    def _header(self, info: ToolInfo) -> str:
+        tags = [info.source]
+        if info.category:
+            tags.append(info.category)
+        if info.featured:
+            tags.append("featured")
+        status = _status(info)
+        if status:
+            tags.append(status)
+        head = f"# {info.name}" + (f" — {info.summary}" if info.summary else "")
+        return f"{head}  [{' · '.join(tags)}]"
+
+    def _no_match(self, q: str) -> str:
+        featured = [i for i in self._tools.values() if i.featured]
+        if featured:
+            body = "\n".join(self._header(i) for i in featured)
+            return (
+                f"(no tool matched {q!r}; showing the common tools — try other "
+                f'keywords or search_tools(..., include_all=True))\n\n{body}'
+            )
+        return (
+            f"(no tool matched {q!r}; try other keywords or "
+            'search_tools("*") to list everything)'
+        )
+
     def close(self) -> None:
         """Close every MCP server connection this registry opened."""
         for client in self._mcp_clients:
@@ -144,6 +243,45 @@ class Registry:
             except Exception:
                 pass
         self._mcp_clients.clear()
+
+
+def _score(info: ToolInfo, q: str, words: list[str]) -> float:
+    """Lexical relevance of a tool to a query, matching only metadata that is
+    available without connecting the tool (name, summary, keywords, category)."""
+    if not q:
+        return 1.0  # browse mode; featured filtering happens in search()
+    name = info.name.lower()
+    summary = info.summary.lower()
+    keywords = [k.lower() for k in info.keywords]
+    category = (info.category or "").lower()
+
+    score = 0.0
+    if q == name:
+        score += 100
+    elif q in name:
+        score += 40
+    elif q in summary:
+        score += 8
+    for word in words:
+        if word == name or word in keywords:
+            score += 20
+        elif word in name:
+            score += 10
+        elif word == category:
+            score += 8
+        elif word in summary:
+            score += 5
+    return score
+
+
+def _status(info: ToolInfo) -> str | None:
+    if info.error:
+        return f"unavailable: {info.error}"
+    if info.module is not None:
+        return f"{sum(1 for _ in _public_functions(info.module))} fn"
+    if info.loader is not None:
+        return "not loaded"
+    return None
 
 
 def _public_functions(module: ModuleType):

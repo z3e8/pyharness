@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+__category__ = "math"
+__keywords__ = ("arithmetic", "compute", "evaluate", "sum", "multiply")
+__featured__ = True
+
 import ast
 import operator
 

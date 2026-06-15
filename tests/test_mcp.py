@@ -45,9 +45,11 @@ def test_registry_discovery_and_use():
     registry = Registry()
     registry.add_mcp_server("demo", sys.executable, (str(FAKE),))
     try:
-        interface = registry.search("demo")
-        assert "echo(message: str" in interface
-        assert "Echo a message back." in interface
+        listing = registry.search("demo")
+        assert "# demo" in listing  # search returns headers, not signatures
+        details = registry.describe("demo")
+        assert "echo(message: str" in details
+        assert "Echo a message back." in details
         module = registry.use("demo")
         assert module.echo(message="yo") == "yo"
     finally:
