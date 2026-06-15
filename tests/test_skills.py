@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from pyharness.broker.capabilities.skills import SkillsCapability
+from pyharness.broker.dispatch import PermissionDenied
+from pyharness.core.session import Session
 from pyharness.tools.registry import Registry
-from pyharness.tools.skills import load_skills, parse_skill_md, write_skill
+from pyharness.tools.skills import (
+    FEATURED_LIMIT,
+    load_skills,
+    parse_skill_md,
+    write_skill,
+)
 
 
 def test_parse_frontmatter_and_body():
@@ -88,3 +97,45 @@ def test_save_skill_rejects_unsafe_name(tmp_path):
     cap = SkillsCapability(Registry(), tmp_path)
     with pytest.raises(ValueError):
         cap.save_skill("../escape", "x", "y")
+
+
+def test_resave_drops_stale_bundled_code(tmp_path):
+    reg = Registry()
+    cap = SkillsCapability(reg, tmp_path)
+    cap.save_skill("t", "v1", "use old()", files={"a.py": "def old():\n    return 1\n"})
+    assert reg.use("t").old() == 1
+
+    # re-save with a renamed helper; the old file must not linger
+    cap.save_skill("t", "v2", "use new()", files={"b.py": "def new():\n    return 2\n"})
+    assert not (tmp_path / "t" / "a.py").exists()
+    mod = Registry(); load_skills(mod, tmp_path)  # fresh load = exactly the last save
+    assert mod.use("t").new() == 2
+    assert not hasattr(mod.use("t"), "old")
+
+
+def test_only_recent_skills_are_featured(tmp_path):
+    # author one more than the cap; stamp ascending mtimes so order is known
+    for i in range(FEATURED_LIMIT + 1):
+        d = write_skill(tmp_path, f"s{i:02d}", f"skill {i}", "do it")
+        os.utime(d / "SKILL.md", (i, i))
+    reg = Registry()
+    load_skills(reg, tmp_path)
+
+    featured = {n for n, info in reg._tools.items() if info.featured and info.source == "learned"}
+    assert len(featured) == FEATURED_LIMIT
+    assert "s00" not in featured  # oldest dropped from the featured set
+    assert f"s{FEATURED_LIMIT:02d}" in featured  # newest kept
+    # still discoverable by query even when not featured
+    assert "# s00" in reg.search("s00")
+
+
+def test_save_skill_requires_approval_by_default(tmp_path):
+    skills = tmp_path / "skills"
+    denied = Session(tmp_path / "a", skills_dir=skills)  # no approver
+    with pytest.raises(PermissionDenied):
+        denied.broker.namespace()["save_skill"]("x", "d", "i")
+    denied.close()
+
+    allowed = Session(tmp_path / "b", skills_dir=skills, approver=lambda *a: True)
+    assert "saved skill 'x'" in allowed.broker.namespace()["save_skill"]("x", "d", "i")
+    allowed.close()

@@ -27,6 +27,11 @@ from .registry import Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# Skills are featured so saved procedures resurface, but only the most recently
+# authored stay featured — otherwise an empty search_tools() floods as they pile
+# up. The rest remain fully searchable by query, just not in the default listing.
+FEATURED_LIMIT = 10
+
 
 def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
     """Split a SKILL.md into its `---` frontmatter (key: value lines) and body."""
@@ -44,18 +49,24 @@ def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
 
 
 def load_skills(registry: Registry, skills_dir: str | Path) -> list[str]:
-    """Register every skill directory under `skills_dir` (none if it's absent)."""
+    """Register every skill directory under `skills_dir` (none if it's absent).
+    Only the `FEATURED_LIMIT` most recently authored skills are featured."""
     skills_dir = Path(skills_dir)
     if not skills_dir.is_dir():
         return []
+    dirs = [c for c in skills_dir.iterdir() if c.is_dir() and (c / "SKILL.md").exists()]
+    dirs.sort(key=lambda c: (c / "SKILL.md").stat().st_mtime, reverse=True)
     loaded = []
-    for child in sorted(skills_dir.iterdir()):
-        if child.is_dir() and (name := register_skill_dir(registry, child)):
+    for rank, child in enumerate(dirs):
+        name = register_skill_dir(registry, child, featured=rank < FEATURED_LIMIT)
+        if name:
             loaded.append(name)
     return loaded
 
 
-def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
+def register_skill_dir(
+    registry: Registry, skill_dir: Path, *, featured: bool = True
+) -> str | None:
     """Register one skill directory; return its name (None if it has no SKILL.md)."""
     md = skill_dir / "SKILL.md"
     if not md.exists():
@@ -70,6 +81,7 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         loader=lambda: _build_skill_module(name, skill_dir),
         keywords=keywords,
         category=meta.get("category") or None,
+        featured=featured,
     )
     return name
 
@@ -89,6 +101,10 @@ def write_skill(
         raise ValueError(f"skill name {name!r} must match [A-Za-z0-9_-]+")
     skill_dir = Path(skills_dir) / name
     skill_dir.mkdir(parents=True, exist_ok=True)
+    # A skill is exactly its last save: drop bundled .py from a prior version so a
+    # renamed/removed helper can't linger and get imported.
+    for stale in skill_dir.glob("*.py"):
+        stale.unlink()
 
     front = [f"name: {name}", f"description: {description}"]
     if keywords:

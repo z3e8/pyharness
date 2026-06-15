@@ -53,7 +53,9 @@ class Session:
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
-        self.policy = policy or Policy()
+        # Saving a skill writes agent-authored code that auto-loads in later
+        # sessions, so a human signs off at author time by default.
+        self.policy = policy or Policy(require_approval={"skills.save_skill"})
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:

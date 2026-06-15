@@ -136,16 +136,17 @@ class Registry:
         loader: Callable[[], ModuleType],
         keywords: tuple[str, ...] = (),
         category: str | None = None,
+        featured: bool = True,
     ) -> str:
         """Register a learned skill — markdown instructions plus an optional
         bundled module built on first use (`source="learned"`). It is a tool
         like any other: `search`/`use` treat it the same, while `describe`
-        additionally surfaces the instructions. Skills are featured so the agent
-        is reminded of the procedures it has saved."""
+        additionally surfaces the instructions. Skills are featured (the caller
+        caps how many) so the agent is reminded of procedures it has saved."""
         self._tools[name] = ToolInfo(
             name, description, source="learned", loader=loader,
             instructions=instructions, keywords=tuple(keywords),
-            category=category, featured=True,
+            category=category, featured=featured,
         )
         return name
 
