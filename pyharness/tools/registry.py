@@ -21,6 +21,7 @@ class ToolInfo:
     keywords: tuple[str, ...] = ()  # synonyms/aliases, so intent words still match
     category: str | None = None  # intent group (e.g. "chat", "vcs") for grouping
     featured: bool = False  # surfaced by default and ranked first (the common set)
+    instructions: str | None = None  # a learned skill's procedure, shown by describe()
 
 
 class Registry:
@@ -126,6 +127,29 @@ class Registry:
         )
         return name
 
+    def add_skill(
+        self,
+        name: str,
+        description: str,
+        instructions: str,
+        *,
+        loader: Callable[[], ModuleType],
+        keywords: tuple[str, ...] = (),
+        category: str | None = None,
+    ) -> str:
+        """Register a learned skill — markdown instructions plus an optional
+        bundled module built on first use (`source="learned"`). It is a tool
+        like any other: `search`/`use` treat it the same, while `describe`
+        additionally surfaces the instructions. Skills are *not* featured: they
+        are found by query, not shown in the default browse, so saved procedures
+        don't crowd the common-tools listing."""
+        self._tools[name] = ToolInfo(
+            name, description, source="learned", loader=loader,
+            instructions=instructions, keywords=tuple(keywords),
+            category=category,
+        )
+        return name
+
     def _resolve(self, info: ToolInfo) -> ModuleType | None:
         """Return a tool's module, building it on demand for lazy tools. Returns
         None (and records `info.error`) if a lazy load fails — callers stay up."""
@@ -193,10 +217,18 @@ class Registry:
             raise KeyError(f"tool {name!r} not found; try search_tools()")
         info = self._tools[name]
         module = self._resolve(info)
-        if module is None:
-            return f"# {name} — {info.summary} (unavailable: {info.error})"
         lines = [self._header(info)]
-        for fname, func in _public_functions(module):
+        if info.instructions:  # a learned skill carries its procedure inline
+            lines += ["", info.instructions]
+        if module is None:
+            if info.instructions:  # instructions stand alone even if the code is down
+                lines.append(f"\n(bundled code unavailable: {info.error})")
+                return "\n".join(lines)
+            return f"# {name} — {info.summary} (unavailable: {info.error})"
+        funcs = list(_public_functions(module))
+        if funcs and info.instructions:
+            lines.append("\nFunctions:")
+        for fname, func in funcs:
             doc = (func.__doc__ or "").strip().splitlines()
             first = doc[0] if doc else ""
             lines.append(f"    {fname}{inspect.signature(func)}  # {first}".rstrip())

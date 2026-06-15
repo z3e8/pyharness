@@ -11,6 +11,7 @@ from ..broker.capabilities import (
     SearchCapability,
     SecretsCapability,
     ShellCapability,
+    SkillsCapability,
     ToolsCapability,
     WebCapability,
 )
@@ -45,19 +46,30 @@ class Session:
         on_event: Callable[[str, str], None] | None = None,
         out_of_process: bool = False,
         mcp_config: str | Path | dict | None = None,
+        skills_dir: str | Path | None = None,
     ):
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
-        self.policy = policy or Policy()
+        # Saving a skill writes agent-authored code that auto-loads in later
+        # sessions, so a human signs off at author time by default.
+        self.policy = policy or Policy(require_approval={"skills.save_skill"})
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:
             from ..tools.mcp import mount_config
 
             mount_config(self.registry, mcp_config, vault=self.vault)
+
+        # Skills are learned tools persisted on disk; load any from prior sessions
+        # (or hand-authored by the user) so they reload here. Cross-session by
+        # design, so the root defaults outside the per-session workspace.
+        from ..tools.skills import load_skills
+
+        self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
+        load_skills(self.registry, self.skills_dir)
 
         # Variables agent-controlled code must never see: env-backed secrets
         # (the vault's prefix) and the file-vault passphrase. Stripped from the
@@ -74,6 +86,7 @@ class Session:
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
             SecretsCapability(self.vault),
+            SkillsCapability(self.registry, self.skills_dir),
         ):
             self.broker.register(capability)
 

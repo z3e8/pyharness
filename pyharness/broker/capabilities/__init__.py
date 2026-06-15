@@ -4,6 +4,7 @@ from .llm import LLMCapability
 from .search import SearchCapability
 from .secrets import SecretsCapability
 from .shell import ShellCapability
+from .skills import SkillsCapability
 from .tools import ToolsCapability
 from .web import WebCapability
 
@@ -15,6 +16,7 @@ __all__ = [
     "SearchCapability",
     "SecretsCapability",
     "ShellCapability",
+    "SkillsCapability",
     "SubAgentLimitExceeded",
     "ToolsCapability",
     "WebCapability",
