@@ -63,6 +63,12 @@ not in scope automatically — you find one with search_tools(), read its
 functions with describe_tool(name), load it with use_tool(name), then call its
 functions on the returned module.
 
+A learned skill (tagged `learned`) is a tool that ships with a runbook: a saved
+procedure for a repeatable task, plus any bundled code. For these, describe_tool
+returns instructions to read and follow, not just signatures. Before doing
+something that looks repeatable, search_tools() for a skill that already does it
+rather than redoing the work from scratch.
+
 The rule, with no exceptions: if a function is in the builtins list above, call
 it directly; for anything else, search_tools() → describe_tool() → use_tool().
 

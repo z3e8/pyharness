@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from pyharness.broker.capabilities.skills import SkillsCapability
 from pyharness.broker.dispatch import PermissionDenied
 from pyharness.core.session import Session
 from pyharness.tools.registry import Registry
-from pyharness.tools.skills import (
-    FEATURED_LIMIT,
-    load_skills,
-    parse_skill_md,
-    write_skill,
-)
+from pyharness.tools.skills import load_skills, parse_skill_md, write_skill
 
 
 def test_parse_frontmatter_and_body():
@@ -113,20 +106,16 @@ def test_resave_drops_stale_bundled_code(tmp_path):
     assert not hasattr(mod.use("t"), "old")
 
 
-def test_only_recent_skills_are_featured(tmp_path):
-    # author one more than the cap; stamp ascending mtimes so order is known
-    for i in range(FEATURED_LIMIT + 1):
-        d = write_skill(tmp_path, f"s{i:02d}", f"skill {i}", "do it")
-        os.utime(d / "SKILL.md", (i, i))
+def test_skills_are_search_only_not_featured(tmp_path):
+    write_skill(tmp_path, "rare", "a rarely used procedure", "do it", keywords=("widget",))
     reg = Registry()
     load_skills(reg, tmp_path)
-
-    featured = {n for n, info in reg._tools.items() if info.featured and info.source == "learned"}
-    assert len(featured) == FEATURED_LIMIT
-    assert "s00" not in featured  # oldest dropped from the featured set
-    assert f"s{FEATURED_LIMIT:02d}" in featured  # newest kept
-    # still discoverable by query even when not featured
-    assert "# s00" in reg.search("s00")
+    # not in the default browse — skills don't crowd the common-tools listing
+    assert "# rare" not in reg.search("")
+    # but fully findable by name, description word, or keyword
+    assert "# rare" in reg.search("rare")
+    assert "# rare" in reg.search("procedure")
+    assert "# rare" in reg.search("widget")
 
 
 def test_save_skill_requires_approval_by_default(tmp_path):
