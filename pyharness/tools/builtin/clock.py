@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+__category__ = "time"
+__keywords__ = ("date", "timestamp", "epoch", "clock")
+
 from datetime import datetime, timezone
 
 

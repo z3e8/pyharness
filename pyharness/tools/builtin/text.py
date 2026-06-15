@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+__category__ = "text"
+__keywords__ = ("count", "words", "characters", "lines")
+
 
 def counts(text: str) -> dict:
     """Return character, word, and line counts for a block of text."""

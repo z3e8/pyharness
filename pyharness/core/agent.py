@@ -42,18 +42,22 @@ import them. This is the complete list; nothing else is callable by bare name.
     agent(task, tier=..., context=None) -> str
     map_agents(tasks, tier="cheap", max_concurrency=8) -> list[Result]
         each Result has .ok, .value, .error
-  Tool discovery:
-    search_tools(query) -> str   # find tools — returns their interface, not source
-    use_tool(name) -> module     # load one tool, then call its functions
+  Tool discovery — find a tool, inspect it, then load and call it:
+    search_tools(query="", include_all=False) -> str
+        # ranked headers only (name, summary, source/category) — common tools
+        # first. Empty query lists the common tools; include_all=True surfaces
+        # the long tail. Returns headers, not signatures: pick one, then describe.
+    describe_tool(name) -> str   # that tool's functions: signatures + docstrings
+    use_tool(name) -> module     # load it, then call its functions
 
 TOOLS — everything else: a library you import. Anything not in the builtins list
 above (installed integrations, MCP servers, learned skills) is a tool. They are
-not in scope automatically — you find one with search_tools(), load it with
-use_tool(name), then call its functions on the returned module.
+not in scope automatically — you find one with search_tools(), read its
+functions with describe_tool(name), load it with use_tool(name), then call its
+functions on the returned module.
 
 The rule, with no exceptions: if a function is in the builtins list above, call
-it directly; for anything else, search_tools() to find it and use_tool() to load
-it.
+it directly; for anything else, search_tools() → describe_tool() → use_tool().
 
 Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.

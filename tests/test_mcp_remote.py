@@ -78,7 +78,8 @@ def test_registry_add_remote_server(http_url):
     registry = Registry()
     registry.add_mcp_server("remote", url=http_url)
     try:
-        assert "ping()" in registry.search("remote")
+        assert "# remote" in registry.search("remote")  # header only
+        assert "ping()" in registry.describe("remote")  # signatures via describe
         assert registry.use("remote").ping() == "pong"
     finally:
         registry.close()
@@ -125,11 +126,14 @@ def test_lazy_mount_does_not_connect_and_tolerates_down_servers():
     # Mounting connects to neither server, so the bad one does not raise here.
     assert mount_config(registry, config) == ["good", "down"]
     try:
-        # Search resolves matches: the good server lists its tools; the down one
-        # is shown as unavailable instead of blowing up the search.
-        listing = registry.search()
-        assert "echo(message: str" in listing
-        assert "down" in listing and "unavailable" in listing
+        # Search connects to neither — both appear as headers marked "not loaded".
+        listing = registry.search("", include_all=True)
+        assert "# good" in listing and "# down" in listing
+        assert "not loaded" in listing
+        # describe() is what connects: the good server lists its tools; the down
+        # one is reported as unavailable instead of raising.
+        assert "echo(message: str" in registry.describe("good")
+        assert "unavailable" in registry.describe("down")
         # The good server works on first use; the down one raises a clear error.
         assert registry.use("good").add(a=1, b=2) == "3"
         with pytest.raises(RuntimeError, match="unavailable"):

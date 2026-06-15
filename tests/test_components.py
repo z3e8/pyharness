@@ -84,14 +84,14 @@ def test_budget_records_and_limits():
 
 def test_registry_discovers_builtin_calc():
     reg = Registry()
-    assert "calc" in reg.search()
-    assert "evaluate" in reg.search("calc")
+    assert "calc" in reg.search()  # featured, so it shows for an empty query
+    assert "evaluate" in reg.describe("calc")  # signatures come from describe
     assert reg.use("calc").evaluate("2 + 3 * 4") == 14
 
 
 def test_registry_discovers_multiple_tools():
     reg = Registry()
-    listing = reg.search()
+    listing = reg.search("", include_all=True)  # empty query alone shows only featured
     for name in ("calc", "clock", "text"):
         assert name in listing
     assert reg.use("text").counts("a b c\nd") == {"chars": 7, "words": 4, "lines": 2}
