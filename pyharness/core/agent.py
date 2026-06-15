@@ -48,7 +48,14 @@ import them. This is the complete list; nothing else is callable by bare name.
         # first. Empty query lists the common tools; include_all=True surfaces
         # the long tail. Returns headers, not signatures: pick one, then describe.
     describe_tool(name) -> str   # that tool's functions: signatures + docstrings
+        # for a learned skill, also returns its instructions (the procedure).
     use_tool(name) -> module     # load it, then call its functions
+  Skills — package a repeatable procedure so you and later sessions can reuse it:
+    save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+        # instructions = markdown the how-to; files = {"helper.py": source, ...}
+        # optional bundled modules. Persists to disk and registers as a learned
+        # tool — find it with search_tools, read it with describe_tool, load its
+        # code with use_tool. Save a skill once a procedure is worth repeating.
 
 TOOLS — everything else: a library you import. Anything not in the builtins list
 above (installed integrations, MCP servers, learned skills) is a tool. They are

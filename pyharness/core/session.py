@@ -11,6 +11,7 @@ from ..broker.capabilities import (
     SearchCapability,
     SecretsCapability,
     ShellCapability,
+    SkillsCapability,
     ToolsCapability,
     WebCapability,
 )
@@ -45,6 +46,7 @@ class Session:
         on_event: Callable[[str, str], None] | None = None,
         out_of_process: bool = False,
         mcp_config: str | Path | dict | None = None,
+        skills_dir: str | Path | None = None,
     ):
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
@@ -58,6 +60,14 @@ class Session:
             from ..tools.mcp import mount_config
 
             mount_config(self.registry, mcp_config, vault=self.vault)
+
+        # Skills are learned tools persisted on disk; load any from prior sessions
+        # (or hand-authored by the user) so they reload here. Cross-session by
+        # design, so the root defaults outside the per-session workspace.
+        from ..tools.skills import load_skills
+
+        self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
+        load_skills(self.registry, self.skills_dir)
 
         # Variables agent-controlled code must never see: env-backed secrets
         # (the vault's prefix) and the file-vault passphrase. Stripped from the
@@ -74,6 +84,7 @@ class Session:
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
             SecretsCapability(self.vault),
+            SkillsCapability(self.registry, self.skills_dir),
         ):
             self.broker.register(capability)
 

@@ -31,9 +31,17 @@ print(session.run("Write fib.py, run it, and confirm the output."))
 The agent reaches the world the way Python does — **builtins** always in scope,
 **tools** imported on demand. Builtins (called directly by bare name): `read`
 `write` `edit` `bash` `search` `web_search` `web_fetch` `llm` `agent`
-`map_agents` `search_tools` `use_tool`. Everything else — installed integrations,
-MCP servers, learned skills — is a tool the agent finds with `search_tools()`
-and loads with `use_tool()`. Relative paths resolve inside the session workspace.
+`map_agents` `search_tools` `use_tool` `save_skill`. Everything else — installed
+integrations, MCP servers, learned skills — is a tool the agent finds with
+`search_tools()` and loads with `use_tool()`. Relative paths resolve inside the
+session workspace.
+
+**Skills.** A skill is a learned tool the agent (or a human) saves once and reuses
+across sessions: markdown instructions plus optional bundled `.py` modules, stored
+under `~/.pyharness/skills/<name>/` (override with `Session(skills_dir=...)`). The
+agent writes one with `save_skill(name, description, instructions, files=...)`;
+`describe_tool` shows its instructions, `use_tool` loads its code. See
+[`docs/skills.md`](docs/skills.md).
 
 ## Run
 
