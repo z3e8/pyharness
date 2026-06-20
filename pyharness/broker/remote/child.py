@@ -14,6 +14,7 @@ def child_main(
     op_names: list[str],
     scrub_prefixes: tuple[str, ...] = (),
     scrub_names: tuple[str, ...] = (),
+    venv_site_packages: str | None = None,
 ) -> None:
     """Entry point for the child process (spawned by the host).
 
@@ -28,6 +29,10 @@ def child_main(
     # the child; spawn inheritance would otherwise leak it via os.environ.
     scrub_secret_env(scrub_prefixes, scrub_names)
     apply_resource_limits()
+    if venv_site_packages:
+        import sys as _sys
+        if venv_site_packages not in _sys.path:
+            _sys.path.insert(0, venv_site_packages)
     namespace = {op: _make_proxy(conn, op) for op in op_names}
     while True:
         msg = conn.recv()

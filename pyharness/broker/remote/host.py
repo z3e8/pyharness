@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from types import ModuleType
 
+from ...core.session_venv import SessionVenv
 from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
 from ...tools.registry import _public_functions
 from .child import child_main
@@ -35,10 +36,12 @@ class RemoteKernel:
         sandbox: bool = True,
         secret_env_prefixes: tuple[str, ...] = (DEFAULT_ENV_PREFIX,),
         secret_env_names: tuple[str, ...] = (PASSPHRASE_ENV,),
+        venv: SessionVenv | None = None,
     ):
         self.broker = broker
         self.sandbox = sandbox
         self._secret_env = (secret_env_prefixes, secret_env_names)
+        self._venv = venv
         self._ctx = mp.get_context("spawn")
         self._proc = None
         self._conn = None
@@ -50,17 +53,24 @@ class RemoteKernel:
         # before each start (sequential) — to the sandbox wrapper, or back to the
         # real interpreter if sandboxing is off/unsupported.
         exe = None
-        if self.sandbox:
+        if self.sandbox or self._venv is not None:
             if self._sbdir is None:
                 self._sbdir = tempfile.mkdtemp(prefix="pyharness-sb-")
+        if self.sandbox:
             exe = make_child_executable(Path(self._sbdir))
         self._ctx.set_executable(exe or sys.executable)
+
+        venv_site = None
+        if self._venv is not None:
+            self._venv.ensure_created(Path(self._sbdir))
+            site = self._venv.site_packages()
+            venv_site = str(site) if site is not None else None
 
         parent_conn, child_conn = self._ctx.Pipe()
         prefixes, names = self._secret_env
         proc = self._ctx.Process(
             target=child_main,
-            args=(child_conn, self.broker.op_names(), prefixes, names),
+            args=(child_conn, self.broker.op_names(), prefixes, names, venv_site),
             daemon=True,
         )
         proc.start()

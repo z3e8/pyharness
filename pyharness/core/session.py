@@ -8,6 +8,7 @@ from ..broker.capabilities import (
     AgentsCapability,
     FilesCapability,
     LLMCapability,
+    PackagesCapability,
     SearchCapability,
     SecretsCapability,
     ShellCapability,
@@ -25,6 +26,7 @@ from ..tools.registry import Registry
 from ..trace import TraceLog
 from .agent import Agent
 from .kernel import Kernel
+from .session_venv import SessionVenv
 from .workspace import Workspace
 
 
@@ -55,7 +57,7 @@ class Session:
         self.llm = llm or AnthropicLLM(budget=self.budget)
         # Saving a skill writes agent-authored code that auto-loads in later
         # sessions, so a human signs off at author time by default.
-        self.policy = policy or Policy(require_approval={"skills.save_skill"})
+        self.policy = policy or Policy(require_approval={"skills.save_skill", "packages.install"})
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:
@@ -76,6 +78,7 @@ class Session:
         # child's environment and from any shell subprocess.
         secret_prefixes = (self.vault.env_prefix,)
 
+        self.session_venv = SessionVenv()
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
         for capability in (
             FilesCapability(self.workspace),
@@ -87,6 +90,7 @@ class Session:
             ToolsCapability(self.registry),
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
+            PackagesCapability(self.session_venv),
         ):
             self.broker.register(capability)
 
@@ -94,7 +98,7 @@ class Session:
         # Out-of-process: agent code runs in a restricted child and every call
         # crosses IPC back to the same broker (see broker/remote).
         self.kernel = (
-            RemoteKernel(self.broker, secret_env_prefixes=secret_prefixes)
+            RemoteKernel(self.broker, secret_env_prefixes=secret_prefixes, venv=self.session_venv)
             if out_of_process
             else Kernel(self.broker.namespace())
         )
