@@ -50,6 +50,32 @@ def test_agent_runs_code_then_answers(tmp_path):
     assert ("output", "written") in events
 
 
+class FailingLLM:
+    """Raises on complete() to simulate a stream that dies mid-turn."""
+
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
+        raise RuntimeError("stream interrupted")
+
+
+def test_aborted_turn_rolls_back_user_message(tmp_path):
+    # A failed turn must leave history untouched, or the next send produces two
+    # consecutive user turns and the API rejects every later message.
+    messages = []
+    agent = Agent(FailingLLM(), Kernel({}), Budget())
+
+    try:
+        agent.run("first task", messages)
+    except RuntimeError:
+        pass
+    assert messages == []
+
+    # History is clean, so a subsequent successful turn works normally.
+    ok = Agent(ScriptedLLM([_text_completion("done")]), Kernel({}), Budget())
+    answer = ok.run("second task", messages)
+    assert answer == "done"
+    assert messages[0] == {"role": "user", "content": "second task"}
+
+
 def test_kernel_state_persists_across_cells(tmp_path):
     llm = ScriptedLLM([
         _tool_completion("n = 41"),

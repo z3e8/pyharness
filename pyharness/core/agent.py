@@ -117,7 +117,18 @@ class Agent:
 
     def run(self, task: str, messages: list[dict]) -> str:
         messages.append({"role": "user", "content": task})
+        # An aborted turn must leave history exactly as it was before this user
+        # turn. Otherwise the next send appends a second consecutive user message
+        # and the API rejects every subsequent call — wedging the whole session,
+        # not just the failed turn. Roll back to here on any failure.
+        rollback_to = len(messages) - 1
+        try:
+            return self._run_loop(messages)
+        except Exception:
+            del messages[rollback_to:]
+            raise
 
+    def _run_loop(self, messages: list[dict]) -> str:
         for _ in range(self.max_steps):
             self.budget.check()
 

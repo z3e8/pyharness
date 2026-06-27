@@ -86,10 +86,23 @@ def main() -> None:
                 break
             if not task:
                 continue
-            try:
-                answer = session.run(task)
-            except BudgetExceeded as exc:
-                print(f"\n[budget] {exc}")
+            # A turn that fails mid-stream must not crash the REPL. Retry once
+            # (the history rollback in Agent.run leaves a clean slate for the
+            # resend), then fall back to the prompt so the next message still works.
+            answer = None
+            for attempt in (1, 2):
+                try:
+                    answer = session.run(task)
+                    break
+                except BudgetExceeded as exc:
+                    print(f"\n[budget] {exc}")
+                    break
+                except Exception as exc:
+                    if attempt == 1:
+                        print(f"\n[retry] stream failed ({type(exc).__name__}) — resending…")
+                        continue
+                    print(f"\n[error] {type(exc).__name__}: {exc} — turn aborted.")
+            if answer is None:
                 continue
             print(f"\n{answer}")
             print(f"\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")

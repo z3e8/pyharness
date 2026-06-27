@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Callable, Protocol
 
+from .. import telemetry
 from ..budget import Budget
 
 # Tiers let the agent reason about cost/capability instead of model strings.
@@ -82,14 +83,23 @@ class AnthropicLLM:
 
     def __init__(self, budget: Budget | None = None, max_tokens: int = 8000):
         anthropic = import_module("anthropic")
-        self._client = anthropic.Anthropic()
+        httpx = import_module("httpx")
+        # A stalled stream must fail fast, not hang forever: `read` bounds the gap
+        # between chunks, so a silent connection raises instead of blocking the
+        # session indefinitely. `max_retries` lets the SDK transparently recover
+        # transient drops before the error surfaces to the agent loop.
+        self._client = anthropic.Anthropic(
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=20.0, pool=10.0),
+            max_retries=2,
+        )
         self._budget = budget
         self._max_tokens = max_tokens
 
-    def _record(self, usage: object, model: str) -> None:
+    def _record(self, usage: object, model: str) -> Usage:
+        u = Usage.from_response(usage, model)
         if self._budget is not None:
-            u = Usage.from_response(usage, model)
             self._budget.record(u.model, u.cost_usd)
+        return u
 
     def complete(
         self,
