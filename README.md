@@ -45,6 +45,20 @@ agent writes one with `save_skill(name, description, instructions, files=...)`;
 
 ## Run
 
+Everything is driven by `make` (run `make help` for the full list); config lives
+in one `.env`:
+
+```bash
+make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .env
+make run       # interactive CLI
+make test      # tests (no API key)
+
+make up        # optional: local observability stack (Langfuse + Prometheus)
+make observe   # optional: built-in file-based session timeline UI
+```
+
+Or drive it directly without make:
+
 ```bash
 uv venv && uv pip install -e .
 ANTHROPIC_API_KEY=... uv run python examples/demo.py   # one task
@@ -52,3 +66,5 @@ ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 
 uv pip install pytest && uv run pytest -q               # tests (no API key)
 ```
+
+Observability is opt-in — see [`docs/observability.md`](docs/observability.md).

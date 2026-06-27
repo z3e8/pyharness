@@ -1,48 +1,45 @@
 # Local observability stack
 
-Run pyharness's telemetry backends on your machine. Same containers deploy to the
-cloud later — only endpoints/secrets change. Full design: [`docs/observability.md`](../../docs/observability.md).
+Backends for pyharness telemetry, run with one command. Same containers deploy to
+the cloud later — only endpoints/secrets change. Design: [`docs/observability.md`](../../docs/observability.md).
 
 ## Quick start
 
-```bash
-# 1. Bring up the stack (collector + Langfuse + Postgres/ClickHouse/Redis/MinIO + Prometheus)
-docker compose -f deploy/observability/docker-compose.yml up -d
-
-# 2. Open Langfuse, create an account (first user is owner), create a project.
-open http://localhost:3000
-
-# 3. In the project: Settings -> API Keys -> create. Then wire the collector to it:
-printf 'pk-lf-XXXX:sk-lf-XXXX' | base64        # -> <BASE64>
-cp deploy/observability/.env.example deploy/observability/.env
-#   set  LANGFUSE_OTEL_AUTH=Basic <BASE64>  in that .env, then:
-docker compose -f deploy/observability/docker-compose.yml up -d otel-collector
-
-# 4. Point pyharness at the collector and run it.
-export PYHARNESS_TELEMETRY_ENABLED=true
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-export OTEL_EXPORTER_OTLP_INSECURE=true     # plaintext gRPC, local only
-pyharness
-```
-
-Each turn shows up in Langfuse as a trace (`turn -> llm call / code cell -> capability call`)
-with token/cost/latency rolled up. Metrics are in Prometheus at http://localhost:9090.
-
-## Ports
-
-| Service | URL |
-|---|---|
-| Langfuse UI | http://localhost:3000 |
-| OTLP gRPC / HTTP | localhost:4317 / 4318 |
-| Prometheus | http://localhost:9090 |
-| MinIO console | http://localhost:9291 |
-
-## Teardown
+From the repo root:
 
 ```bash
-docker compose -f deploy/observability/docker-compose.yml down        # keep data
-docker compose -f deploy/observability/docker-compose.yml down -v     # wipe data
+make setup        # creates .env (once); set ANTHROPIC_API_KEY in it
+make up           # starts the stack, waits until Langfuse is ready
+make run          # runs pyharness with telemetry wired up
 ```
 
-> The secrets in `docker-compose.yml` are **dev-only**. Override every `CHANGE-ME`
-> before exposing this anywhere but localhost.
+That's it. No UI clicks, no API-key copying: Langfuse **self-provisions** a
+project and login from the keys in `.env` (`LANGFUSE_*`) on first boot, and the
+OTel Collector authenticates to it with the same pair. Each turn appears in
+Langfuse as a trace (`turn → llm call / code cell → capability call`) with
+token/cost/latency rolled up; metrics are in Prometheus.
+
+Log in to the UI at http://localhost:3000 with `LANGFUSE_USER_EMAIL` /
+`LANGFUSE_USER_PASSWORD` from `.env`.
+
+## What's running
+
+| Service | URL / port | Role |
+|---|---|---|
+| OTel Collector | localhost:4317 (gRPC), 4318 (HTTP) | OTLP intake → fan out to backends |
+| Langfuse UI | http://localhost:3000 | LLM/agent traces, cost/token analytics |
+| Prometheus | http://localhost:9090 | metrics store (Grafana-ready) |
+| MinIO console | http://localhost:9291 | Langfuse blob store |
+| (postgres / clickhouse / redis) | internal | Langfuse storage |
+
+## Manage it
+
+```bash
+make down     # stop (keep data)
+make clean    # stop and wipe data volumes
+make logs     # tail stack logs
+```
+
+> The `LANGFUSE_*` and stack secrets in `.env` / `docker-compose.yml` are
+> **dev-only defaults**. Override every one before exposing this beyond localhost
+> (`make` reads them from `.env`).

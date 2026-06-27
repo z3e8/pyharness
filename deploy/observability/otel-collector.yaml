@@ -7,6 +7,15 @@
 # Adding or swapping a backend is an edit here, never a code change in pyharness.
 # That indirection is the whole reason the app speaks vendor-neutral OTLP.
 
+extensions:
+  # Builds the "Authorization: Basic ..." header for Langfuse from the project's
+  # public/secret keys — so no base64 lives anywhere; the keys come straight from
+  # .env (the same pair Langfuse auto-provisions itself with).
+  basicauth/langfuse:
+    client_auth:
+      username: ${env:LANGFUSE_PUBLIC_KEY}
+      password: ${env:LANGFUSE_SECRET_KEY}
+
 receivers:
   otlp:
     protocols:
@@ -37,12 +46,11 @@ processors:
   #       action: delete
 
 exporters:
-  # Langfuse ingests OTLP traces directly. LANGFUSE_OTEL_AUTH is
-  # "Basic base64(public_key:secret_key)" — see deploy/observability/README.md.
+  # Langfuse ingests OTLP traces directly; the basicauth extension supplies auth.
   otlphttp/langfuse:
     endpoint: ${env:LANGFUSE_OTEL_ENDPOINT}
-    headers:
-      Authorization: ${env:LANGFUSE_OTEL_AUTH}
+    auth:
+      authenticator: basicauth/langfuse
 
   prometheus:
     endpoint: 0.0.0.0:8889
@@ -53,6 +61,7 @@ exporters:
     verbosity: normal
 
 service:
+  extensions: [basicauth/langfuse]
   pipelines:
     traces:
       receivers: [otlp]

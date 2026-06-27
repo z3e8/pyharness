@@ -29,8 +29,10 @@ services:
       - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
     environment:
       LANGFUSE_OTEL_ENDPOINT: http://langfuse-web:3000/api/public/otel
-      # "Basic " + base64(PUBLIC_KEY:SECRET_KEY) from a Langfuse project.
-      LANGFUSE_OTEL_AUTH: ${LANGFUSE_OTEL_AUTH:-Basic Y2hhbmdlLW1lOmNoYW5nZS1tZQ==}
+      # The collector builds Basic auth from these (basicauth extension); same
+      # pair Langfuse self-provisions with, so no key copying or base64.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-dev}
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
@@ -53,11 +55,20 @@ services:
       - "3000:3000"
     environment: &langfuse-env
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
-      SALT: "CHANGE-ME-dev-salt"
-      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000" # CHANGE-ME (64 hex chars)
-      NEXTAUTH_SECRET: "CHANGE-ME-dev-nextauth-secret"
+      SALT: ${LANGFUSE_SALT:-dev-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-dev-nextauth-change-me}
       NEXTAUTH_URL: http://localhost:3000
       TELEMETRY_ENABLED: "false"
+      # Headless provisioning: creates this org/project/login with the given keys
+      # on first boot, so there's nothing to click or copy. See docs/observability.md.
+      LANGFUSE_INIT_ORG_ID: pyharness
+      LANGFUSE_INIT_PROJECT_ID: pyharness
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-dev}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_USER_EMAIL:-admin@example.com}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_USER_PASSWORD:-changeme1234}
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: clickhouse
