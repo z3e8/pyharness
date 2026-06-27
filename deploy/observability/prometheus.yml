@@ -1,0 +1,9 @@
+# Scrapes the metrics the OTel Collector re-exposes in Prometheus format.
+# Point Grafana at this Prometheus to build infra dashboards/alerts later.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]

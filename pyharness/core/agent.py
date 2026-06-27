@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
+from .. import telemetry
 from ..budget import Budget
 from ..llm.client import TIERS
 from .kernel import Kernel
@@ -186,7 +187,8 @@ class Agent:
             for call in completion.tool_calls:
                 code = call.input.get("code", "")
                 self.on_event("code", code)
-                output = self.kernel.run(code)
+                with telemetry.code_cell_span(code):
+                    output = self.kernel.run(code)
                 self.on_event("output", output)
                 results.append(
                     {"type": "tool_result", "tool_use_id": call.id, "content": output}

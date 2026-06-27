@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .. import telemetry
 from ..audit import AuditLog
 from ..budget import Budget
 from ..security.policy import Decision, Policy
@@ -74,24 +75,31 @@ class Broker:
     def call(self, cap: str, op: str, *args, **kwargs):
         action = f"{cap}.{op}"
 
-        decision = self.policy.decide(action, args, kwargs)
-        if decision is Decision.DENY:
-            self.audit.record(action=action, decision="deny", ok=False)
-            raise PermissionDenied(f"policy denied {action}")
-        if decision is Decision.APPROVE:
-            approved = bool(self.approver and self.approver(action, args, kwargs))
-            self.audit.record(action=action, decision="approve", approved=approved)
-            if not approved:
-                raise PermissionDenied(f"not approved: {action}")
+        with telemetry.tool_span(action) as span:
+            decision = self.policy.decide(action, args, kwargs)
+            if decision is Decision.DENY:
+                self.audit.record(action=action, decision="deny", ok=False)
+                telemetry.record_tool(span, action=action, decision="deny", ok=False)
+                raise PermissionDenied(f"policy denied {action}")
+            if decision is Decision.APPROVE:
+                approved = bool(self.approver and self.approver(action, args, kwargs))
+                self.audit.record(action=action, decision="approve", approved=approved)
+                if not approved:
+                    telemetry.record_tool(span, action=action, decision="approve", ok=False)
+                    raise PermissionDenied(f"not approved: {action}")
 
-        if cap in self.metered:
-            self.budget.check()
+            if cap in self.metered:
+                self.budget.check()
 
-        func = self._ops[(cap, op)]
-        try:
-            result = func(*args, **kwargs)
-        except Exception as exc:
-            self.audit.record(action=action, ok=False, error=repr(exc))
-            raise
-        self.audit.record(action=action, ok=True, args=summarize_args(args, kwargs))
-        return result
+            func = self._ops[(cap, op)]
+            try:
+                result = func(*args, **kwargs)
+            except Exception as exc:
+                self.audit.record(action=action, ok=False, error=repr(exc))
+                telemetry.record_tool(
+                    span, action=action, decision="allow", ok=False, error=repr(exc)
+                )
+                raise
+            self.audit.record(action=action, ok=True, args=summarize_args(args, kwargs))
+            telemetry.record_tool(span, action=action, decision="allow", ok=True)
+            return result

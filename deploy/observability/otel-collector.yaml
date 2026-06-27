@@ -1,0 +1,64 @@
+# OpenTelemetry Collector — the one hop between pyharness and the backends.
+#
+# pyharness exports OTLP/gRPC to this collector; the collector fans out:
+#   traces  -> Langfuse (LLM/agent analytics: per-turn timeline, cost, tokens)
+#   metrics -> Prometheus (aggregate counters/histograms; Grafana-ready)
+#
+# Adding or swapping a backend is an edit here, never a code change in pyharness.
+# That indirection is the whole reason the app speaks vendor-neutral OTLP.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+
+  # Defence-in-depth redaction. pyharness already keeps secret *values* out of
+  # spans (name-in/value-never-out), and content capture is gated by
+  # PYHARNESS_TELEMETRY_CAPTURE_CONTENT. This strips anything that slips through.
+  # Uncomment the prompt/output drops to run metadata-only in the cloud.
+  redaction/scrub:
+    allow_all_keys: true
+    blocked_values:
+      - "(?i)sk-[a-zA-Z0-9-_]{16,}"          # api keys
+      - "(?i)bearer\\s+[a-zA-Z0-9._-]{16,}"  # bearer tokens
+    summary: silent
+  # attributes/strip-content:
+  #   actions:
+  #     - key: pyharness.task
+  #       action: delete
+  #     - key: pyharness.code
+  #       action: delete
+
+exporters:
+  # Langfuse ingests OTLP traces directly. LANGFUSE_OTEL_AUTH is
+  # "Basic base64(public_key:secret_key)" — see deploy/observability/README.md.
+  otlphttp/langfuse:
+    endpoint: ${env:LANGFUSE_OTEL_ENDPOINT}
+    headers:
+      Authorization: ${env:LANGFUSE_OTEL_AUTH}
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [redaction/scrub, batch]
+      exporters: [otlphttp/langfuse, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

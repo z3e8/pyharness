@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
+from .. import telemetry
 from ..audit import AuditLog
 from ..broker.capabilities import (
     AgentsCapability,
@@ -50,6 +52,8 @@ class Session:
         mcp_config: str | Path | dict | None = None,
         skills_dir: str | Path | None = None,
     ):
+        telemetry.setup_telemetry()
+        self.id = uuid4().hex
         self.workspace = Workspace(root)
         self.budget = budget or Budget()
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
@@ -115,20 +119,24 @@ class Session:
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)
-        try:
-            answer = self.agent.run(task, self.messages)
-        except Exception as exc:
-            self.trace.record("error", f"{type(exc).__name__}: {exc}")
-            raise
-        finally:
-            self.trace.record(
-                "budget",
-                spent_usd=self.budget.spent_usd,
-                calls=self.budget.calls,
-                by_model=self.budget.by_model,
-            )
-        self.trace.record("answer", answer)
-        return answer
+        with telemetry.turn_span(task, self.id) as span:
+            try:
+                answer = self.agent.run(task, self.messages)
+            except Exception as exc:
+                self.trace.record("error", f"{type(exc).__name__}: {exc}")
+                raise
+            finally:
+                self.trace.record(
+                    "budget",
+                    spent_usd=self.budget.spent_usd,
+                    calls=self.budget.calls,
+                    by_model=self.budget.by_model,
+                )
+                telemetry.record_budget(
+                    span, spent_usd=self.budget.spent_usd, calls=self.budget.calls
+                )
+            self.trace.record("answer", answer)
+            return answer
 
     def close(self) -> None:
         """Tear down session resources (the child process, if out-of-process,

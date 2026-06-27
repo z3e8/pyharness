@@ -1,0 +1,166 @@
+# Local observability stack for pyharness.
+#
+#   docker compose -f deploy/observability/docker-compose.yml up -d
+#
+# Brings up:
+#   - otel-collector  : OTLP intake (4317 grpc / 4318 http), fans out to backends
+#   - langfuse-web    : the UI + API you look at  -> http://localhost:3000
+#   - langfuse-worker : async ingestion
+#   - postgres        : Langfuse metadata
+#   - clickhouse      : Langfuse trace store
+#   - redis           : Langfuse queue/cache
+#   - minio           : S3-compatible blob store for Langfuse events
+#   - prometheus      : metrics store              -> http://localhost:9090
+#
+# Then point pyharness at the collector (see deploy/observability/README.md):
+#   export PYHARNESS_TELEMETRY_ENABLED=true
+#   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+#
+# The secrets below are DEV-ONLY defaults. For any non-local use, override every
+# value marked CHANGE-ME via an .env file or your real secret manager.
+
+name: pyharness-observability
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    environment:
+      LANGFUSE_OTEL_ENDPOINT: http://langfuse-web:3000/api/public/otel
+      # "Basic " + base64(PUBLIC_KEY:SECRET_KEY) from a Langfuse project.
+      LANGFUSE_OTEL_AUTH: ${LANGFUSE_OTEL_AUTH:-Basic Y2hhbmdlLW1lOmNoYW5nZS1tZQ==}
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus scrape endpoint
+    depends_on:
+      - langfuse-web
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      SALT: "CHANGE-ME-dev-salt"
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000" # CHANGE-ME (64 hex chars)
+      NEXTAUTH_SECRET: "CHANGE-ME-dev-nextauth-secret"
+      NEXTAUTH_URL: http://localhost:3000
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: redis
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment: *langfuse-env
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--requirepass", "redis"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    ports:
+      - "9290:9000"   # S3 API
+      - "9291:9001"   # MinIO console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - minio-data:/data
+    # Create the Langfuse bucket on first boot.
+    entrypoint: >
+      /bin/sh -c "
+      minio server /data --console-address ':9001' &
+      until (mc alias set local http://localhost:9000 minio miniosecret) do sleep 1; done;
+      mc mb --ignore-existing local/langfuse;
+      wait
+      "
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"   # Prometheus UI
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  minio-data:
