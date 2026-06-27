@@ -50,11 +50,9 @@ in one `.env`:
 
 ```bash
 make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .env
-make run       # interactive CLI
+make dev       # observability (Phoenix) + the agent, one command → http://localhost:6006
+make run       # just the agent (no observability)
 make test      # tests (no API key)
-
-make up        # optional: local observability stack (Langfuse + Prometheus)
-make observe   # optional: built-in file-based session timeline UI
 ```
 
 Or drive it directly without make:

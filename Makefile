@@ -9,7 +9,9 @@ include .env
 export
 endif
 
-COMPOSE := docker compose --env-file .env -f deploy/observability/docker-compose.yml
+OBS := deploy/observability
+COMPOSE := docker compose --env-file .env -f $(OBS)/docker-compose.yml
+COMPOSE_LF := docker compose --env-file .env -f $(OBS)/docker-compose.langfuse.yml
 
 .DEFAULT_GOAL := help
 
@@ -19,13 +21,13 @@ help:
 	@echo "pyharness — make targets:"
 	@grep -hE '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
 	@echo ""
-	@echo "Typical first run:  make setup  →  edit .env (ANTHROPIC_API_KEY)  →  make up  →  make run"
+	@echo "First run:  make setup  →  edit .env (ANTHROPIC_API_KEY)  →  make dev"
 
 ## setup: create .env and install the package + dev deps (one-time)
 .PHONY: setup
 setup: .env install
 	@echo ""
-	@echo "✓ setup done. Edit .env and set ANTHROPIC_API_KEY, then: make up && make run"
+	@echo "✓ setup done. Edit .env and set ANTHROPIC_API_KEY, then: make dev"
 
 .env:
 	@cp .env.example .env
@@ -37,36 +39,54 @@ install:
 	uv venv
 	uv pip install -e . pytest
 
-## up: start the observability stack (Langfuse self-provisions) and wait until ready
-.PHONY: up
-up:
-	$(COMPOSE) up -d
-	@echo "waiting for Langfuse to come up (first boot runs migrations, ~30-60s)..."
-	@until curl -sf http://localhost:3000/api/public/health >/dev/null 2>&1; do printf '.'; sleep 3; done
-	@echo ""
-	@echo "✓ stack ready → Langfuse http://localhost:3000  (login: $${LANGFUSE_USER_EMAIL:-admin@example.com})  ·  Prometheus http://localhost:9090"
+## dev: start observability (background) and run the agent (foreground) — the daily command
+.PHONY: dev
+dev: up run
 
-## down: stop the observability stack (keeps data)
+## up: start the local Phoenix observability container and wait until ready
+.PHONY: up
+up: .env
+	$(COMPOSE) up -d
+	@echo "waiting for Phoenix..."
+	@until curl -sf http://localhost:6006/ >/dev/null 2>&1; do printf '.'; sleep 2; done
+	@echo ""
+	@echo "✓ Phoenix ready → http://localhost:6006"
+
+## down: stop the Phoenix container (keeps data)
 .PHONY: down
 down:
 	$(COMPOSE) down
 
-## clean: stop the stack and delete its data volumes
+## clean: stop Phoenix and delete its data volume
 .PHONY: clean
 clean:
 	$(COMPOSE) down -v
 
-## logs: tail the observability stack logs
+## logs: tail the Phoenix container logs
 .PHONY: logs
 logs:
 	$(COMPOSE) logs -f
 
+## up-langfuse: start the heavier Langfuse + Prometheus stack instead (multi-user/cloud profile)
+.PHONY: up-langfuse
+up-langfuse: .env
+	$(COMPOSE_LF) up -d
+	@echo "waiting for Langfuse (first boot runs migrations, ~30-60s)..."
+	@until curl -sf http://localhost:3000/api/public/health >/dev/null 2>&1; do printf '.'; sleep 3; done
+	@echo ""
+	@echo "✓ Langfuse ready → http://localhost:3000  ·  set PYHARNESS_TELEMETRY_METRICS=true in .env for metrics"
+
+## down-langfuse: stop the Langfuse stack
+.PHONY: down-langfuse
+down-langfuse:
+	$(COMPOSE_LF) down
+
 ## run: start the interactive pyharness agent (telemetry env from .env)
 .PHONY: run
-run:
+run: .env
 	uv run pyharness
 
-## observe: open the built-in session timeline UI (file-based, no stack needed)
+## observe: open the built-in file-based session timeline UI (no stack needed)
 .PHONY: observe
 observe:
 	uv run pyharness-observe

@@ -8,8 +8,9 @@ chokepoint, and the agent turn — so one run becomes a span tree (turn → code
 and denial counts).
 
 Why OTel: the instrumentation is vendor-neutral. Code never imports a backend
-SDK; where the data lands is configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`). Swap
-Langfuse for Grafana/anything by changing one env var — no code change.
+SDK; where the data lands is configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`). The
+default local backend is a single Phoenix container; swap it for Langfuse,
+Grafana, or anything by changing one env var — no code change.
 
 Design rules:
 - **Opt-in.** Off unless `PYHARNESS_TELEMETRY_ENABLED` is truthy or an OTLP
@@ -37,8 +38,8 @@ from contextlib import contextmanager
 log = logging.getLogger("pyharness.telemetry")
 
 # GenAI semantic-convention attribute names (kept as literals so we don't depend
-# on a specific opentelemetry-semantic-conventions version). Backends like
-# Langfuse map these automatically.
+# on a specific opentelemetry-semantic-conventions version). LLM-aware backends
+# (Phoenix, Langfuse) map these into their native cost/token fields automatically.
 _GEN_AI_SYSTEM = "gen_ai.system"
 _GEN_AI_OPERATION = "gen_ai.operation.name"
 _GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
@@ -86,11 +87,8 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
         return False
 
     try:
-        from opentelemetry import metrics, trace
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+        from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -104,16 +102,26 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         trace.set_tracer_provider(tracer_provider)
-
-        meter_provider = MeterProvider(
-            resource=resource,
-            metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
-        )
-        metrics.set_meter_provider(meter_provider)
-
         _tracer = trace.get_tracer("pyharness")
-        _meter = metrics.get_meter("pyharness")
-        _init_instruments()
+
+        # Metrics are opt-in. Trace-native backends (the default, Phoenix) don't
+        # implement the OTLP metrics service, and per-call cost/tokens/latency
+        # already ride on the spans. Enable for a metrics backend (Prometheus via
+        # the collector, the Langfuse profile).
+        if _truthy(os.environ.get("PYHARNESS_TELEMETRY_METRICS", "false")):
+            from opentelemetry import metrics
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+            from opentelemetry.sdk.metrics import MeterProvider
+            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+            meter_provider = MeterProvider(
+                resource=resource,
+                metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
+            )
+            metrics.set_meter_provider(meter_provider)
+            _meter = metrics.get_meter("pyharness")
+            _init_instruments()
+
         _capture_content = _truthy(os.environ.get("PYHARNESS_TELEMETRY_CAPTURE_CONTENT", "true"))
         _enabled = True
         log.info("telemetry enabled → %s", endpoint or "(default OTLP endpoint)")

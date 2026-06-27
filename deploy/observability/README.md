@@ -1,45 +1,45 @@
-# Local observability stack
+# Local observability
 
-Backends for pyharness telemetry, run with one command. Same containers deploy to
-the cloud later — only endpoints/secrets change. Design: [`docs/observability.md`](../../docs/observability.md).
+pyharness emits OpenTelemetry traces; this is where they land. Design:
+[`docs/observability.md`](../../docs/observability.md).
 
-## Quick start
+## Default: Phoenix (one container)
 
 From the repo root:
 
 ```bash
-make setup        # creates .env (once); set ANTHROPIC_API_KEY in it
-make up           # starts the stack, waits until Langfuse is ready
-make run          # runs pyharness with telemetry wired up
+make setup     # creates .env (once); set ANTHROPIC_API_KEY in it
+make dev       # starts Phoenix + runs the agent
 ```
 
-That's it. No UI clicks, no API-key copying: Langfuse **self-provisions** a
-project and login from the keys in `.env` (`LANGFUSE_*`) on first boot, and the
-OTel Collector authenticates to it with the same pair. Each turn appears in
-Langfuse as a trace (`turn → llm call / code cell → capability call`) with
-token/cost/latency rolled up; metrics are in Prometheus.
+`make dev` = `make up` (Phoenix in the background) + `make run` (the agent in the
+foreground). Open **http://localhost:6006** — each turn is a trace
+(`turn → llm call / code cell → capability call`) with per-call cost, tokens, and
+latency. [Phoenix](https://github.com/Arize-ai/phoenix) is OTLP-native and
+LLM-aware, so there's no collector and no database to run — just the one
+container. Traces persist in a Docker volume across restarts.
 
-Log in to the UI at http://localhost:3000 with `LANGFUSE_USER_EMAIL` /
-`LANGFUSE_USER_PASSWORD` from `.env`.
-
-## What's running
-
-| Service | URL / port | Role |
-|---|---|---|
-| OTel Collector | localhost:4317 (gRPC), 4318 (HTTP) | OTLP intake → fan out to backends |
-| Langfuse UI | http://localhost:3000 | LLM/agent traces, cost/token analytics |
-| Prometheus | http://localhost:9090 | metrics store (Grafana-ready) |
-| MinIO console | http://localhost:9291 | Langfuse blob store |
-| (postgres / clickhouse / redis) | internal | Langfuse storage |
-
-## Manage it
+Manage it:
 
 ```bash
-make down     # stop (keep data)
-make clean    # stop and wipe data volumes
-make logs     # tail stack logs
+make down      # stop (keep data)
+make clean     # stop and wipe the trace volume
+make logs      # tail Phoenix logs
 ```
 
-> The `LANGFUSE_*` and stack secrets in `.env` / `docker-compose.yml` are
-> **dev-only defaults**. Override every one before exposing this beyond localhost
-> (`make` reads them from `.env`).
+## Heavier profile: Langfuse + Prometheus (multi-user / cloud)
+
+When you want cross-session analytics dashboards and aggregate metrics — or you're
+moving toward hosting — use the Langfuse stack instead. Same app code; it just
+points at a collector that fans out to Langfuse (traces) and Prometheus (metrics).
+
+```bash
+# set PYHARNESS_TELEMETRY_METRICS=true in .env to emit metrics, then:
+make up-langfuse        # Langfuse http://localhost:3000 · Prometheus http://localhost:9090
+make down-langfuse
+```
+
+Langfuse self-provisions its project/login from the `LANGFUSE_*` defaults in
+`docker-compose.langfuse.yml`, and the collector authenticates via the OTel
+`basicauth` extension — no UI clicks, no API-key copying. Those defaults are
+**dev-only**; override them before any non-local use.
