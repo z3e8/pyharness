@@ -30,6 +30,7 @@ explicit propagation.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -209,9 +210,13 @@ def code_cell_span(code: str):
 
 
 @contextmanager
-def llm_span(model: str, tier: str):
+def llm_span(model: str, tier: str, system: str | None = None, messages: list | None = None):
     """GenAI client span for one LLM completion. Call `record_llm()` inside once
-    usage is known; latency is recorded here on exit."""
+    usage is known; latency is recorded here on exit.
+
+    When `capture_content()`, the system prompt + message history are attached as
+    OpenInference attributes so LLM-aware backends (Phoenix) render them in their
+    input-messages panel — the prompt for this call, visible in the trace."""
     if not _enabled:
         yield None
         return
@@ -222,6 +227,11 @@ def llm_span(model: str, tier: str):
             span.set_attribute(_GEN_AI_OPERATION, "chat")
             span.set_attribute(_GEN_AI_REQUEST_MODEL, model)
             span.set_attribute("pyharness.tier", tier)
+            # OpenInference: mark this as an LLM span and attach the input prompt.
+            span.set_attribute("openinference.span.kind", "LLM")
+            span.set_attribute("llm.model_name", model)
+            if _capture_content:
+                _set_input_messages(span, system, messages)
             try:
                 yield span
             except Exception as exc:
@@ -244,15 +254,23 @@ def record_llm(
     cache_read: int = 0,
     cache_create: int = 0,
     cost_usd: float = 0.0,
+    output_text: str | None = None,
+    tool_calls: list | None = None,
 ) -> None:
     """Attach usage to the current LLM span and record the token/cost/call
-    metrics. No-op when telemetry is off."""
+    metrics. No-op when telemetry is off.
+
+    When `capture_content()`, the completion text + any tool calls are attached as
+    OpenInference output messages so the backend shows the model's reply for this
+    call alongside the prompt."""
     if not _enabled:
         return
     try:
         from opentelemetry import trace
 
         span = trace.get_current_span()
+        if _capture_content:
+            _set_output_message(span, output_text, tool_calls)
         span.set_attribute(_GEN_AI_USAGE_INPUT, input_tokens)
         span.set_attribute(_GEN_AI_USAGE_OUTPUT, output_tokens)
         span.set_attribute("gen_ai.usage.cache_read_input_tokens", cache_read)
@@ -322,6 +340,66 @@ def record_budget(span, *, spent_usd: float, calls: int) -> None:
 
 
 # --- internals ------------------------------------------------------------
+
+# Cap per-message text so a long history can't bloat a span. Generous: prompts
+# are the point of this capture.
+_MSG_LIMIT = 16000
+
+
+def _block_text(block) -> str:
+    """Flatten one content block (dict or SDK object) to a readable string."""
+    t = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+    get = (lambda k, d=None: block.get(k, d)) if isinstance(block, dict) else (lambda k, d=None: getattr(block, k, d))
+    if t == "text":
+        return get("text", "") or ""
+    if t == "tool_use":
+        return f"[tool_use {get('name', '')}] {json.dumps(dict(get('input', {})), default=str)}"
+    if t == "tool_result":
+        return f"[tool_result] {get('content', '')}"
+    if t == "thinking":
+        return f"[thinking] {get('thinking', '') or ''}"
+    return f"[{t}]" if t else str(block)
+
+
+def _content_to_str(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(_block_text(b) for b in content)
+    return str(content)
+
+
+def _set_input_messages(span, system: str | None, messages: list | None) -> None:
+    """Attach system + history as OpenInference input messages (Phoenix panel)."""
+    idx = 0
+    if system:
+        span.set_attribute(f"llm.input_messages.{idx}.message.role", "system")
+        span.set_attribute(f"llm.input_messages.{idx}.message.content", system[:_MSG_LIMIT])
+        idx += 1
+    for m in messages or []:
+        role = m.get("role", "user") if isinstance(m, dict) else getattr(m, "role", "user")
+        text = _content_to_str(m.get("content") if isinstance(m, dict) else getattr(m, "content", ""))
+        span.set_attribute(f"llm.input_messages.{idx}.message.role", role)
+        span.set_attribute(f"llm.input_messages.{idx}.message.content", text[:_MSG_LIMIT])
+        idx += 1
+
+
+def _set_output_message(span, output_text: str | None, tool_calls: list | None) -> None:
+    """Attach the completion (text + tool calls) as one OpenInference output message."""
+    parts = []
+    if output_text:
+        parts.append(output_text)
+    for i, tc in enumerate(tool_calls or []):
+        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+        inp = tc.get("input") if isinstance(tc, dict) else getattr(tc, "input", {})
+        parts.append(f"[tool_use {name}] {json.dumps(dict(inp or {}), default=str)}")
+        span.set_attribute(f"llm.output_messages.0.message.tool_calls.{i}.tool_call.function.name", name or "")
+        span.set_attribute(
+            f"llm.output_messages.0.message.tool_calls.{i}.tool_call.function.arguments",
+            json.dumps(dict(inp or {}), default=str)[:_MSG_LIMIT],
+        )
+    span.set_attribute("llm.output_messages.0.message.role", "assistant")
+    span.set_attribute("llm.output_messages.0.message.content", ("\n".join(parts))[:_MSG_LIMIT])
 
 
 def _add(name: str, amount, attrs: dict) -> None:

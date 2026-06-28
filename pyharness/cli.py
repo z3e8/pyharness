@@ -32,9 +32,9 @@ def _trace(kind: str, text: str) -> None:
         # Stream LLM tokens inline as they arrive — no box frame, no newline
         print(text, end="", flush=True)
         return
-    if kind in ("llm_partial", "llm_call"):
-        # llm_partial is for the observe UI; llm_call fires after streaming is done.
-        # Both are already visible via streamed tokens above, so suppress here.
+    if kind == "llm_call":
+        # llm_call fires after streaming is done; already visible via the
+        # streamed tokens above, so suppress the duplicate box here.
         return
     color = _COLORS.get(kind, "")
     label = {"code": "python", "output": "output", "note": "note"}.get(kind, kind)

@@ -86,6 +86,52 @@ def test_spans_nest_into_one_trace_with_metrics(tmp_path):
         telemetry._enabled = False
 
 
+def test_llm_span_captures_prompt_and_completion(tmp_path):
+    exporter, _ = _enable_in_memory()
+    try:
+        messages = [
+            {"role": "user", "content": "find the bug"},
+            {"role": "assistant", "content": [{"type": "text", "text": "checking"}]},
+            {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]},
+        ]
+        with telemetry.llm_span("claude-haiku-4-5", "cheap", system="be helpful", messages=messages):
+            telemetry.record_llm(
+                model="claude-haiku-4-5",
+                tier="cheap",
+                input_tokens=1,
+                output_tokens=1,
+                output_text="here it is",
+                tool_calls=[{"name": "run_python", "input": {"code": "print(1)"}}],
+            )
+        attrs = exporter.get_finished_spans()[0].attributes
+        # OpenInference markers so Phoenix renders the messages panel.
+        assert attrs["openinference.span.kind"] == "LLM"
+        # System prompt is message 0, then the history in order.
+        assert attrs["llm.input_messages.0.message.role"] == "system"
+        assert attrs["llm.input_messages.0.message.content"] == "be helpful"
+        assert attrs["llm.input_messages.1.message.content"] == "find the bug"
+        assert "checking" in attrs["llm.input_messages.2.message.content"]
+        # Completion text + tool call on the output side.
+        assert "here it is" in attrs["llm.output_messages.0.message.content"]
+        assert attrs["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"] == "run_python"
+    finally:
+        telemetry._enabled = False
+
+
+def test_content_capture_off_omits_prompt(tmp_path):
+    exporter, _ = _enable_in_memory()
+    telemetry._capture_content = False
+    try:
+        with telemetry.llm_span("m", "cheap", system="secret", messages=[{"role": "user", "content": "hi"}]):
+            telemetry.record_llm(model="m", tier="cheap", input_tokens=1, output_tokens=1, output_text="x")
+        attrs = exporter.get_finished_spans()[0].attributes
+        assert "llm.input_messages.0.message.content" not in attrs
+        assert "llm.output_messages.0.message.content" not in attrs
+    finally:
+        telemetry._enabled = False
+        telemetry._capture_content = True
+
+
 def test_denied_tool_records_error(tmp_path):
     exporter, reader = _enable_in_memory()
     try:

@@ -13,7 +13,6 @@ dependencies = [
 
 [project.scripts]
 pyharness = "pyharness.cli:main"
-pyharness-observe = "pyharness.observe:main"
 pyharness-vault = "pyharness.cli_vault:main"
 
 [build-system]

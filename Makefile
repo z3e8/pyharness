@@ -86,11 +86,6 @@ down-langfuse:
 run: .env
 	uv run pyharness
 
-## observe: open the built-in file-based session timeline UI (no stack needed)
-.PHONY: observe
-observe:
-	uv run pyharness-observe
-
 ## test: run the test suite (no API key needed)
 .PHONY: test
 test:

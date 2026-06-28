@@ -127,13 +127,20 @@ class AnthropicLLM:
         # Stream and reassemble: the SDK refuses non-streaming requests whose
         # max_tokens could exceed its timeout, so streaming is what lets the
         # large per-tier ceilings above work.
-        with telemetry.llm_span(model, tier):
+        with telemetry.llm_span(model, tier, system=system, messages=messages):
             with self._client.messages.stream(**kwargs) as stream:
                 if on_token is not None:
                     for chunk in stream.text_stream:
                         on_token(chunk)
                 resp = stream.get_final_message()
             usage = self._record(resp.usage, model)
+
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            tool_calls = [
+                ToolCall(b.id, b.name, dict(b.input))
+                for b in resp.content
+                if b.type == "tool_use"
+            ]
             telemetry.record_llm(
                 model=model,
                 tier=tier,
@@ -142,14 +149,10 @@ class AnthropicLLM:
                 cache_read=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
                 cache_create=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
                 cost_usd=usage.cost_usd,
+                output_text=text,
+                tool_calls=[{"name": tc.name, "input": tc.input} for tc in tool_calls],
             )
 
-        text = "".join(b.text for b in resp.content if b.type == "text")
-        tool_calls = [
-            ToolCall(b.id, b.name, dict(b.input))
-            for b in resp.content
-            if b.type == "tool_use"
-        ]
         return Completion(text, tool_calls, resp.content, resp.stop_reason)
 
     def web_search(self, query: str, tier: str = "cheap", max_rounds: int = 6) -> str:
