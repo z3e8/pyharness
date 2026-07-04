@@ -10,7 +10,7 @@ dist/
 *.egg-info/
 
 .env
-agents/
-docs/
+
+
 personal-old/
 .tmp-session/
