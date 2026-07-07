@@ -14,3 +14,6 @@ dist/
 
 personal-old/
 .tmp-session/
+
+# Old docs — kept locally, not tracked (superseded by new docs system)
+docs/
