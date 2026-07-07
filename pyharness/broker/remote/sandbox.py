@@ -23,7 +23,7 @@ from pathlib import Path
 #      (no core dumps; a cap on processes blunts fork bombs).
 #
 # Linux/container confinement (seccomp, namespaces) is not built here; on
-# non-macOS only the resource limits apply. See docs/design.md §11.
+# non-macOS only the resource limits apply. See docs/explanation/security-and-audit.md.
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 

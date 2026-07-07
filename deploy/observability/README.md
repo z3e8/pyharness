@@ -1,7 +1,7 @@
 # Local observability
 
-pyharness emits OpenTelemetry traces; this is where they land. Design:
-[`docs/observability.md`](../../docs/observability.md).
+pyharness emits OpenTelemetry traces; this is where they land. Guide:
+[`docs/how-to/observability.md`](../../docs/how-to/observability.md).
 
 ## Default: Phoenix (one container)
 

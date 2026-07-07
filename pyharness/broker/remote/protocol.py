@@ -18,7 +18,7 @@ from dataclasses import dataclass
 # child -> parent (cell finished):
 #   ("done", output:str)     captured stdout/stderr/traceback for the orchestrator
 #
-# Trust boundary (see docs/design.md §3/§11). The parent is privileged (vault,
+# Trust boundary (see docs/explanation/security-and-audit.md). The parent is privileged (vault,
 # broker, LLM client) and runs *unsandboxed*; the child runs LLM-authored code
 # and is the thing we don't trust. The two directions are therefore encoded
 # differently:

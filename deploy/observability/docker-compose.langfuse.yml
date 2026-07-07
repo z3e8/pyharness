@@ -65,7 +65,7 @@ services:
       NEXTAUTH_URL: http://localhost:3000
       TELEMETRY_ENABLED: "false"
       # Headless provisioning: creates this org/project/login with the given keys
-      # on first boot, so there's nothing to click or copy. See docs/observability.md.
+      # on first boot, so there's nothing to click or copy. See docs/how-to/observability.md.
       LANGFUSE_INIT_ORG_ID: pyharness
       LANGFUSE_INIT_PROJECT_ID: pyharness
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev}
