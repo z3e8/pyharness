@@ -57,3 +57,17 @@ For multi-step tasks, state a brief plan:
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ## 5. Read as much as you need but do not read excessively. Instead, search deliberately for what you need. Simply reading a lot of code will not help you, it is better to search for what you need. 
+
+## 6. Keep Docs In Sync As You Work
+
+**When a change makes a doc wrong, fixing the doc is part of the change — not a follow-up.**
+
+- Docs live in `docs/`, organized by [Diátaxis](https://diataxis.fr/): `tutorials/`
+  (learning), `how-to/` (tasks), `reference/` (lookup), `explanation/` (why). Put
+  each fact in the right quadrant; don't mix them.
+- If your change alters behavior a user relies on — a builtin, CLI flag, config
+  key, or public API — update the affected page in the same change.
+- Update `AGENTS.md` when commands, repo layout, or conventions change; update
+  this `CLAUDE.md` when our working agreements change.
+- Same rules as code: surgical, no speculative or unshipped behavior. Don't
+  document what isn't true yet.
