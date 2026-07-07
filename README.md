@@ -6,7 +6,7 @@ persistent kernel. There are no fine-grained JSON tool calls — when the agent
 needs a capability, it writes Python (`web_search(q)`, `read(path)`,
 `map_agents(tasks)`).
 
-See [`docs/design.md`](docs/design.md) for the full design and the V1-vs-later split.
+See the [documentation](docs/index.md) for the full design, guides, and reference.
 
 ## How it works
 
@@ -31,17 +31,17 @@ print(session.run("Write fib.py, run it, and confirm the output."))
 The agent reaches the world the way Python does — **builtins** always in scope,
 **tools** imported on demand. Builtins (called directly by bare name): `read`
 `write` `edit` `bash` `search` `web_search` `web_fetch` `llm` `agent`
-`map_agents` `search_tools` `use_tool` `save_skill`. Everything else — installed
-integrations, MCP servers, learned skills — is a tool the agent finds with
-`search_tools()` and loads with `use_tool()`. Relative paths resolve inside the
-session workspace.
+`secrets` `map_agents` `search_tools` `describe_tool` `use_tool` `save_skill`.
+Everything else — installed integrations, MCP servers, learned skills — is a tool
+the agent finds with `search_tools()` and loads with `use_tool()`. Relative paths
+resolve inside the session workspace.
 
 **Skills.** A skill is a learned tool the agent (or a human) saves once and reuses
 across sessions: markdown instructions plus optional bundled `.py` modules, stored
 under `~/.pyharness/skills/<name>/` (override with `Session(skills_dir=...)`). The
 agent writes one with `save_skill(name, description, instructions, files=...)`;
 `describe_tool` shows its instructions, `use_tool` loads its code. See
-[`docs/skills.md`](docs/skills.md).
+[Add a tool or save a skill](docs/how-to/add-a-tool-or-skill.md).
 
 ## Run
 
@@ -65,4 +65,4 @@ ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 uv pip install pytest && uv run pytest -q               # tests (no API key)
 ```
 
-Observability is opt-in — see [`docs/observability.md`](docs/observability.md).
+Observability is opt-in — see [Run with observability](docs/how-to/observability.md).
