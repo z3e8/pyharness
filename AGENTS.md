@@ -2,7 +2,8 @@
 
 Context for AI coding agents working in this repo. Keep this file to
 **non-inferable** facts (commands, layout, conventions, gotchas) — not things
-you can read from the code. For working-style rules, also read `CLAUDE.md`.
+you can read from the code. Universal working-style rules live in the global
+`~/.claude/CLAUDE.md` (source: `~/code/skills/CLAUDE.md`), loaded automatically.
 
 ## What this is
 
@@ -48,7 +49,8 @@ Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`.
 
 ## Conventions
 
-- Python ≥ 3.11. Match surrounding style; keep changes surgical (see `CLAUDE.md`).
+- Python ≥ 3.11. Match surrounding style; keep changes surgical (see the global
+  working style).
 - Every side effect the agent takes goes through `broker/dispatch.py` — add new
   capabilities there, not by scattering I/O across modules.
 - The audit log is a tamper-evident hash chain; verify with
