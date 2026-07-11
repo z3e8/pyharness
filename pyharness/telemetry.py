@@ -178,18 +178,22 @@ def turn_span(task: str, session_id: str):
         yield None
         return
     try:
-        with _tracer.start_as_current_span("pyharness.turn") as span:
-            span.set_attribute("session.id", session_id)
-            if _capture_content and task:
-                span.set_attribute("pyharness.task", task[:4000])
-            try:
-                yield span
-            except Exception as exc:
-                _fail(span, exc, source="turn")
-                raise
+        cm = _tracer.start_as_current_span("pyharness.turn")
+        span = cm.__enter__()
+        span.set_attribute("session.id", session_id)
+        if _capture_content and task:
+            span.set_attribute("pyharness.task", task[:4000])
     except Exception:  # noqa: BLE001 — never let span machinery break the turn
         log.debug("turn_span failed", exc_info=True)
         yield None
+        return
+    try:
+        yield span
+    except Exception as exc:
+        _fail(span, exc, source="turn")
+        raise
+    finally:
+        cm.__exit__(None, None, None)
 
 
 @contextmanager
@@ -200,13 +204,18 @@ def code_cell_span(code: str):
         yield None
         return
     try:
-        with _tracer.start_as_current_span("pyharness.code_cell") as span:
-            if _capture_content and code:
-                span.set_attribute("pyharness.code", code[:8000])
-            yield span
+        cm = _tracer.start_as_current_span("pyharness.code_cell")
+        span = cm.__enter__()
+        if _capture_content and code:
+            span.set_attribute("pyharness.code", code[:8000])
     except Exception:  # noqa: BLE001
         log.debug("code_cell_span failed", exc_info=True)
         yield None
+        return
+    try:
+        yield span
+    finally:
+        cm.__exit__(None, None, None)
 
 
 @contextmanager
@@ -222,27 +231,30 @@ def llm_span(model: str, tier: str, system: str | None = None, messages: list | 
         return
     start = time.perf_counter()
     try:
-        with _tracer.start_as_current_span(f"chat {model}") as span:
-            span.set_attribute(_GEN_AI_SYSTEM, "anthropic")
-            span.set_attribute(_GEN_AI_OPERATION, "chat")
-            span.set_attribute(_GEN_AI_REQUEST_MODEL, model)
-            span.set_attribute("pyharness.tier", tier)
-            # OpenInference: mark this as an LLM span and attach the input prompt.
-            span.set_attribute("openinference.span.kind", "LLM")
-            span.set_attribute("llm.model_name", model)
-            if _capture_content:
-                _set_input_messages(span, system, messages)
-            try:
-                yield span
-            except Exception as exc:
-                _fail(span, exc, source="llm")
-                _add("errors", 1, {"source": "llm"})
-                raise
-            finally:
-                _record("llm_duration", time.perf_counter() - start, {_GEN_AI_REQUEST_MODEL: model})
+        cm = _tracer.start_as_current_span(f"chat {model}")
+        span = cm.__enter__()
+        span.set_attribute(_GEN_AI_SYSTEM, "anthropic")
+        span.set_attribute(_GEN_AI_OPERATION, "chat")
+        span.set_attribute(_GEN_AI_REQUEST_MODEL, model)
+        span.set_attribute("pyharness.tier", tier)
+        # OpenInference: mark this as an LLM span and attach the input prompt.
+        span.set_attribute("openinference.span.kind", "LLM")
+        span.set_attribute("llm.model_name", model)
+        if _capture_content:
+            _set_input_messages(span, system, messages)
     except Exception:  # noqa: BLE001
         log.debug("llm_span failed", exc_info=True)
         yield None
+        return
+    try:
+        yield span
+    except Exception as exc:
+        _fail(span, exc, source="llm")
+        _add("errors", 1, {"source": "llm"})
+        raise
+    finally:
+        _record("llm_duration", time.perf_counter() - start, {_GEN_AI_REQUEST_MODEL: model})
+        cm.__exit__(None, None, None)
 
 
 def record_llm(
@@ -297,15 +309,18 @@ def tool_span(action: str):
         return
     start = time.perf_counter()
     try:
-        with _tracer.start_as_current_span(f"tool {action}") as span:
-            span.set_attribute("pyharness.action", action)
-            try:
-                yield span
-            finally:
-                _record("tool_duration", time.perf_counter() - start, {"pyharness.action": action})
+        cm = _tracer.start_as_current_span(f"tool {action}")
+        span = cm.__enter__()
+        span.set_attribute("pyharness.action", action)
     except Exception:  # noqa: BLE001
         log.debug("tool_span failed", exc_info=True)
         yield None
+        return
+    try:
+        yield span
+    finally:
+        _record("tool_duration", time.perf_counter() - start, {"pyharness.action": action})
+        cm.__exit__(None, None, None)
 
 
 def record_tool(span, *, action: str, decision: str, ok: bool, error: str | None = None) -> None:

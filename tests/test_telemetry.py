@@ -2,6 +2,7 @@
 network. We assert spans nest into one trace with the right attributes, the
 metrics fire, and everything is a clean no-op when disabled."""
 
+import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
@@ -141,6 +142,28 @@ def test_denied_tool_records_error(tmp_path):
         assert span.attributes["decision"] == "deny"
         assert span.attributes["ok"] is False
         assert "pyharness.errors" in _metric_names(reader)
+    finally:
+        telemetry._enabled = False
+
+
+def test_body_exception_propagates_through_span(tmp_path):
+    # A span guards its own machinery, not the body: an exception raised inside
+    # the `with` must come back out unchanged. Regression for the swallowing
+    # `except` that re-yielded and raised "generator didn't stop after throw()".
+    exporter, _ = _enable_in_memory()
+    try:
+        class Boom(Exception):
+            pass
+
+        for span_cm in (
+            telemetry.turn_span("t", "s"),
+            telemetry.code_cell_span("code"),
+            telemetry.llm_span("m", "cheap"),
+            telemetry.tool_span("skills.save_skill"),
+        ):
+            with pytest.raises(Boom):
+                with span_cm:
+                    raise Boom("from body")
     finally:
         telemetry._enabled = False
 
