@@ -60,8 +60,9 @@ pages track specific sources — when you touch the left, update the right:
 | policy defaults, vault rules, or the sandbox | `explanation/security-and-audit.md` |
 | how side effects route through the broker | `explanation/broker.md` |
 
-Also check `README.md` (it inlines the builtin list and quickstart) and the
-repo map in `AGENTS.md` when structure moves.
+Also check `README.md` (it has the quickstart and a few illustrative builtin
+names, then links to `reference/builtins.md` for the full set) and the repo map
+in `AGENTS.md` when structure moves.
 
 ## Writing rules
 
