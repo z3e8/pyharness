@@ -28,13 +28,12 @@ session = Session(".sessions/demo", budget=Budget(limit_usd=2.0))
 print(session.run("Write fib.py, run it, and confirm the output."))
 ```
 
-The agent reaches the world the way Python does — **builtins** always in scope,
-**tools** imported on demand. Builtins (called directly by bare name): `read`
-`write` `edit` `bash` `search` `web_search` `web_fetch` `llm` `agent`
-`secrets` `map_agents` `search_tools` `describe_tool` `use_tool` `save_skill`.
-Everything else — installed integrations, MCP servers, learned skills — is a tool
-the agent finds with `search_tools()` and loads with `use_tool()`. Relative paths
-resolve inside the session workspace.
+The agent reaches the world the way Python does — **builtins** always in scope
+(called by bare name: `read`, `bash`, `web_search`, `llm`, `agent`, …),
+**tools** imported on demand. Everything else — installed integrations, MCP
+servers, learned skills — is a tool the agent finds with `search_tools()` and
+loads with `use_tool()`. The [Builtins reference](docs/reference/builtins.md)
+lists the full set. Relative paths resolve inside the session workspace.
 
 **Skills.** A skill is a learned tool the agent (or a human) saves once and reuses
 across sessions: markdown instructions plus optional bundled `.py` modules, stored
