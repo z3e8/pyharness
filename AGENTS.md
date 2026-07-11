@@ -52,9 +52,6 @@ load-bearing seams are.
 
 ## Conventions
 
-- Work directly on `main` and commit as you go — no branch-per-change. When you
-  need isolation, use the `worktrees` skill (`/worktree`): it branches off
-  `main` and merges back into `main`.
 - Python ≥ 3.11. Match surrounding style; keep changes surgical.
 - Every side effect the agent takes goes through `broker/dispatch.py` — add new
   capabilities there, not by scattering I/O across modules.
