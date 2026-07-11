@@ -13,6 +13,16 @@ a persistent Jupyter-style kernel. No fine-grained JSON tools; capabilities are
 builtins in scope or tools imported on demand. See `docs/explanation/` for the
 model.
 
+## Workflow
+
+1. **Orient.** Skim the relevant `docs/explanation/` page for the subsystem
+   you're touching, then read the code. Don't reread what you already know.
+2. **Change.** Keep it surgical, match surrounding style, and route every side
+   effect through `broker/dispatch.py` (see Conventions).
+3. **Verify.** `make test` must be green before a change is done.
+4. **Sync docs.** If the change made a doc, flag, or this file wrong, fix it in
+   the same commit (see Docs).
+
 ## Commands
 
 Everything is driven by `make` (`make help` lists all targets). `uv` is the
@@ -45,7 +55,8 @@ Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`.
 | `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `cli.py`, `cli_vault.py` |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
 | `deploy/observability/` | docker-compose for Phoenix (default) and Langfuse (heavier profile) |
-| `docs/` | documentation, organized by Diátaxis (see `docs/index.md`) |
+| `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
+| `.claude/skills/docs/` | the `docs` skill: how to use and maintain the docs |
 
 ## Conventions
 
@@ -55,6 +66,16 @@ Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`.
   capabilities there, not by scattering I/O across modules.
 - The audit log is a tamper-evident hash chain; verify with
   `make verify-audit DIR=.sessions/<name>`.
+
+## Docs
+
+Live docs are `docs/` (explanation / how-to / reference). Consult them to
+orient; keep them true. A change that alters behavior, a builtin, a flag, or a
+config var must update the matching page **in the same commit** — the reference
+pages track specific sources (`builtins.md` ↔ the `SYSTEM_PROMPT` in
+`agent.py`, `configuration.md` ↔ `.env.example`, `python-api.md` ↔
+`__init__.py`). Don't add speculative or broad-strokes pages; cut a page rather
+than let it rot. The `docs` skill has the detail on when, where, and how.
 
 ## Gotchas
 
