@@ -3,7 +3,9 @@
 Context for AI coding agents working in this repo. Keep this file to
 **non-inferable** facts (commands, layout, conventions, gotchas) — not things
 you can read from the code. Universal working-style rules live in the global
-`~/.claude/CLAUDE.md` (source: `~/code/skills/CLAUDE.md`), loaded automatically.
+`~/.claude/CLAUDE.md`, loaded automatically. The default change workflow lives
+in the global `dev-workflow` skill; this file adds the pyharness-specific
+commands, layout, and conventions it needs.
 
 ## What this is
 
@@ -12,14 +14,6 @@ either replies with text or emits one `run_python` call that the harness runs in
 a persistent Jupyter-style kernel. No fine-grained JSON tools; capabilities are
 builtins in scope or tools imported on demand. See `docs/explanation/` for the
 model.
-
-## Workflow
-
-1. **Understand** the code before changing it.
-2. **Plan the new code**
-3. **Write the new code and any tests for it** in `tests/`.
-4. **Run `make test`** and fix anything that breaks.
-5. **Update and/or add docs or CLAUDE.md as needed** 
 
 ## Commands
 
@@ -34,14 +28,14 @@ make dev       # observability (Phoenix, :6006) + the agent, one command
 make down      # stop the Phoenix container
 ```
 
-Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`.
-
-- **Tests require no API key** and are the primary verification gate. Run
-  `make test` before considering a change done.
-- Config lives in a single `.env` (copied from `.env.example`). The Makefile and
-  docker-compose both read it — do not export env vars by hand.
+Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`. Config
+lives in a single `.env` (copied from `.env.example`); the Makefile and
+docker-compose both read it — do not export env vars by hand.
 
 ## Repo map
+
+Folder names are visible from `ls`; this table is the *meaning* — where the
+load-bearing seams are.
 
 | Path | What lives here |
 |------|-----------------|
@@ -58,22 +52,16 @@ Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`.
 
 ## Conventions
 
-- Python ≥ 3.11. Match surrounding style; keep changes surgical (see the global
-  working style).
+- Python ≥ 3.11. Match surrounding style; keep changes surgical.
 - Every side effect the agent takes goes through `broker/dispatch.py` — add new
   capabilities there, not by scattering I/O across modules.
 - The audit log is a tamper-evident hash chain; verify with
   `make verify-audit DIR=.sessions/<name>`.
-
-## Docs
-
-Live docs are `docs/` (explanation / how-to / reference). Consult them to
-orient; keep them true. A change that alters behavior, a builtin, a flag, or a
-config var must update the matching page **in the same commit** — the reference
-pages track specific sources (`builtins.md` ↔ the `SYSTEM_PROMPT` in
-`agent.py`, `configuration.md` ↔ `.env.example`, `python-api.md` ↔
-`__init__.py`). Don't add speculative or broad-strokes pages; cut a page rather
-than let it rot. The `docs` skill has the detail on when, where, and how.
+- A change that alters behavior, a builtin, a flag, or a config var updates the
+  matching `docs/` page in the same commit — reference pages track specific
+  sources (`builtins.md` ↔ `SYSTEM_PROMPT` in `agent.py`, `configuration.md` ↔
+  `.env.example`, `python-api.md` ↔ `__init__.py`). The `docs` skill has the
+  full sync map.
 
 ## Gotchas
 

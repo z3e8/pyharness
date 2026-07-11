@@ -80,5 +80,4 @@ repo map in `AGENTS.md` when structure moves.
 1. Confirm it's non-inferable and someone will reach for it. If not, don't.
 2. Pick the one lane it belongs to; if it spans two, it's two pages.
 3. Add it to the section list in `docs/index.md`.
-4. If it's reference, add its source to the sync map above and to the Docs
-   section of `AGENTS.md`.
+4. If it's reference, add its source to the sync map above.
