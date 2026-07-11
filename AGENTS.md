@@ -15,13 +15,11 @@ model.
 
 ## Workflow
 
-1. **Orient.** Skim the relevant `docs/explanation/` page for the subsystem
-   you're touching, then read the code. Don't reread what you already know.
-2. **Change.** Keep it surgical, match surrounding style, and route every side
-   effect through `broker/dispatch.py` (see Conventions).
-3. **Verify.** `make test` must be green before a change is done.
-4. **Sync docs.** If the change made a doc, flag, or this file wrong, fix it in
-   the same commit (see Docs).
+1. **Understand** the code before changing it.
+2. **Plan the new code**
+3. **Write the new code and any tests for it** in `tests/`.
+4. **Run `make test`** and fix anything that breaks.
+5. **Update and/or add docs or CLAUDE.md as needed** 
 
 ## Commands
 
