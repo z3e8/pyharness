@@ -47,6 +47,18 @@ import them. This is the complete list; nothing else is callable by bare name.
         # secret_fields={"field": "secret_name"} injects into the json/data body.
         # files=[["field", "path"]] uploads a workspace file (read parent-side).
         # State-changing methods (POST/PUT/PATCH/DELETE) require human approval.
+  Browser (needs pyharness[browser] + `playwright install chromium`):
+    open_browser() -> session_id  /  close_browser(session_id)
+    goto(session_id, url) -> {url, title, status}
+    click(session_id, selector) -> dict          # state-changing: needs approval
+    fill(session_id, selector, value) -> dict     # non-secret text; needs approval
+    fill_secret(session_id, selector, secret_name) -> dict  # types a named secret
+    read_text(session_id, selector=None) -> {text, truncated}
+    screenshot(session_id, path) -> {path}        # saves a PNG to a workspace path
+        # Live page stays parent-side, keyed by the id (like open_session).
+        # fill_secret injects a named secret parent-side; it is never returned and
+        # is masked out of read_text on that session. Prefer the HTTP/request path
+        # for the most sensitive credentials — the browser DOM is agent-readable.
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
   Delegation — do bulk work without filling your own context:

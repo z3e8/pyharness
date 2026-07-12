@@ -41,6 +41,30 @@ keyed by the session id; the agent only holds the id. State-changing methods
 (POST/PUT/PATCH/DELETE) require human approval; reads do not. `web_fetch` is a
 thin one-shot wrapper over `request`.
 
+## Browser
+
+Needs the optional `pyharness[browser]` extra plus `playwright install chromium`;
+absent, the first call raises with that instruction.
+
+| Signature | Notes |
+|-----------|-------|
+| `open_browser() -> str` / `close_browser(session_id)` | Launch/close a headless page; it and its cookies persist on the id across cells |
+| `goto(session_id, url) -> dict` | Navigate. Returns `{url, title, status}` |
+| `click(session_id, selector) -> dict` | Click a CSS/text selector. State-changing — approval |
+| `fill(session_id, selector, value) -> dict` | Type non-secret text into a field — approval |
+| `fill_secret(session_id, selector, secret_name) -> dict` | Type a named vault secret into a field — approval |
+| `read_text(session_id, selector=None) -> dict` | Read visible text (whole page or one element). Returns `{text, truncated}` |
+| `screenshot(session_id, path) -> dict` | Save a PNG to a workspace path. Returns `{path}` |
+
+Like the HTTP session, the live Playwright page stays parent-side, keyed by the
+id; the agent only holds the id. Secrets follow the same rule as `request`:
+`fill_secret` names a vault secret, resolved parent-side and typed into the page,
+never returned. Any secret injected this way is masked (`***`) out of every
+`read_text` on that session, so a credential cannot round-trip back through
+agent-visible text. `screenshot` writes to disk only — a secret visible on
+screen appears in the image. State-changing actions (`click` / `fill` /
+`fill_secret`) require human approval; navigation and reads do not.
+
 ## Credentials
 
 | Signature | Returns |
