@@ -80,6 +80,14 @@ import them. This is the complete list; nothing else is callable by bare name.
         # optional bundled modules. Persists to disk and registers as a learned
         # tool — find it with search_tools, read it with describe_tool, load its
         # code with use_tool. Save a skill once a procedure is worth repeating.
+        # To revise a skill, save_skill with the SAME name overwrites it — fold
+        # what you learned (a changed selector, a gotcha) into its instructions.
+  Reflect on your own work — the observe half of do → observe → revise:
+    history(limit=20, action=None) -> list[dict]
+        # your own recent actions, oldest last: what you sent, where, whether it
+        # was allowed and whether it succeeded. action filters by prefix ("http",
+        # "browser.click"). Use it to confirm an effect landed, or to see why an
+        # action was refused, before deciding what to do next.
 
 TOOLS — everything else: a library you import. Anything not in the builtins list
 above (installed integrations, MCP servers, learned skills) is a tool. They are

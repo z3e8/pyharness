@@ -10,6 +10,7 @@ from ..broker.capabilities import (
     AgentsCapability,
     BrowserCapability,
     FilesCapability,
+    HistoryCapability,
     HttpSessionCapability,
     LLMCapability,
     PackagesCapability,
@@ -126,6 +127,7 @@ class Session:
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
             PackagesCapability(self.session_venv),
+            HistoryCapability(self.audit),
         ):
             self.broker.register(capability)
 

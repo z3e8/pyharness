@@ -111,6 +111,14 @@ verifiable — which matters once it's shipped off-box.
 Secrets are never arguments to capabilities (they're referenced by name and
 injected in the parent), so logged arguments are safe to persist.
 
+The same record is the agent's own reflection surface. `audit.jsonl` sits at the
+session root, outside the workspace the file builtins are confined to, so agent
+code can't read it directly; the `history()` builtin exposes it read-only. That
+closes the *observe* half of the agent's do → observe → revise loop — it can
+confirm an effect landed, or see why an action was refused, and revise a saved
+skill from what actually happened. The internal chain fields are dropped from
+what `history()` returns; arguments are already the log-safe summary.
+
 Verify a session's chain:
 
 ```bash

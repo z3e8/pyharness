@@ -114,3 +114,24 @@ optional bundled modules. Persists to disk and registers as a learned tool. See
 
 > Saving a skill requires human approval by default (it writes code that
 > auto-loads in later sessions) — see [the approval policy](../explanation/security-and-audit.md).
+
+**Revising a skill** needs no separate builtin: `save_skill` with the same name
+overwrites the prior version (stale bundled `.py` are dropped), so the agent
+folds what it learned into the instructions and re-saves.
+
+## Reflection
+
+Read your own action record — the observe half of `do → observe → revise`.
+
+| Signature | Returns |
+|-----------|---------|
+| `history(limit=20, action=None) -> list[dict]` | your recent actions, oldest last: `{ts, action, decision?, ok?, args?, error?}`. `action` filters by prefix (`"http"`, `"browser.click"`) |
+
+The audit log lives at the session root, outside the workspace the file builtins
+are confined to, so `history()` is the only way agent code reaches it. It records
+*side effects* — every capability call, its decision (allow/approve/deny),
+whether it succeeded, and a secret-safe summary of what was sent — so you can
+confirm an effect landed (`request` returned 200), see why an action was refused,
+and revise from what actually happened. Your own cells and notes are already in
+context, so only the audit is surfaced. See
+[Security & audit](../explanation/security-and-audit.md).

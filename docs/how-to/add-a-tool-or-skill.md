@@ -45,6 +45,11 @@ code.
   session, no code required.
 - `save_skill` requires approval by default (it writes code that auto-runs
   later) — see [Security & audit](../explanation/security-and-audit.md).
+- **Revising** a skill needs no separate step: `save_skill` with the same name
+  overwrites it (stale bundled `.py` are pruned). After a run, the agent reads
+  `history()` to see what happened and folds the lesson into the instructions on
+  re-save — that is the do → observe → revise loop, no `edit_skill` primitive
+  required.
 
 ## Mount an MCP server
 

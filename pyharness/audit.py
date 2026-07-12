@@ -35,6 +35,31 @@ class AuditLog:
             f.write(json.dumps(entry, default=str) + "\n")
         self._prev = entry["hash"]
 
+    def tail(self, limit: int = 20, action: str | None = None) -> list[dict]:
+        """The most recent audited calls (oldest first), so the agent can reflect
+        on what it did — what it sent, where, whether it was allowed. The internal
+        chain fields (`hash`/`prev`) are dropped; `action` filters by prefix
+        (`"http"` for every HTTP call). Arguments are already the log-safe
+        summary (secrets are referenced by name), so entries are safe to hand
+        back."""
+        if not self.path.exists():
+            return []
+        entries: list[dict] = []
+        for line in self.path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            entry.pop("hash", None)
+            entry.pop("prev", None)
+            if action and not str(entry.get("action", "")).startswith(action):
+                continue
+            entries.append(entry)
+        return entries[-limit:]
+
 
 def _last_hash(path: Path) -> str:
     """The hash of the final entry, so a reopened log continues the same chain."""

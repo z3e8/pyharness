@@ -65,6 +65,34 @@ def test_policy_deny(tmp_path):
         broker.namespace()["write"]("x.txt", "y")
 
 
+def test_audit_tail_returns_recent_calls_stripped(tmp_path):
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    audit.record(action="files.write", ok=True, args="'a.txt', 'x'")
+    audit.record(action="http.request", ok=True, args="'POST', 'http://x'")
+    tail = audit.tail(limit=5)
+    assert [e["action"] for e in tail] == ["files.write", "http.request"]
+    # Internal chain fields never leak to the reflecting agent.
+    assert all("hash" not in e and "prev" not in e for e in tail)
+    # Prefix filter narrows to one capability; limit keeps the most recent.
+    assert [e["action"] for e in audit.tail(action="http")] == ["http.request"]
+    assert [e["action"] for e in audit.tail(limit=1)] == ["http.request"]
+
+
+def test_history_capability_reads_own_actions(tmp_path):
+    from pyharness.broker.capabilities import HistoryCapability
+
+    broker = _broker(tmp_path)
+    broker.register(FilesCapability(Workspace(tmp_path)))
+    broker.register(HistoryCapability(broker.audit))
+    ns = broker.namespace()
+    ns["write"]("note.txt", "data")
+    seen = ns["history"]()
+    # The agent sees its own prior write; the current history call isn't logged
+    # until it returns, so it can't see itself.
+    actions = [e["action"] for e in seen]
+    assert "files.write" in actions and "history.history" not in actions
+
+
 def test_policy_approval(tmp_path):
     seen = {}
 
