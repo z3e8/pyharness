@@ -86,10 +86,13 @@ class AnthropicLLM:
         httpx = import_module("httpx")
         # A stalled stream must fail fast, not hang forever: `read` bounds the gap
         # between chunks, so a silent connection raises instead of blocking the
-        # session indefinitely. `max_retries` lets the SDK transparently recover
-        # transient drops before the error surfaces to the agent loop.
+        # session indefinitely. It has to clear the worst legitimate quiet gap —
+        # prefill over a large context plus adaptive thinking before the first
+        # text chunk — or healthy long turns get killed mid-think; 180s covers
+        # that headroom while still catching a truly dead socket. `max_retries`
+        # lets the SDK transparently recover transient drops.
         self._client = anthropic.Anthropic(
-            timeout=httpx.Timeout(connect=10.0, read=60.0, write=20.0, pool=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=20.0, pool=10.0),
             max_retries=2,
         )
         self._budget = budget
