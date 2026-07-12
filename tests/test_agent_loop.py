@@ -10,9 +10,11 @@ class ScriptedLLM:
     def __init__(self, completions):
         self.completions = list(completions)
         self.calls = []
+        self.tiers = []
 
     def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
         self.calls.append(list(messages))
+        self.tiers.append(tier)
         return self.completions.pop(0)
 
 
@@ -48,6 +50,14 @@ def test_agent_runs_code_then_answers(tmp_path):
     assert answer == "Wrote the file."
     assert (ws.dir / "hello.txt").read_text() == "hi there"
     assert ("output", "written") in events
+
+
+def test_agent_defaults_to_mid_tier():
+    llm = ScriptedLLM([_text_completion("done")])
+    agent = Agent(llm, Kernel({}), Budget())
+
+    assert agent.run("answer", []) == "done"
+    assert llm.tiers == ["mid"]
 
 
 class FailingLLM:

@@ -31,7 +31,7 @@ The agent reasons about cost in **tiers**, not model strings
 | `mid` | Sonnet | middle ground | 16k tokens |
 | `cheap` | Haiku | bulk / parallel work | 8k tokens |
 
-The orchestrator itself runs on the **cheap** tier by default and escalates by
+The orchestrator itself runs on the **mid** tier by default and escalates by
 delegating harder sub-tasks to `smart`. Cost is computed from per-model
 input/output token rates, with cached input tokens billed at a fraction (cache
 reads ~0.1×, cache writes ~1.25×). Rates live in `PRICING` and should be verified
