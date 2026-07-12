@@ -8,6 +8,7 @@ from .. import telemetry
 from ..audit import AuditLog
 from ..broker.capabilities import (
     AgentsCapability,
+    BrowserCapability,
     FilesCapability,
     HttpSessionCapability,
     LLMCapability,
@@ -19,6 +20,7 @@ from ..broker.capabilities import (
     ToolsCapability,
     WebCapability,
 )
+from ..broker.capabilities.browser import MUTATING_ACTIONS as MUTATING_BROWSER_ACTIONS
 from ..broker.capabilities.http import MUTATING_METHODS
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
@@ -77,7 +79,12 @@ class Session:
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
         self.policy = policy or Policy(
-            require_approval={"skills.save_skill", "packages.install"},
+            require_approval={
+                "skills.save_skill",
+                "packages.install",
+                # State-changing browser actions; navigation and reads stay free.
+                *MUTATING_BROWSER_ACTIONS,
+            },
             approve_if=[_is_mutating_http],
         )
         self.vault = vault or Vault.from_env()
@@ -105,11 +112,13 @@ class Session:
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(self.workspace, vault=self.vault)
+        self.browser = BrowserCapability(self.workspace, vault=self.vault)
         for capability in (
             FilesCapability(self.workspace),
             ShellCapability(self.workspace, secret_env_prefixes=secret_prefixes),
             SearchCapability(self.workspace),
             self.http,
+            self.browser,
             WebCapability(self.llm, http=self.http),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
@@ -166,4 +175,5 @@ class Session:
         if hasattr(self.kernel, "close"):
             self.kernel.close()
         self.http.close_all()
+        self.browser.close_all()
         self.registry.close()

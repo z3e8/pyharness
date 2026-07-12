@@ -1,4 +1,5 @@
 from .agents import AgentsCapability, Result, SubAgentLimitExceeded
+from .browser import BrowserCapability
 from .files import FilesCapability
 from .http import HttpSessionCapability
 from .llm import LLMCapability
@@ -12,6 +13,7 @@ from .web import WebCapability
 
 __all__ = [
     "AgentsCapability",
+    "BrowserCapability",
     "FilesCapability",
     "HttpSessionCapability",
     "LLMCapability",

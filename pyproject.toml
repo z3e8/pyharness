@@ -11,6 +11,12 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.30",
 ]
 
+[project.optional-dependencies]
+# The browser lane (BrowserCapability). Heavy and needs a separate chromium
+# binary (`playwright install chromium`), so it is opt-in: `pip install
+# pyharness[browser]`. Lazy-imported, so core install and the tests never need it.
+browser = ["playwright>=1.61"]
+
 [project.scripts]
 pyharness = "pyharness.cli:main"
 pyharness-vault = "pyharness.cli_vault:main"
