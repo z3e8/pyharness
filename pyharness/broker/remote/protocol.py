@@ -3,6 +3,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+
+class RemoteError(Exception):
+    """A broker error normalized for the trip back to the child.
+
+    Broker exceptions are re-raised inside the failing cell, but they cross the
+    pickle channel first, and `BaseException.__reduce__` reconstructs an
+    exception as `type(exc)(*exc.args)`. Any exception whose `__init__` needs
+    more than its positional `args` — e.g. `anthropic.APIStatusError`, with
+    required keyword-only `response`/`body` — therefore raises `TypeError` when
+    the child unpickles it, masking the real failure. Such exceptions are
+    reconstructed parent-side as a `RemoteError` (single `str` arg, so it always
+    round-trips) carrying the original type name and message. See
+    `host._safe_exc`."""
+
 # Wire protocol between the parent (kernel/broker) and the child (agent userland).
 #
 # parent -> child:

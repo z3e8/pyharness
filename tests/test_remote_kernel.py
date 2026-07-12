@@ -36,6 +36,31 @@ class StubLLM:
         return Completion(text="worked", tool_calls=[], content=[])
 
 
+class _KwOnlyError(Exception):
+    """Mimics `anthropic.APIStatusError`: `__init__` has required keyword-only
+    args, so `BaseException.__reduce__` -> `type(exc)(*exc.args)` cannot rebuild
+    it. Unpickled naively in the child, it raises a bare `TypeError` that masks
+    the real message."""
+
+    def __init__(self, message, *, response, body):
+        super().__init__(message)
+        self.response = response
+        self.body = body
+
+
+class BoomCapability:
+    """A core capability whose one op raises `_KwOnlyError`, to exercise the
+    parent->child error-marshalling path."""
+
+    name = "boom"
+
+    def exports(self):
+        return {"boom": self._boom}
+
+    def _boom(self):
+        raise _KwOnlyError("api error 400: bad tool version", response="r", body="b")
+
+
 def _example_tool():
     """A throwaway registry tool: a module named `widget` exposing `double`."""
     from types import ModuleType
@@ -203,6 +228,20 @@ def test_parent_never_unpickles_child_bytes(tmp_path):
     with pytest.raises(Exception):
         recv_json(parent_conn)
     assert not sentinel.exists()
+
+
+def test_broker_error_with_kwonly_init_surfaces_real_message(kernel_factory, tmp_path):
+    # Regression: a broker error whose __init__ has required keyword-only args
+    # (e.g. anthropic.APIStatusError) once crashed the child's recv() with a bare
+    # "missing arguments" TypeError, masking the real failure. The parent now
+    # normalizes it so the true message reaches the failing cell.
+    broker = _broker(tmp_path)
+    broker.register(BoomCapability())
+    kernel = kernel_factory(broker)
+    out = kernel.run("boom()")
+    assert "api error 400: bad tool version" in out
+    assert "_KwOnlyError" in out
+    assert "missing" not in out  # not the masked reconstruction TypeError
 
 
 def test_non_transferable_argument_fails_cleanly(kernel_factory, tmp_path):

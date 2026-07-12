@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import pickle
 import shutil
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from ...core.session_venv import SessionVenv
 from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
 from ...tools.registry import _public_functions
 from .child import child_main
-from .protocol import RemoteToolSpec, recv_json
+from .protocol import RemoteError, RemoteToolSpec, recv_json
 from .sandbox import make_child_executable
 
 
@@ -112,7 +113,7 @@ class RemoteKernel:
                 value = _seal_for_wire(self.broker.call_op(op, *args, **kwargs))
                 reply = ("ok", value)
             except Exception as exc:  # noqa: BLE001 - errors cross back to the agent
-                reply = ("err", exc)
+                reply = ("err", _safe_exc(exc))
             try:
                 self._conn.send(reply)
             except Exception as exc:  # noqa: BLE001 - e.g. unpicklable result
@@ -146,6 +147,24 @@ class RemoteKernel:
         if self._sbdir is not None:
             shutil.rmtree(self._sbdir, ignore_errors=True)
             self._sbdir = None
+
+
+def _safe_exc(exc: BaseException) -> BaseException:
+    """Ensure a broker error can survive the pickle round-trip to the child.
+
+    The child re-raises whatever it receives, but reconstructs it as
+    `type(exc)(*exc.args)` (via `BaseException.__reduce__`). Exceptions whose
+    `__init__` needs more than `args` — e.g. `anthropic.APIStatusError` — crash
+    the child's `recv()` with a bare `TypeError`, hiding the real error. We probe
+    the exact round-trip here and, if it fails, fall back to a `RemoteError`
+    carrying the original type name and message. Ordinary exceptions (including
+    `PermissionDenied`) round-trip untouched, so agent code can still catch them
+    by type."""
+    try:
+        pickle.loads(pickle.dumps(exc))
+    except Exception:  # noqa: BLE001 - any reconstruction failure means "wrap it"
+        return RemoteError(f"{type(exc).__name__}: {exc}")
+    return exc
 
 
 def _seal_for_wire(value):
