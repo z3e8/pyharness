@@ -105,8 +105,15 @@ class BrowserCapability:
 
     def _state(self, session: _BrowserSession, **extra) -> dict:
         """The verifiable result shape shared by every action: where the page is
-        now, plus whatever the action adds (title / status)."""
-        return {"url": session.page.url, **extra}
+        now, plus whatever the action adds (title / status). Injected secrets are
+        masked from every string field — a secret can land in the url (a GET query
+        string) or a title just as easily as in read_text, and none may
+        round-trip back to agent code."""
+        state = {"url": session.page.url, **extra}
+        return {
+            key: _redact(value, session.injected) if isinstance(value, str) else value
+            for key, value in state.items()
+        }
 
     def open_browser(self) -> str:
         """Launch a headless browser and return its session id. Reuse the id

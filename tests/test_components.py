@@ -373,6 +373,17 @@ def test_browser_fill_secret_injects_parent_side_and_hides_value(tmp_path):
     assert "hunter2" not in repr(result)
 
 
+def test_browser_masks_injected_secret_in_returned_url(tmp_path):
+    # A secret can land in the url (e.g. a GET query string); the result's url
+    # field must mask it just like read_text does — no round-trip to agent code.
+    cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    cap.fill_secret("sid", "#password", "pw")
+    page.url = "http://x/callback?token=hunter2"  # secret landed in the query string
+    r = cap.click("sid", "#submit")  # click doesn't change the fake url
+    assert "hunter2" not in r["url"]
+    assert "***" in r["url"]
+
+
 def test_browser_read_text_masks_injected_secret(tmp_path):
     cap, page = _browser_with_fake(
         Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), text="you typed hunter2 ok"
