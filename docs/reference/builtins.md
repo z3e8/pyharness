@@ -96,6 +96,7 @@ Package a repeatable procedure so this and later sessions can reuse it.
 
 ```python
 save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+record_skill_use(name, outcome, note="") -> str
 ```
 
 `instructions` is the markdown how-to; `files` is `{"helper.py": source, ...}` of
@@ -105,9 +106,20 @@ optional bundled modules. Persists to disk and registers as a learned tool. See
 > Saving a skill requires human approval by default (it writes code that
 > auto-loads in later sessions) — see [the approval policy](../explanation/security-and-audit.md).
 
+**Trust is earned, not asserted.** A newly saved or revised skill is
+**unverified** — it has never run successfully, so its steps are a hypothesis.
+`record_skill_use(name, outcome, note="")` logs how a run went (`outcome` is
+`"worked"` or `"failed"`); the first `"worked"` marks the skill `verified`. The
+log is a bounded per-skill journal (`journal.json` beside `SKILL.md`) so a later
+session sees how it last behaved. `search_tools` tags an `unverified` or
+`last-failed` skill; `describe_tool` shows the verification state and recent uses
+above the instructions. Recording a use writes only metadata, so it is *not*
+gated for approval.
+
 **Revising a skill** needs no separate builtin: `save_skill` with the same name
-overwrites the prior version (stale bundled `.py` are dropped), so the agent
-folds what it learned into the instructions and re-saves.
+overwrites the prior version (stale bundled `.py` are dropped) and resets it to
+unverified while keeping the use log, so the agent folds what it learned into the
+instructions, re-saves, and re-earns trust on the next real run.
 
 ## Reflection
 

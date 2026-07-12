@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ...security.policy import ActionCategory
 from ...tools.registry import Registry
-from ...tools.skills import register_skill_dir, write_skill
+from ...tools.skills import record_use, register_skill_dir, write_skill
 
 
 class SkillsCapability:
@@ -23,13 +23,16 @@ class SkillsCapability:
         self.skills_dir = Path(skills_dir)
 
     def exports(self) -> dict:
-        return {"save_skill": self.save_skill}
+        return {"save_skill": self.save_skill, "record_skill_use": self.record_skill_use}
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """Saving a skill only writes under the skills root, so it is LOCAL — the
-        gate is a supply-chain sign-off (this code auto-loads in later sessions),
-        not an outward effect."""
+        """Both ops only write under the skills root, so they are LOCAL. Saving a
+        skill's gate is a supply-chain sign-off (that code auto-loads in later
+        sessions); recording a use writes only metadata, so it isn't gated."""
         name = kwargs.get("name") or (args[0] if args else "?")
+        if op == "record_skill_use":
+            outcome = kwargs.get("outcome") or (args[1] if len(args) >= 2 else "?")
+            return ActionCategory.LOCAL, f"record use of skill {name!r}: {outcome}"
         return ActionCategory.LOCAL, f"save skill {name!r} to {self.skills_dir}"
 
     def save_skill(
@@ -50,4 +53,21 @@ class SkillsCapability:
         )
         register_skill_dir(self.registry, skill_dir)
         n = len(files or {})
-        return f"saved skill {name!r} ({n} bundled file{'s' * (n != 1)}) to {skill_dir}"
+        return (
+            f"saved skill {name!r} ({n} bundled file{'s' * (n != 1)}) to {skill_dir} — "
+            "unverified until you run it and record_skill_use(name, 'worked')."
+        )
+
+    def record_skill_use(self, name: str, outcome: str, note: str = "") -> str:
+        """Log how a learned skill just behaved: `outcome` is 'worked' or
+        'failed', with an optional `note` (a changed selector, why it broke). The
+        first 'worked' marks the skill verified; the log lets you and later
+        sessions see how it last behaved and catch a breaking change. Do this
+        after actually running the skill — trust is earned by a real run."""
+        skill_dir = self.skills_dir / name
+        if not (skill_dir / "SKILL.md").exists():
+            raise KeyError(f"no learned skill {name!r} to record against")
+        data = record_use(skill_dir, outcome, note)
+        self.registry.set_skill_usage(name, data["verified"], tuple(data["uses"]))
+        state = "verified" if data["verified"] else "unverified"
+        return f"recorded {outcome!r} for skill {name!r} (now {state})"

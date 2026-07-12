@@ -18,14 +18,63 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
 from .registry import Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# A skill's trust state lives in a sidecar next to SKILL.md, not in the
+# procedure itself: whether it has ever run successfully (`verified`) and a
+# bounded log of recent outcomes. Trust is earned by a real run — a freshly
+# saved or revised skill is a hypothesis until it works against the live surface.
+_JOURNAL = "journal.json"
+_MAX_USES = 10
+_EMPTY_JOURNAL = {"verified": False, "uses": []}
+
+
+def read_journal(skill_dir: str | Path) -> dict:
+    """A skill's trust state — `{"verified": bool, "uses": [...]}` — or the empty
+    default (unverified, no uses) when it has none yet or the file is unreadable."""
+    path = Path(skill_dir) / _JOURNAL
+    if not path.exists():
+        return dict(_EMPTY_JOURNAL, uses=[])
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return dict(_EMPTY_JOURNAL, uses=[])
+    return {"verified": bool(data.get("verified", False)), "uses": list(data.get("uses", []))}
+
+
+def _write_journal(skill_dir: Path, data: dict) -> None:
+    (skill_dir / _JOURNAL).write_text(json.dumps(data, indent=2) + "\n")
+
+
+def record_use(
+    skill_dir: str | Path, outcome: str, note: str = "", *, now: str | None = None
+) -> dict:
+    """Append a use outcome to a skill's journal and return the updated state.
+    A 'worked' outcome marks the skill verified (trust is earned by a real run,
+    never asserted); the log is bounded to the most recent `_MAX_USES` entries so
+    a later session can see how it last behaved and catch a breaking change."""
+    if outcome not in ("worked", "failed"):
+        raise ValueError("outcome must be 'worked' or 'failed'")
+    skill_dir = Path(skill_dir)
+    data = read_journal(skill_dir)
+    stamp = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    entry = {"at": stamp, "outcome": outcome}
+    if note:
+        entry["note"] = note
+    data["uses"] = (data["uses"] + [entry])[-_MAX_USES:]
+    if outcome == "worked":
+        data["verified"] = True
+    _write_journal(skill_dir, data)
+    return data
 
 
 def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
@@ -63,6 +112,7 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
     meta, body = parse_skill_md(md.read_text())
     name = meta.get("name") or skill_dir.name
     keywords = tuple(k.strip() for k in meta.get("keywords", "").split(",") if k.strip())
+    journal = read_journal(skill_dir)
     registry.add_skill(
         name,
         meta.get("description", ""),
@@ -70,6 +120,8 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         loader=lambda: _build_skill_module(name, skill_dir),
         keywords=keywords,
         category=meta.get("category") or None,
+        verified=journal["verified"],
+        uses=tuple(journal["uses"]),
     )
     return name
 
@@ -106,6 +158,13 @@ def write_skill(
         if not fname.endswith(".py") or "/" in fname or fname.startswith("_"):
             raise ValueError(f"bundled file {fname!r} must be a simple *.py name")
         (skill_dir / fname).write_text(source)
+
+    # A (re)written procedure is unproven until it runs successfully again: clear
+    # the verified flag but keep the use log, so a revision can still see how the
+    # last version broke. A brand-new skill starts from the empty (unverified) log.
+    journal = read_journal(skill_dir)
+    journal["verified"] = False
+    _write_journal(skill_dir, journal)
     return skill_dir
 
 
