@@ -87,6 +87,13 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
         _enabled = False
         return False
 
+    # The OTLP exporter uses gRPC, whose C-core prints noisy "FD from fork parent
+    # still in poll list" warnings when the process forks with a live channel —
+    # which the spawn-based kernel child and a Playwright launch both do. Opting
+    # into gRPC's fork handlers silences it. setdefault so an explicit value wins;
+    # must be set before gRPC initializes, i.e. before the exporter import below.
+    os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "1")
+
     try:
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
