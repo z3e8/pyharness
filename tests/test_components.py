@@ -274,13 +274,13 @@ def test_secret_sink_without_vault_raises():
 
 
 class _FakeResp:
-    def __init__(self, status=200, text="ok", url="http://x"):
+    def __init__(self, status=200, text="ok", url="http://x", content_type="text/plain"):
         import datetime
 
         self.status_code = status
         self.text = text
         self.url = url
-        self.headers = {"content-type": "text/plain"}
+        self.headers = {"content-type": content_type}
         self.elapsed = datetime.timedelta(milliseconds=2)
 
 
@@ -331,6 +331,53 @@ def test_web_fetch_injects_auth_parent_side(tmp_path, fake_httpx):
 
     expected = "Basic " + base64.b64encode(b"alice:S3CRET").decode()
     assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == expected
+
+
+def test_html_to_text_strips_markup_and_noise():
+    from pyharness.broker.capabilities.http import html_to_text
+
+    html = (
+        "<html><head><title>T</title><style>.a{color:red}</style>"
+        "<script>var x=1;</script></head><body>"
+        "<h1>Best Jackets</h1><p>Baracuta   G9 is\n  great.</p>"
+        "<script>track()</script><div>J.Crew Harrington</div></body></html>"
+    )
+    text = html_to_text(html)
+    assert "Best Jackets" in text
+    assert "Baracuta G9 is great." in text  # runs of whitespace collapsed
+    assert "J.Crew Harrington" in text
+    assert "color:red" not in text  # <style> dropped
+    assert "var x" not in text and "track()" not in text  # <script> dropped
+    assert "<" not in text  # no tags survive
+
+
+def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkeypatch):
+    import httpx
+
+    def client_returning(content_type, body):
+        class _Client:
+            def __init__(self, **kwargs):
+                pass
+
+            def request(self, method, url, **kwargs):
+                return _FakeResp(text=body, url=url, content_type=content_type)
+
+            def close(self):
+                pass
+
+        return _Client
+
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+
+    monkeypatch.setattr(
+        httpx, "Client",
+        client_returning("text/html; charset=utf-8", "<html><body><script>x</script><p>Hello <b>world</b></p></body></html>"),
+    )
+    assert web.web_fetch("http://x").strip() == "Hello world"
+
+    # A non-HTML body is returned verbatim, not run through the reducer.
+    monkeypatch.setattr(httpx, "Client", client_returning("application/json", '{"a": 1}'))
+    assert web.web_fetch("http://x") == '{"a": 1}'
 
 
 def test_http_session_reuses_one_client(tmp_path, fake_httpx):
