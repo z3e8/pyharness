@@ -38,9 +38,17 @@ agent code ever returns a secret's cleartext.** The agent sees only names (via
 the `secrets()` builtin); the value is resolved in the parent and injected at the
 point of use (e.g. `web_fetch(url, auth="github")`, or `request(..., auth=...)`
 and `request(..., secret_fields={"password": "name"})` for a stateful HTTP
-session — every new action surface is another injection sink under the same
-rule, not an exception to it). `Vault.get()` is deliberately *not* in the kernel
-namespace.
+session, or `fill_secret` typing into a browser field — every new action surface
+is another injection sink under the same rule, not an exception to it).
+`Vault.get()` is deliberately *not* in the kernel namespace.
+
+Each injection surface routes through one small primitive,
+`security/sink.py:SecretSink`, scoped to a single injection context (one browser
+session, one HTTP request). It is the only place a name becomes cleartext, and it
+records every value it resolves so the capability can mask it (`***`) back out of
+anything the agent then reads — a browser `read_text`, or an HTTP response `url`
+(a `"query"`-style secret can survive into the final url), `text`, or `headers`.
+A resolved secret never round-trips through agent-visible output.
 
 Resolution order, first hit wins: in-memory dict → environment
 (`PYHARNESS_SECRET_<NAME>`) → encrypted file. The file is sealed with a

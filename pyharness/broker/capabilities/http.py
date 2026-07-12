@@ -5,6 +5,7 @@ from importlib import import_module
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.sink import SecretSink
 from ...security.vault import Vault
 from ...util import MAX_OUTPUT, truncate
 
@@ -117,27 +118,24 @@ class HttpSessionCapability:
         the workspace) so agent code never handles the bytes."""
         headers = dict(headers or {})
         params = dict(params or {})
+        sink = SecretSink(self.vault)
 
         if auth:
-            if not self.vault:
-                raise RuntimeError("no vault configured for auth injection")
             _apply_secret_auth(
                 headers,
                 params,
-                secret=self.vault.get(auth),
+                secret=sink.resolve(auth),
                 style=auth_style,
                 name=auth_name,
                 user=auth_user,
             )
 
         if secret_fields:
-            if not self.vault:
-                raise RuntimeError("no vault configured for secret injection")
             body = json if json is not None else data
             if not isinstance(body, dict):
                 raise ValueError("secret_fields requires a dict `json` or `data` body")
             for field, secret_name in secret_fields.items():
-                body[field] = self.vault.get(secret_name)
+                body[field] = sink.resolve(secret_name)
 
         built_files = None
         if files:
@@ -171,11 +169,16 @@ class HttpSessionCapability:
 
         elapsed = getattr(resp, "elapsed", None)
         text = resp.text
-        return {
-            "status": resp.status_code,
-            "url": str(resp.url),
-            "headers": dict(resp.headers),
-            "text": truncate(text),
-            "truncated": len(text) > MAX_OUTPUT,
-            "elapsed_ms": round(elapsed.total_seconds() * 1000) if elapsed else None,
-        }
+        # Mask any injected secret out of every string the agent reads back: a
+        # query-string `auth` secret can survive into the final url, and a
+        # `secret_fields` body value can be echoed in the response text/headers.
+        return sink.redacted(
+            {
+                "status": resp.status_code,
+                "url": str(resp.url),
+                "headers": dict(resp.headers),
+                "text": truncate(text),
+                "truncated": len(text) > MAX_OUTPUT,
+                "elapsed_ms": round(elapsed.total_seconds() * 1000) if elapsed else None,
+            }
+        )

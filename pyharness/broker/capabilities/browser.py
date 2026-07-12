@@ -4,6 +4,7 @@ from importlib import import_module
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.sink import SecretSink
 from ...security.vault import Vault
 from ...util import MAX_OUTPUT, truncate
 
@@ -13,26 +14,16 @@ from ...util import MAX_OUTPUT, truncate
 MUTATING_ACTIONS = frozenset({"browser.click", "browser.fill", "browser.fill_secret"})
 
 
-def _redact(text: str, secrets: set[str]) -> str:
-    """Mask any secret *this session* injected out of text the agent reads back,
-    so a credential typed into a page can never round-trip through agent-visible
-    output. Only values injected here are masked — no need to enumerate the whole
-    vault to scan for arbitrary secrets."""
-    for secret in secrets:
-        if secret:
-            text = text.replace(secret, "***")
-    return text
-
-
 class _BrowserSession:
-    """One live page plus the set of secret cleartexts injected into it. The
-    injected set drives read-back redaction; it never leaves the parent."""
+    """One live page plus the secret sink for credentials injected into it. The
+    sink drives read-back redaction; the cleartext it holds never leaves the
+    parent."""
 
-    def __init__(self, browser, context, page):
+    def __init__(self, browser, context, page, sink: SecretSink):
         self.browser = browser
         self.context = context
         self.page = page
-        self.injected: set[str] = set()
+        self.sink = sink
 
     def close(self) -> None:
         for obj in (self.context, self.browser):
@@ -109,11 +100,7 @@ class BrowserCapability:
         masked from every string field — a secret can land in the url (a GET query
         string) or a title just as easily as in read_text, and none may
         round-trip back to agent code."""
-        state = {"url": session.page.url, **extra}
-        return {
-            key: _redact(value, session.injected) if isinstance(value, str) else value
-            for key, value in state.items()
-        }
+        return session.sink.redacted({"url": session.page.url, **extra})
 
     def open_browser(self) -> str:
         """Launch a headless browser and return its session id. Reuse the id
@@ -124,7 +111,7 @@ class BrowserCapability:
         context = browser.new_context()
         page = context.new_page()
         session_id = uuid4().hex
-        self._sessions[session_id] = _BrowserSession(browser, context, page)
+        self._sessions[session_id] = _BrowserSession(browser, context, page, SecretSink(self.vault))
         return session_id
 
     def goto(self, session_id: str, url: str) -> dict:
@@ -156,11 +143,8 @@ class BrowserCapability:
         parent-side, typed into the page, and recorded so later reads mask it —
         it never reaches agent code."""
         session = self._session(session_id)
-        if not self.vault:
-            raise RuntimeError("no vault configured for secret injection")
-        secret = self.vault.get(secret_name)
+        secret = session.sink.resolve(secret_name)
         session.page.fill(selector, secret)
-        session.injected.add(secret)
         return self._state(session)
 
     def read_text(self, session_id: str, selector: str | None = None) -> dict:
@@ -168,7 +152,7 @@ class BrowserCapability:
         Any secret this session injected is masked before returning."""
         session = self._session(session_id)
         raw = session.page.inner_text(selector or "body")
-        text = _redact(raw, session.injected)
+        text = session.sink.redact(raw)
         return {"text": truncate(text), "truncated": len(text) > MAX_OUTPUT}
 
     def screenshot(self, session_id: str, path: str) -> dict:

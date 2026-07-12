@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+from .vault import Vault
+
+
+class SecretSink:
+    """The one place a named vault secret becomes cleartext for injection.
+
+    A capability that pushes a credential into an outbound sink — an HTTP header,
+    a query param, a request body field, a browser input — resolves it through a
+    sink rather than touching the vault directly. One sink is scoped to one
+    injection context (a browser session, a single HTTP request), so it knows
+    exactly which cleartexts it has handed out and can mask them back out of
+    anything the agent later reads: a response body, page text, a redirect url
+    that echoed a query-string secret. A resolved secret must never round-trip
+    through agent-visible output.
+
+    Scope is deliberately narrow: resolve-and-track for injection, not general
+    sealing or encryption. The cleartext lives only here in the parent; the agent
+    holds a name, and the audit log records that name (via `summarize_args`),
+    never the value.
+    """
+
+    def __init__(self, vault: Vault | None):
+        self._vault = vault
+        self._injected: set[str] = set()
+
+    def resolve(self, name: str) -> str:
+        """Resolve a secret name to cleartext parent-side and record it for later
+        masking. Raises if no vault is configured to inject from."""
+        if self._vault is None:
+            raise RuntimeError("no vault configured for secret injection")
+        secret = self._vault.get(name)
+        self._injected.add(secret)
+        return secret
+
+    def redact(self, text: str) -> str:
+        """Mask every cleartext this sink has resolved out of `text`. Only values
+        this sink injected are masked — no need to scan for arbitrary secrets."""
+        for secret in self._injected:
+            if secret:
+                text = text.replace(secret, "***")
+        return text
+
+    def redacted(self, value):
+        """Redact `value` wherever a string can hide a resolved secret: a bare
+        string, or the string values of a (possibly one-level-nested) mapping such
+        as an HTTP result and its headers. Non-string leaves pass through."""
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, dict):
+            return {key: self.redacted(item) for key, item in value.items()}
+        return value

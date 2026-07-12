@@ -36,10 +36,13 @@ This is the authoritative contract the orchestrator is given (see
 `request` reuses those same auth styles (`auth` / `auth_style` / `auth_name` /
 `auth_user`), plus `secret_fields={"field": "secret_name"}` to inject a named
 secret into the `json`/`data` body and `files=[["field", "path"]]` to upload a
-workspace file (read parent-side). The live `httpx.Client` stays parent-side,
-keyed by the session id; the agent only holds the id. State-changing methods
-(POST/PUT/PATCH/DELETE) require human approval; reads do not. `web_fetch` is a
-thin one-shot wrapper over `request`.
+workspace file (read parent-side). Any secret injected this way is masked
+(`***`) out of the returned `url`, `text`, and `headers`, so a `"query"`-style
+auth secret echoed in the final url or a `secret_fields` value reflected in the
+response cannot round-trip back to the agent. The live `httpx.Client` stays
+parent-side, keyed by the session id; the agent only holds the id. State-changing
+methods (POST/PUT/PATCH/DELETE) require human approval; reads do not. `web_fetch`
+is a thin one-shot wrapper over `request`.
 
 ## Browser
 

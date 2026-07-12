@@ -171,6 +171,29 @@ def test_secrets_capability_exposes_names_not_values(tmp_path):
     assert "get" not in ns  # the value-returning method is never exposed
 
 
+def test_secret_sink_resolves_records_and_redacts():
+    from pyharness.security.sink import SecretSink
+
+    sink = SecretSink(Vault({"pw": "hunter2"}))
+    assert sink.resolve("pw") == "hunter2"  # cleartext for the injection point
+    # Every string the agent reads back is masked, one level deep into mappings.
+    assert sink.redact("you typed hunter2") == "you typed ***"
+    assert sink.redacted({"url": "http://x?t=hunter2", "n": 1, "h": {"echo": "hunter2"}}) == {
+        "url": "http://x?t=***",
+        "n": 1,
+        "h": {"echo": "***"},
+    }
+
+
+def test_secret_sink_without_vault_raises():
+    from pyharness.security.sink import SecretSink
+
+    sink = SecretSink(None)
+    with pytest.raises(RuntimeError):
+        sink.resolve("pw")
+    assert sink.redact("nothing injected") == "nothing injected"
+
+
 class _FakeResp:
     def __init__(self, status=200, text="ok", url="http://x"):
         import datetime
@@ -268,6 +291,43 @@ def test_http_injects_secret_into_body(tmp_path, fake_httpx):
     assert body == {"user": "me", "password": "hunter2"}
 
 
+def test_http_masks_injected_secret_echoed_in_response(tmp_path, monkeypatch):
+    # A query-string auth secret survives into the final url, and a body secret
+    # can be echoed in the response text/headers. None may round-trip to the
+    # agent — the request's sink masks every string field before returning.
+    import datetime
+
+    import httpx
+
+    class _EchoResp:
+        def __init__(self, url, token):
+            self.status_code = 200
+            self.url = f"{url}?api_key={token}"  # query secret survives into final url
+            self.text = "server echoed hunter2"  # body secret reflected in response
+            self.headers = {"x-echo": "hunter2"}  # ...and in a header
+            self.elapsed = datetime.timedelta(milliseconds=2)
+
+    class _EchoClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return _EchoResp(url, (kwargs.get("params") or {}).get("api_key", ""))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(httpx, "Client", _EchoClient)
+    http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "hunter2", "pw": "hunter2"}))
+    r = http.request(
+        None, "POST", "http://x", auth="k", auth_style="query", auth_name="api_key",
+        json={"user": "me"}, secret_fields={"password": "pw"},
+    )
+    assert "hunter2" not in r["url"] and "***" in r["url"]
+    assert "hunter2" not in r["text"] and "***" in r["text"]
+    assert "hunter2" not in str(r["headers"]) and r["headers"]["x-echo"] == "***"
+
+
 def test_http_upload_reads_file_parent_side(tmp_path, fake_httpx):
     ws = Workspace(tmp_path)
     (ws.dir / "resume.txt").write_text("CV")
@@ -349,10 +409,13 @@ def _browser_with_fake(ws, vault=None, text="page body"):
     """A BrowserCapability with one fake session injected under id "sid" — skips
     open_browser so no real driver/chromium is launched."""
     from pyharness.broker.capabilities.browser import BrowserCapability, _BrowserSession
+    from pyharness.security.sink import SecretSink
 
     cap = BrowserCapability(ws, vault=vault)
     page = _FakePage(text=text)
-    cap._sessions["sid"] = _BrowserSession(browser=_FakeClient(), context=_FakeClient(), page=page)
+    cap._sessions["sid"] = _BrowserSession(
+        browser=_FakeClient(), context=_FakeClient(), page=page, sink=SecretSink(vault)
+    )
     return cap, page
 
 
