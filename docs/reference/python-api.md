@@ -18,7 +18,9 @@ Session(
     policy=None,               # Policy — defaults to requiring approval for
                                #   skills.save_skill and packages.install
     vault=None,                # Vault — defaults to Vault.from_env()
-    registry=None,             # Registry — defaults to the built-in tools
+    registry=None,             # Registry — Session registers the external
+                               #   capability tools (web/http/browser/packages),
+                               #   MCP servers, and learned skills into it
     approver=None,             # Callable[[ApprovalRequest], bool]
     on_event=None,             # Callable[[kind, text], None] — stream events
     out_of_process=False,      # run agent code in a sandboxed child process
