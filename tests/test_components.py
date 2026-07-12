@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
@@ -305,6 +307,123 @@ def test_mutating_http_requires_approval(tmp_path, fake_httpx):
     with pytest.raises(PermissionDenied):
         ns["request"](None, "POST", "http://x")  # write: gated, and denied here
     assert prompted == ["POST"]
+
+
+# --- Browser lane (C2) -------------------------------------------------------
+# Playwright is an optional extra, so these drive the capability against a fake
+# page — no chromium binary, runs in CI. A live smoke test would be
+# @pytest.mark.skipif(playwright missing) and is intentionally left out of CI.
+
+
+class _FakePage:
+    """Records every action; `_text` is what inner_text returns (used to prove
+    injected secrets get masked on read-back)."""
+
+    def __init__(self, url="http://start", text="page body"):
+        self.url = url
+        self._text = text
+        self.calls: list = []
+
+    def goto(self, url):
+        self.url = url
+        self.calls.append(("goto", url))
+        return SimpleNamespace(status=200)  # playwright Response.status
+
+    def title(self):
+        return "Title"
+
+    def click(self, selector):
+        self.calls.append(("click", selector))
+
+    def fill(self, selector, value):
+        self.calls.append(("fill", selector, value))
+
+    def inner_text(self, selector):
+        return self._text
+
+    def screenshot(self, path):
+        self.calls.append(("screenshot", path))
+
+
+def _browser_with_fake(ws, vault=None, text="page body"):
+    """A BrowserCapability with one fake session injected under id "sid" — skips
+    open_browser so no real driver/chromium is launched."""
+    from pyharness.broker.capabilities.browser import BrowserCapability, _BrowserSession
+
+    cap = BrowserCapability(ws, vault=vault)
+    page = _FakePage(text=text)
+    cap._sessions["sid"] = _BrowserSession(browser=_FakeClient(), context=_FakeClient(), page=page)
+    return cap, page
+
+
+def test_browser_actions_return_structured_result(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    r = cap.goto("sid", "http://x")
+    assert r == {"url": "http://x", "title": "Title", "status": 200}
+    assert cap.click("sid", "#go")["title"] == "Title"
+    assert cap.fill("sid", "#name", "Ada")["url"] == "http://x"
+    assert ("fill", "#name", "Ada") in page.calls
+
+
+def test_browser_fill_secret_injects_parent_side_and_hides_value(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    result = cap.fill_secret("sid", "#password", "pw")
+    # The cleartext was typed into the page but never returned to the caller.
+    assert ("fill", "#password", "hunter2") in page.calls
+    assert "hunter2" not in repr(result)
+
+
+def test_browser_read_text_masks_injected_secret(tmp_path):
+    cap, page = _browser_with_fake(
+        Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), text="you typed hunter2 ok"
+    )
+    cap.fill_secret("sid", "#password", "pw")
+    r = cap.read_text("sid")
+    assert "hunter2" not in r["text"]
+    assert "***" in r["text"]
+
+
+def test_browser_audit_summary_never_holds_secret_value(tmp_path):
+    from pyharness.util import summarize_args
+
+    # The agent passes the secret *name*, so the audited arg rendering can never
+    # contain the value — same invariant the C1 http body-injection test relies on.
+    assert "hunter2" not in summarize_args(("sid", "#password", "pw"), {})
+
+
+def test_browser_screenshot_rejects_workspace_escape(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    with pytest.raises(ValueError):
+        cap.screenshot("sid", "../outside.png")
+
+
+def test_browser_unknown_session_raises(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    with pytest.raises(KeyError):
+        cap.goto("nope", "http://x")
+
+
+def test_mutating_browser_requires_approval(tmp_path):
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompted = []
+
+    def approver(action, args, kwargs):
+        prompted.append(action)
+        return False
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+
+    ns["goto"]("sid", "http://x")  # navigation: free
+    ns["read_text"]("sid")  # read: free
+    assert prompted == []
+
+    with pytest.raises(PermissionDenied):
+        ns["click"]("sid", "#submit")  # state-changing: gated, denied here
+    assert prompted == ["browser.click"]
 
 
 def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):
