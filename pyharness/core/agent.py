@@ -36,6 +36,17 @@ import them. This is the complete list; nothing else is callable by bare name.
     web_fetch(url, auth=None, auth_style="bearer", auth_name=None, user=None) -> str
         # auth names a secret (see secrets()); it is injected parent-side, never shown to you.
         # auth_style: "bearer" | "header" (auth_name=header) | "query" (auth_name=param) | "basic" (user=...)
+    open_session() -> str  /  close_session(session_id)
+    request(session_id, method, url, *, params=None, headers=None, json=None,
+            data=None, files=None, auth=None, auth_style="bearer", auth_name=None,
+            auth_user=None, secret_fields=None) -> dict
+        # Stateful HTTP: open_session() once, reuse the id across cells (cookies persist).
+        # session_id=None does a one-shot request. Returns {status, url, headers, text,
+        # truncated, elapsed_ms} — check status to verify your work.
+        # auth/auth_style/auth_name/auth_user: inject a named secret like web_fetch.
+        # secret_fields={"field": "secret_name"} injects into the json/data body.
+        # files=[["field", "path"]] uploads a workspace file (read parent-side).
+        # State-changing methods (POST/PUT/PATCH/DELETE) require human approval.
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
   Delegation — do bulk work without filling your own context:

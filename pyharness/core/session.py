@@ -9,6 +9,7 @@ from ..audit import AuditLog
 from ..broker.capabilities import (
     AgentsCapability,
     FilesCapability,
+    HttpSessionCapability,
     LLMCapability,
     PackagesCapability,
     SearchCapability,
@@ -18,6 +19,7 @@ from ..broker.capabilities import (
     ToolsCapability,
     WebCapability,
 )
+from ..broker.capabilities.http import MUTATING_METHODS
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
@@ -30,6 +32,18 @@ from .agent import Agent
 from .kernel import Kernel
 from .session_venv import SessionVenv
 from .workspace import Workspace
+
+
+def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
+    """Force approval on state-changing HTTP requests (POST/PUT/PATCH/DELETE);
+    reads stay free. The method is the second positional arg or a keyword —
+    `request(session_id, method, url, ...)`."""
+    if action != "http.request":
+        return False
+    method = kwargs.get("method")
+    if method is None and len(args) >= 2:
+        method = args[1]
+    return bool(method) and method.upper() in MUTATING_METHODS
 
 
 class Session:
@@ -59,9 +73,13 @@ class Session:
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
-        # Saving a skill writes agent-authored code that auto-loads in later
-        # sessions, so a human signs off at author time by default.
-        self.policy = policy or Policy(require_approval={"skills.save_skill", "packages.install"})
+        # Saving a skill (agent-authored code that auto-loads later) and
+        # installing packages sign off at author time; any state-changing HTTP
+        # request is gated per-call (reads stay free).
+        self.policy = policy or Policy(
+            require_approval={"skills.save_skill", "packages.install"},
+            approve_if=[_is_mutating_http],
+        )
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:
@@ -84,11 +102,15 @@ class Session:
 
         self.session_venv = SessionVenv()
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
+        # Web fetch is a thin wrapper over the stateful HTTP capability, so the
+        # latter is built first and shared with WebCapability.
+        self.http = HttpSessionCapability(self.workspace, vault=self.vault)
         for capability in (
             FilesCapability(self.workspace),
             ShellCapability(self.workspace, secret_env_prefixes=secret_prefixes),
             SearchCapability(self.workspace),
-            WebCapability(self.llm, vault=self.vault),
+            self.http,
+            WebCapability(self.llm, http=self.http),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
@@ -143,4 +165,5 @@ class Session:
         and any MCP server connections)."""
         if hasattr(self.kernel, "close"):
             self.kernel.close()
+        self.http.close_all()
         self.registry.close()

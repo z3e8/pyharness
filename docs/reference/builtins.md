@@ -27,9 +27,19 @@ This is the authoritative contract the orchestrator is given (see
 |-----------|-------|
 | `web_search(query) -> str` | Anthropic server-side search; no extra API key |
 | `web_fetch(url, auth=None, auth_style="bearer", auth_name=None, user=None) -> str` | `auth` names a secret, injected parent-side and never shown to the agent |
+| `open_session() -> str` / `close_session(session_id)` | Open/close a persistent HTTP session; cookies persist on the id across cells |
+| `request(session_id, method, url, *, ...) -> dict` | Stateful request on a session (or `None` for one-shot). Returns `{status, url, headers, text, truncated, elapsed_ms}` |
 
 `web_fetch` auth styles: `"bearer"` · `"header"` (`auth_name` = header name) ·
 `"query"` (`auth_name` = param) · `"basic"` (`user=...`).
+
+`request` reuses those same auth styles (`auth` / `auth_style` / `auth_name` /
+`auth_user`), plus `secret_fields={"field": "secret_name"}` to inject a named
+secret into the `json`/`data` body and `files=[["field", "path"]]` to upload a
+workspace file (read parent-side). The live `httpx.Client` stays parent-side,
+keyed by the session id; the agent only holds the id. State-changing methods
+(POST/PUT/PATCH/DELETE) require human approval; reads do not. `web_fetch` is a
+thin one-shot wrapper over `request`.
 
 ## Credentials
 

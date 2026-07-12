@@ -3,7 +3,11 @@ import pytest
 from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
-from pyharness.broker.capabilities import FilesCapability
+from pyharness.broker.capabilities import (
+    FilesCapability,
+    HttpSessionCapability,
+    WebCapability,
+)
 from pyharness.budget import BudgetExceeded
 from pyharness.core.kernel import Kernel
 
@@ -165,36 +169,142 @@ def test_secrets_capability_exposes_names_not_values(tmp_path):
     assert "get" not in ns  # the value-returning method is never exposed
 
 
-def test_web_fetch_injects_auth_parent_side(tmp_path, monkeypatch):
+class _FakeResp:
+    def __init__(self, status=200, text="ok", url="http://x"):
+        import datetime
+
+        self.status_code = status
+        self.text = text
+        self.url = url
+        self.headers = {"content-type": "text/plain"}
+        self.elapsed = datetime.timedelta(milliseconds=2)
+
+
+class _FakeClient:
+    """Records every request; shared instances let tests assert cookie-jar reuse
+    (one client per session) versus one-shot use (a fresh client per call)."""
+
+    instances: list = []
+
+    def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
+        self.calls: list = []
+        self.closed = False
+        _FakeClient.instances.append(self)
+
+    def request(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, **kwargs})
+        return _FakeResp(url=url)
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_httpx(monkeypatch):
     import httpx
 
-    from pyharness.broker.capabilities import WebCapability
+    _FakeClient.instances = []
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    return _FakeClient
 
-    captured = {}
 
-    class FakeResp:
-        text = "ok"
-
-    def fake_get(url, **kwargs):
-        captured.update(url=url, headers=kwargs.get("headers"), params=kwargs.get("params"))
-        return FakeResp()
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    web = WebCapability(llm=None, vault=Vault({"k": "S3CRET"}))
+def test_web_fetch_injects_auth_parent_side(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
+    web = WebCapability(llm=None, http=http)
 
     web.web_fetch("http://x", auth="k")
-    assert captured["headers"]["Authorization"] == "Bearer S3CRET"
+    assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == "Bearer S3CRET"
 
     web.web_fetch("http://x", auth="k", auth_style="header", auth_name="X-API-Key")
-    assert captured["headers"]["X-API-Key"] == "S3CRET"
+    assert fake_httpx.instances[-1].calls[-1]["headers"]["X-API-Key"] == "S3CRET"
 
     web.web_fetch("http://x", auth="k", auth_style="query", auth_name="api_key")
-    assert captured["params"] == {"api_key": "S3CRET"}
+    assert fake_httpx.instances[-1].calls[-1]["params"] == {"api_key": "S3CRET"}
 
     web.web_fetch("http://x", auth="k", auth_style="basic", user="alice")
     import base64
 
-    assert captured["headers"]["Authorization"] == "Basic " + base64.b64encode(b"alice:S3CRET").decode()
+    expected = "Basic " + base64.b64encode(b"alice:S3CRET").decode()
+    assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == expected
+
+
+def test_http_session_reuses_one_client(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path))
+    sid = http.open_session()
+    http.request(sid, "GET", "http://a")
+    http.request(sid, "GET", "http://b")
+    # One client for the session (cookie jar shared across both requests).
+    assert len(fake_httpx.instances) == 1
+    assert [c["url"] for c in fake_httpx.instances[0].calls] == ["http://a", "http://b"]
+    http.close_session(sid)
+    assert fake_httpx.instances[0].closed
+
+
+def test_http_request_returns_structured_result(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path))
+    r = http.request(None, "GET", "http://x")
+    assert r["status"] == 200
+    assert r["text"] == "ok"
+    assert r["url"] == "http://x"
+    assert r["truncated"] is False
+    assert r["elapsed_ms"] == 2
+
+
+def test_http_one_shot_uses_fresh_client_each_call(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path))
+    http.request(None, "GET", "http://a")
+    http.request(None, "GET", "http://b")
+    assert len(fake_httpx.instances) == 2
+    assert all(c.closed for c in fake_httpx.instances)  # transient clients close
+
+
+def test_http_injects_secret_into_body(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    http.request(None, "POST", "http://x", json={"user": "me"}, secret_fields={"password": "pw"})
+    body = fake_httpx.instances[-1].calls[-1]["json"]
+    assert body == {"user": "me", "password": "hunter2"}
+
+
+def test_http_upload_reads_file_parent_side(tmp_path, fake_httpx):
+    ws = Workspace(tmp_path)
+    (ws.dir / "resume.txt").write_text("CV")
+    http = HttpSessionCapability(ws)
+    http.request(None, "POST", "http://x", files=[["file", "resume.txt"]])
+    assert fake_httpx.instances[-1].calls[-1]["files"] == [("file", ("resume.txt", b"CV"))]
+
+
+def test_http_upload_rejects_workspace_escape(tmp_path, fake_httpx):
+    http = HttpSessionCapability(Workspace(tmp_path))
+    with pytest.raises(ValueError):
+        http.request(None, "POST", "http://x", files=[["file", "../secret.txt"]])
+
+
+def test_policy_approve_if_predicate():
+    pol = Policy(approve_if=[lambda a, ar, kw: a == "http.request" and ar[1] == "POST"])
+    assert pol.decide("http.request", ("sid", "POST", "http://x"), {}) is Decision.APPROVE
+    assert pol.decide("http.request", ("sid", "GET", "http://x"), {}) is Decision.ALLOW
+
+
+def test_mutating_http_requires_approval(tmp_path, fake_httpx):
+    from pyharness.core.session import _is_mutating_http
+
+    prompted = []
+
+    def approver(action, args, kwargs):
+        prompted.append(args[1])
+        return False
+
+    broker = _broker(tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver)
+    broker.register(HttpSessionCapability(Workspace(tmp_path)))
+    ns = broker.namespace()
+
+    ns["request"](None, "GET", "http://x")  # read: no approval prompt
+    assert prompted == []
+
+    with pytest.raises(PermissionDenied):
+        ns["request"](None, "POST", "http://x")  # write: gated, and denied here
+    assert prompted == ["POST"]
 
 
 def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):

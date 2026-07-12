@@ -37,11 +37,17 @@ pyharness-vault rm github
 ```python
 secrets()                                   # -> ["github", ...]  (names only)
 web_fetch("https://api.github.com/user", auth="github")   # value injected parent-side
+
+# On a stateful HTTP session, the same names inject into headers or a body field:
+s = open_session()
+request(s, "POST", "https://api.example.com/login",
+        json={"user": "me"}, secret_fields={"password": "example_pw"})
 ```
 
-`web_fetch` auth styles: `bearer` (default), `header` (`auth_name` = header),
-`query` (`auth_name` = param), `basic` (`user=...`). See
-[Builtins](../reference/builtins.md).
+`web_fetch` and `request` share these auth styles: `bearer` (default), `header`
+(`auth_name` = header), `query` (`auth_name` = param), `basic` (`user=`/
+`auth_user=`). `request` adds `secret_fields={"field": "secret_name"}` to inject
+into the JSON/form body. See [Builtins](../reference/builtins.md).
 
 > Out-of-process, secret-bearing env vars are scrubbed from the child before any
 > agent code runs, so even a shell-out can't read them.

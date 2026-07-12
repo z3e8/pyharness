@@ -17,8 +17,16 @@ and returns one of three decisions:
 Rules match by prefix, so `"files"` gates every file operation and
 `"files.write"` gates just writes. The default policy requires approval for
 `skills.save_skill` and `packages.install` — both write code that would run in
-later sessions, so a human signs off at author time. The CLI's approver prints
-the action and arguments and asks `allow? [y/N]`.
+later sessions, so a human signs off at author time. It also gates
+**state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE), since those
+act outward on the user's behalf; reads (GET) stay free. The CLI's approver
+prints the action and arguments and asks `allow? [y/N]`.
+
+Most rules match on the action name alone, but a rule can also judge a call from
+its arguments: `Policy(approve_if=[predicate])` runs each predicate over
+`(action, args, kwargs)` and forces approval if any returns true. That is how one
+action (`http.request`) is gated on a *value* (the HTTP method) rather than
+needing a separate action name per method.
 
 > The approver is handed the **structured** action + arguments, never an
 > agent-supplied display string — so what a human sees is exactly what executes.
@@ -28,8 +36,11 @@ the action and arguments and asks `allow? [y/N]`.
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to
 agent code ever returns a secret's cleartext.** The agent sees only names (via
 the `secrets()` builtin); the value is resolved in the parent and injected at the
-point of use (e.g. `web_fetch(url, auth="github")`). `Vault.get()` is
-deliberately *not* in the kernel namespace.
+point of use (e.g. `web_fetch(url, auth="github")`, or `request(..., auth=...)`
+and `request(..., secret_fields={"password": "name"})` for a stateful HTTP
+session — every new action surface is another injection sink under the same
+rule, not an exception to it). `Vault.get()` is deliberately *not* in the kernel
+namespace.
 
 Resolution order, first hit wins: in-memory dict → environment
 (`PYHARNESS_SECRET_<NAME>`) → encrypted file. The file is sealed with a
