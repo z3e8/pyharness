@@ -1,5 +1,5 @@
-from .policy import Decision, Policy
+from .policy import ActionCategory, Decision, Policy
 from .sink import SecretSink
 from .vault import Vault
 
-__all__ = ["Decision", "Policy", "SecretSink", "Vault"]
+__all__ = ["ActionCategory", "Decision", "Policy", "SecretSink", "Vault"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 
 from ...core.session_venv import SessionVenv
+from ...security.policy import ActionCategory
 
 
 class PackagesCapability:
@@ -13,6 +14,12 @@ class PackagesCapability:
 
     def exports(self) -> dict:
         return {"install": self.install, "list_installed": self.list_installed}
+
+    def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
+        """Installing fetches from PyPI and adds executable code to the session —
+        OUTWARD (a remote fetch under a supply-chain sign-off)."""
+        package = kwargs.get("package") or (args[0] if args else "?")
+        return ActionCategory.OUTWARD, f"pip install {package}"
 
     def install(self, package: str) -> str:
         site = self._venv.site_packages()

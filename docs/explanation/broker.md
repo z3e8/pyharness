@@ -14,7 +14,10 @@ policy check  →  audit  →  budget (metered actions)  →  execute
 ```
 
 - **Policy** decides allow / deny / require-approval for the action, identified
-  as `"<capability>.<operation>"` (e.g. `files.write`, `shell.bash`).
+  as `"<capability>.<operation>"` (e.g. `files.write`, `shell.bash`). On
+  require-approval the broker builds an `ApprovalRequest` — a severity category
+  plus a secret-safe summary, drawn from the owning capability's `preview` hook —
+  and hands it to the human `approver`.
 - **Audit** appends the call to a tamper-evident log.
 - **Budget** is checked before *metered* actions (`llm`, `agents`, `web`) so
   agent-initiated spend fails fast at the limit.

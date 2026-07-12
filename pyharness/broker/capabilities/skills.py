@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...security.policy import ActionCategory
 from ...tools.registry import Registry
 from ...tools.skills import register_skill_dir, write_skill
 
@@ -23,6 +24,13 @@ class SkillsCapability:
 
     def exports(self) -> dict:
         return {"save_skill": self.save_skill}
+
+    def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
+        """Saving a skill only writes under the skills root, so it is LOCAL — the
+        gate is a supply-chain sign-off (this code auto-loads in later sessions),
+        not an outward effect."""
+        name = kwargs.get("name") or (args[0] if args else "?")
+        return ActionCategory.LOCAL, f"save skill {name!r} to {self.skills_dir}"
 
     def save_skill(
         self,

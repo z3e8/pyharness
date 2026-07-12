@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
+from pyharness import ActionCategory, Budget, Decision, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
 from pyharness.broker.capabilities import (
@@ -68,14 +68,17 @@ def test_policy_deny(tmp_path):
 def test_policy_approval(tmp_path):
     seen = {}
 
-    def approver(action, args, kwargs):
-        seen["action"] = action
+    def approver(request):
+        seen["action"] = request.action
+        seen["category"] = request.category
         return True
 
     broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver)
     broker.register(FilesCapability(Workspace(tmp_path)))
     broker.namespace()["write"]("x.txt", "y")
     assert seen["action"] == "files.write"
+    # Files has no preview hook, so the broker falls back to a conservative class.
+    assert seen["category"] is ActionCategory.OUTWARD
 
 
 def test_budget_records_and_limits():
@@ -353,8 +356,8 @@ def test_mutating_http_requires_approval(tmp_path, fake_httpx):
 
     prompted = []
 
-    def approver(action, args, kwargs):
-        prompted.append(args[1])
+    def approver(request):
+        prompted.append(request.args[1])
         return False
 
     broker = _broker(tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver)
@@ -482,8 +485,8 @@ def test_mutating_browser_requires_approval(tmp_path):
 
     prompted = []
 
-    def approver(action, args, kwargs):
-        prompted.append(action)
+    def approver(request):
+        prompted.append(request)
         return False
 
     cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
@@ -497,7 +500,71 @@ def test_mutating_browser_requires_approval(tmp_path):
 
     with pytest.raises(PermissionDenied):
         ns["click"]("sid", "#submit")  # state-changing: gated, denied here
-    assert prompted == ["browser.click"]
+    assert [r.action for r in prompted] == ["browser.click"]
+    # The preview enriches the confirmation with the page the click lands on.
+    assert prompted[0].category is ActionCategory.OUTWARD
+    assert "#submit" in prompted[0].summary and "http://x" in prompted[0].summary
+
+
+# --- Approval preview & taxonomy (C5) ----------------------------------------
+
+
+def test_http_preview_classifies_and_summarizes(tmp_path):
+    http = HttpSessionCapability(Workspace(tmp_path))
+    # POST: outward, and the summary shows method, url, and body field *names*.
+    cat, summary = http.preview("request", (None, "POST", "http://api/x"), {"json": {"a": 1, "b": 2}})
+    assert cat is ActionCategory.OUTWARD
+    assert "POST" in summary and "http://api/x" in summary and "a, b" in summary
+    # DELETE is the one method the harness knows is irreversible.
+    cat, _ = http.preview("request", (None, "DELETE", "http://api/x"), {})
+    assert cat is ActionCategory.IRREVERSIBLE
+
+
+def test_http_preview_shows_body_field_names_not_values(tmp_path):
+    # The body can hold workspace data; the confirmation names the fields but
+    # never dumps their values.
+    http = HttpSessionCapability(Workspace(tmp_path))
+    _, summary = http.preview("request", (None, "POST", "http://x"), {"data": {"resume": "PRIVATE"}})
+    assert "resume" in summary and "PRIVATE" not in summary
+
+
+def test_browser_preview_masks_secret_in_page_url(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    cap.fill_secret("sid", "#password", "pw")
+    page.url = "http://x/cb?token=hunter2"  # secret landed in the page's query string
+    cat, summary = cap.preview("click", ("sid", "#submit"), {})
+    assert cat is ActionCategory.OUTWARD
+    assert "hunter2" not in summary and "***" in summary
+
+
+def test_skills_and_packages_preview_categories(tmp_path):
+    from pyharness.broker.capabilities import PackagesCapability, SkillsCapability
+    from pyharness.core.session_venv import SessionVenv
+
+    skills = SkillsCapability(Registry(), tmp_path / "skills")
+    cat, summary = skills.preview("save_skill", ("greeter",), {})
+    assert cat is ActionCategory.LOCAL and "greeter" in summary
+
+    packages = PackagesCapability(SessionVenv())
+    cat, summary = packages.preview("install", ("requests",), {})
+    assert cat is ActionCategory.OUTWARD and "requests" in summary
+
+
+def test_broker_records_category_in_audit(tmp_path):
+    import json
+
+    broker = _broker(
+        tmp_path, policy=Policy(require_approval={"packages.install"}), approver=lambda r: False
+    )
+    from pyharness.broker.capabilities import PackagesCapability
+    from pyharness.core.session_venv import SessionVenv
+
+    broker.register(PackagesCapability(SessionVenv()))
+    with pytest.raises(PermissionDenied):
+        broker.namespace()["install"]("requests")
+    entries = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    approve = next(e for e in entries if e.get("decision") == "approve")
+    assert approve["category"] == "outward" and approve["approved"] is False
 
 
 def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):

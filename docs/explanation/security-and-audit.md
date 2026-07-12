@@ -18,9 +18,9 @@ Rules match by prefix, so `"files"` gates every file operation and
 `"files.write"` gates just writes. The default policy requires approval for
 `skills.save_skill` and `packages.install` — both write code that would run in
 later sessions, so a human signs off at author time. It also gates
-**state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE), since those
-act outward on the user's behalf; reads (GET) stay free. The CLI's approver
-prints the action and arguments and asks `allow? [y/N]`.
+**state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
+**state-changing browser actions** (`click` / `fill` / `fill_secret`), since
+those act outward on the user's behalf; reads and navigation stay free.
 
 Most rules match on the action name alone, but a rule can also judge a call from
 its arguments: `Policy(approve_if=[predicate])` runs each predicate over
@@ -28,7 +28,32 @@ its arguments: `Policy(approve_if=[predicate])` runs each predicate over
 action (`http.request`) is gated on a *value* (the HTTP method) rather than
 needing a separate action name per method.
 
-> The approver is handed the **structured** action + arguments, never an
+### What the human is shown — preview and taxonomy
+
+An approver is not handed raw arguments to squint at. The broker builds an
+`ApprovalRequest` (`broker/dispatch.py`) carrying a **category** and a
+human-readable **summary**, and the audit log records the category alongside the
+decision:
+
+- **`category`** (`security/policy.py:ActionCategory`) grades severity —
+  `LOCAL` (stays in the workspace, e.g. `save_skill`), `OUTWARD` (sends off-box
+  or acts on a remote page, e.g. a POST or a browser click), or `IRREVERSIBLE`
+  (a remote effect the harness knows can't be undone, e.g. an HTTP `DELETE`). The
+  harness assigns this; an agent cannot grade its own actions' risk, and page
+  text can never talk it down a rung.
+- **`summary`** is a short, secret-safe line describing the effect — `POST
+  https://…/apply (body: name, resume_id)` names the target and the body *fields*
+  but never their values; a browser click is shown with the page it lands on
+  (redacted through that session's secret sink, so a query-string secret in the
+  url never surfaces in the confirmation).
+
+A capability that owns gated ops supplies `preview(op, args, kwargs) ->
+(category, summary)`, so the arg-shape knowledge stays with the capability;
+anything else falls back to a conservative `OUTWARD` classification. The CLI
+approver prints `⚠ approval required [category]: action` then the summary, and
+asks `allow? [y/N]`.
+
+> The `ApprovalRequest` is built from the **structured** call, never an
 > agent-supplied display string — so what a human sees is exactly what executes.
 
 ## Vault — secrets the agent can name but never read

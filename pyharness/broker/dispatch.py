@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 from .. import telemetry
 from ..audit import AuditLog
 from ..budget import Budget
-from ..security.policy import Decision, Policy
+from ..security.policy import ActionCategory, Decision, Policy
 from ..util import summarize_args
 
 
@@ -13,10 +14,28 @@ class PermissionDenied(Exception):
     """Raised when policy denies a capability call, or approval is refused."""
 
 
-# An approver renders a confirmation from the structured action + arguments and
-# returns True/False. It must never trust an agent-supplied display string —
-# only these fields — so what is shown is exactly what executes.
-Approver = Callable[[str, tuple, dict], bool]
+@dataclass(frozen=True)
+class ApprovalRequest:
+    """What the human is asked to sign off on.
+
+    The broker builds this from the structured call — never from an agent-supplied
+    display string — so what the approver shows is exactly what will execute.
+    `category` is the harness's severity classification (see `ActionCategory`) and
+    `summary` is a short, secret-safe, human-readable line describing the effect;
+    `args`/`kwargs` are kept so a custom approver can inspect further."""
+
+    action: str
+    category: ActionCategory
+    summary: str
+    args: tuple
+    kwargs: dict
+
+
+# An approver renders a confirmation from an `ApprovalRequest` and returns
+# True/False. It sees only the harness-built request (category + summary + the
+# structured args), never an agent-supplied display string, so what is shown is
+# exactly what executes.
+Approver = Callable[["ApprovalRequest"], bool]
 
 
 class Broker:
@@ -43,8 +62,10 @@ class Broker:
         self.approver = approver
         self.metered = metered
         self._ops: dict[tuple[str, str], Callable] = {}
+        self._capabilities: dict[str, object] = {}
 
     def register(self, capability) -> None:
+        self._capabilities[capability.name] = capability
         for name, func in capability.exports().items():
             self._ops[(capability.name, name)] = func
 
@@ -65,6 +86,19 @@ class Broker:
         cap = next(c for (c, o) in self._ops if o == op)
         return self.call(cap, op, *args, **kwargs)
 
+    def _approval_request(self, cap: str, op: str, action: str, args, kwargs) -> ApprovalRequest:
+        """Describe a gated call for the human. A capability that owns gated ops
+        provides `preview(op, args, kwargs) -> (category, summary)` so the
+        arg-shape knowledge stays with the capability; anything else falls back to
+        a conservative OUTWARD classification and a rendered-args summary."""
+        preview = getattr(self._capabilities.get(cap), "preview", None)
+        if preview is not None:
+            category, summary = preview(op, args, kwargs)
+        else:
+            category = ActionCategory.OUTWARD
+            summary = f"{action}({summarize_args(args, kwargs)})"
+        return ApprovalRequest(action, category, summary, args, kwargs)
+
     def _proxy(self, cap: str, op: str) -> Callable:
         def proxy(*args, **kwargs):
             return self.call(cap, op, *args, **kwargs)
@@ -82,8 +116,14 @@ class Broker:
                 telemetry.record_tool(span, action=action, decision="deny", ok=False)
                 raise PermissionDenied(f"policy denied {action}")
             if decision is Decision.APPROVE:
-                approved = bool(self.approver and self.approver(action, args, kwargs))
-                self.audit.record(action=action, decision="approve", approved=approved)
+                request = self._approval_request(cap, op, action, args, kwargs)
+                approved = bool(self.approver and self.approver(request))
+                self.audit.record(
+                    action=action,
+                    decision="approve",
+                    approved=approved,
+                    category=request.category.value,
+                )
                 if not approved:
                     telemetry.record_tool(span, action=action, decision="approve", ok=False)
                     raise PermissionDenied(f"not approved: {action}")

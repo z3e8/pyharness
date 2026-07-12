@@ -5,6 +5,7 @@ from importlib import import_module
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
 from ...util import MAX_OUTPUT, truncate
@@ -68,6 +69,19 @@ class HttpSessionCapability:
             "request": self.request,
             "close_session": self.close_session,
         }
+
+    def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
+        """Describe a gated request for the approver: method + target url, plus the
+        body field *names* (never values — those can be workspace data). A DELETE
+        is classed IRREVERSIBLE; other mutating methods are OUTWARD."""
+        method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
+        url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
+        body = kwargs.get("json") if kwargs.get("json") is not None else kwargs.get("data")
+        summary = f"{method} {url}"
+        if isinstance(body, dict) and body:
+            summary += f" (body: {', '.join(map(str, body))})"
+        category = ActionCategory.IRREVERSIBLE if method == "DELETE" else ActionCategory.OUTWARD
+        return category, summary
 
     def open_session(self) -> str:
         """Open a persistent session and return its id. Reuse the id across cells

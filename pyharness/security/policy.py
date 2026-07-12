@@ -10,6 +10,20 @@ class Decision(Enum):
     APPROVE = "approve"
 
 
+class ActionCategory(Enum):
+    """How severe a gated action is, from the approving human's point of view.
+
+    The harness assigns this — an agent cannot be trusted to grade its own
+    actions' risk on the human's behalf, and page text can never talk the harness
+    down a rung. Ordered least to most consequential; the approver shows it so a
+    human can calibrate (a workspace-local write reads differently from a remote
+    delete)."""
+
+    LOCAL = "local"  # effect stays in the workspace/box; undoable by the agent
+    OUTWARD = "outward"  # sends data off-box or acts on a remote page; observable, assume not undoable
+    IRREVERSIBLE = "irreversible"  # a remote effect the harness knows cannot be taken back
+
+
 # A predicate judges a call from its full context, not just its name — so a
 # single action ("http.request") can be gated on an argument (the HTTP method).
 # Returns True to force approval. Kept general: nothing here is HTTP-specific.

@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .broker.dispatch import ApprovalRequest
 from .budget import Budget, BudgetExceeded
 from .core.session import Session
 from .security.vault import _DEFAULT_FILE
@@ -53,9 +54,9 @@ def _prompt_vault_passphrase() -> None:
         os.environ["PYHARNESS_VAULT_PASSPHRASE"] = getpass.getpass("vault passphrase: ")
 
 
-def _approve(action: str, args: tuple, kwargs: dict) -> bool:
-    print(f"\n⚠ approval required: {action}")
-    print(f"  args: {args}  kwargs: {kwargs}")
+def _approve(request: ApprovalRequest) -> bool:
+    print(f"\n⚠ approval required [{request.category.value}]: {request.action}")
+    print(f"  {request.summary}")
     return input("  allow? [y/N] ").strip().lower() == "y"
 
 

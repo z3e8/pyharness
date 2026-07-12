@@ -19,8 +19,9 @@ pyharness [SESSION_DIR]
 - Mounts MCP servers from `.mcp.json` (override path with `PYHARNESS_MCP_CONFIG`)
   when the file exists.
 - If an encrypted vault file exists and no passphrase is set, prompts for it once.
-- Actions that require approval print the action + arguments and ask `allow?
-  [y/N]`.
+- Actions that require approval print `⚠ approval required [category]: action`
+  and a one-line summary of the effect (method + url + body fields, or a browser
+  action with the page it lands on), then ask `allow? [y/N]`.
 - A turn that fails mid-stream is retried once, then aborted without crashing the
   REPL. `Ctrl-D` exits.
 

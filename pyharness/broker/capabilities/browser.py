@@ -4,6 +4,7 @@ from importlib import import_module
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
 from ...util import MAX_OUTPUT, truncate
@@ -72,6 +73,16 @@ class BrowserCapability:
             "screenshot": self.screenshot,
             "close_browser": self.close_browser,
         }
+
+    def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
+        """Describe a gated page action for the approver, enriched with the page
+        it will land on — context the broker can't see, since the live page is
+        session state here. The url is redacted through the session's sink so a
+        secret in a query string never surfaces in the confirmation."""
+        selector = kwargs.get("selector") or (args[1] if len(args) >= 2 else "")
+        session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+        where = f" on {session.sink.redact(session.page.url)}" if session else ""
+        return ActionCategory.OUTWARD, f"{op} {selector!r}{where}"
 
     def _driver(self):
         """Start (once) and return the Playwright driver. Playwright is an

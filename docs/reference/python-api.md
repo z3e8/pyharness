@@ -2,8 +2,8 @@
 
 The public surface exported from `pyharness` (`pyharness/__init__.py`):
 `Session`, `Agent`, `Kernel`, `Workspace`, `Budget`, `BudgetExceeded`, `Policy`,
-`Decision`, `Vault`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`,
-`ToolCall`.
+`Decision`, `ActionCategory`, `Vault`, `Registry`, `AuditLog`, `AnthropicLLM`,
+`Completion`, `ToolCall`.
 
 Most use only `Session` and `Budget`.
 
@@ -19,7 +19,7 @@ Session(
                                #   skills.save_skill and packages.install
     vault=None,                # Vault — defaults to Vault.from_env()
     registry=None,             # Registry — defaults to the built-in tools
-    approver=None,             # Callable[[action, args, kwargs], bool]
+    approver=None,             # Callable[[ApprovalRequest], bool]
     on_event=None,             # Callable[[kind, text], None] — stream events
     out_of_process=False,      # run agent code in a sandboxed child process
     mcp_config=None,           # str | Path | dict — MCP servers to mount
@@ -61,10 +61,21 @@ the session's shared `Budget`. See [Budget](../explanation/budget.md).
 ## `Policy`
 
 ```python
-Policy(*, deny=None, require_approval=None)   # sets of "<capability>.<operation>"
+Policy(*, deny=None, require_approval=None,    # sets of "<capability>.<operation>"
+       approve_if=None)                        # list[Callable[[action, args, kwargs], bool]]
 ```
 
-Rules match by prefix (`"files"` gates every file op). Default is allow. See
+Rules match by prefix (`"files"` gates every file op); `approve_if` predicates
+force approval from a call's arguments. Default is allow. `decide(...)` returns a
+`Decision` (`ALLOW` / `DENY` / `APPROVE`). See
+[Security & audit](../explanation/security-and-audit.md).
+
+## `ActionCategory`
+
+The severity the harness assigns a gated action, carried on the `ApprovalRequest`
+handed to an `approver` and recorded in the audit log: `LOCAL` (stays in the
+workspace), `OUTWARD` (sends off-box or acts on a remote), `IRREVERSIBLE` (a
+remote effect known to be unrecoverable). See
 [Security & audit](../explanation/security-and-audit.md).
 
 ## `Vault`
