@@ -3,7 +3,7 @@
 An AI agent whose **action space is Python**. The orchestrator does exactly two
 things: reply with text, or emit one `run_python` call the harness executes in a
 persistent kernel. There are no fine-grained JSON tool calls — when the agent
-needs a capability, it writes Python (`web_search(q)`, `read(path)`,
+needs a capability, it writes Python (`read(path)`, `bash(cmd)`,
 `map_agents(tasks)`).
 
 See the [documentation](docs/index.md) for the full design, guides, and reference.
@@ -29,11 +29,12 @@ print(session.run("Write fib.py, run it, and confirm the output."))
 ```
 
 The agent reaches the world the way Python does — **builtins** always in scope
-(called by bare name: `read`, `bash`, `web_search`, `llm`, `agent`, …),
-**tools** imported on demand. Everything else — installed integrations, MCP
-servers, learned skills — is a tool the agent finds with `search_tools()` and
-loads with `use_tool()`. The [Builtins reference](docs/reference/builtins.md)
-lists the full set. Relative paths resolve inside the session workspace.
+are the agent's own body (called by bare name: `read`, `bash`, `llm`, `agent`,
+`search_tools`, …); **tools** are everything it reaches out to — web access, a
+browser, HTTP APIs, the package index, MCP servers, learned skills — none in
+scope by default, each found with `search_tools()` and loaded with `use_tool()`.
+The [Builtins reference](docs/reference/builtins.md) lists the full set. Relative
+paths resolve inside the session workspace.
 
 **Skills.** A skill is a learned tool the agent (or a human) saves once and reuses
 across sessions: markdown instructions plus optional bundled `.py` modules, stored

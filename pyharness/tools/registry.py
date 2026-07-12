@@ -255,6 +255,12 @@ class Registry:
         return f"{head}  [{' · '.join(tags)}]"
 
     def _no_match(self, q: str) -> str:
+        if not q:  # empty browse with nothing featured — point at the full catalog
+            n = len(self._tools)
+            return (
+                f"(no featured tools; the catalog has {n}. Search by what you need "
+                'e.g. search_tools("web"), or search_tools("*") to list everything.)'
+            )
         featured = [i for i in self._tools.values() if i.featured]
         if featured:
             body = "\n".join(self._header(i) for i in featured)

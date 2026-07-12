@@ -36,11 +36,28 @@ class StubLLM:
         return Completion(text="worked", tool_calls=[], content=[])
 
 
+def _example_tool():
+    """A throwaway registry tool: a module named `widget` exposing `double`."""
+    from types import ModuleType
+
+    module = ModuleType("widget")
+    module.__doc__ = "Widget helpers."
+
+    def double(n):
+        return n * 2
+
+    double.__module__ = "widget"  # so _public_functions discovers it
+    module.double = double
+    return module
+
+
 def _broker(tmp_path, policy=None, *, with_agents=False):
     ws = Workspace(tmp_path)
     broker = Broker(policy or Policy(), AuditLog(tmp_path / "audit.jsonl"), Budget())
     broker.register(FilesCapability(ws))
-    broker.register(ToolsCapability(Registry()))
+    registry = Registry()
+    registry.register(_example_tool(), source="installed")
+    broker.register(ToolsCapability(registry))
     if with_agents:
         broker.register(AgentsCapability(StubLLM()))
     return broker
@@ -101,8 +118,8 @@ def test_policy_denial_is_catchable_by_agent_code(kernel_factory, tmp_path):
 
 def test_use_tool_remote_module(kernel_factory, tmp_path):
     kernel = kernel_factory(_broker(tmp_path))
-    out = kernel.run("calc = use_tool('calc')\nprint(calc.evaluate('2 + 3 * 4'))")
-    assert out == "14"
+    out = kernel.run("widget = use_tool('widget')\nprint(widget.double(21))")
+    assert out == "42"
     # The tool call routed through the broker as tools.invoke.
     actions = [
         json.loads(line).get("action")

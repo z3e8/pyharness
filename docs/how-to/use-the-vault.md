@@ -34,20 +34,28 @@ pyharness-vault rm github
 
 ## How the agent uses it
 
+`secrets()` is a builtin (always in scope), but the web/HTTP tools that consume a
+secret are discovered and loaded first — injection is a property of the tool, not
+of how it's surfaced:
+
 ```python
-secrets()                                   # -> ["github", ...]  (names only)
-web_fetch("https://api.github.com/user", auth="github")   # value injected parent-side
+secrets()                                   # -> ["github", ...]  (names only, a builtin)
+
+web = use_tool("web")
+web.web_fetch("https://api.github.com/user", auth="github")   # value injected parent-side
 
 # On a stateful HTTP session, the same names inject into headers or a body field:
-s = open_session()
-request(s, "POST", "https://api.example.com/login",
-        json={"user": "me"}, secret_fields={"password": "example_pw"})
+http = use_tool("http")
+s = http.open_session()
+http.request(s, "POST", "https://api.example.com/login",
+             json={"user": "me"}, secret_fields={"password": "example_pw"})
 ```
 
 `web_fetch` and `request` share these auth styles: `bearer` (default), `header`
 (`auth_name` = header), `query` (`auth_name` = param), `basic` (`user=`/
 `auth_user=`). `request` adds `secret_fields={"field": "secret_name"}` to inject
-into the JSON/form body. See [Builtins](../reference/builtins.md).
+into the JSON/form body. Load them with `use_tool` (`search_tools("web")` to find
+them); see [Builtins](../reference/builtins.md).
 
 > Out-of-process, secret-bearing env vars are scrubbed from the child before any
 > agent code runs, so even a shell-out can't read them.

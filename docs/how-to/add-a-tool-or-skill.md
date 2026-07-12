@@ -16,8 +16,9 @@ weather = use_tool("weather")   # load it, then call its functions
 weather.forecast("Boston")
 ```
 
-`search_tools("")` lists the common (featured) tools; `include_all=True` (or
-query `"*"`) surfaces the long tail.
+`search_tools("")` lists any *featured* tools; nothing is featured by default, so
+search by what you need (e.g. `search_tools("web")`). `include_all=True` (or query
+`"*"`) lists the whole catalog.
 
 ## Save a skill (a learned tool)
 

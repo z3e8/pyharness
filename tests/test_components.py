@@ -119,19 +119,67 @@ def test_budget_records_and_limits():
         b.check()
 
 
-def test_registry_discovers_builtin_calc():
-    reg = Registry()
-    assert "calc" in reg.search()  # featured, so it shows for an empty query
-    assert "evaluate" in reg.describe("calc")  # signatures come from describe
-    assert reg.use("calc").evaluate("2 + 3 * 4") == 14
+def _example_tool():
+    """A throwaway registry tool: a module named `widget` exposing `double`."""
+    from types import ModuleType
+
+    module = ModuleType("widget")
+    module.__doc__ = "Widget helpers."
+
+    def double(n: int) -> int:
+        """Return twice the input."""
+        return n * 2
+
+    double.__module__ = "widget"  # so _public_functions discovers it
+    module.double = double
+    return module
 
 
-def test_registry_discovers_multiple_tools():
+def test_registry_discovers_describes_and_uses_a_tool():
     reg = Registry()
-    listing = reg.search("", include_all=True)  # empty query alone shows only featured
-    for name in ("calc", "clock", "text"):
-        assert name in listing
-    assert reg.use("text").counts("a b c\nd") == {"chars": 7, "words": 4, "lines": 2}
+    reg.register(_example_tool(), source="installed", keywords=("widget",))
+    assert "# widget" in reg.search("widget")  # found by keyword
+    assert "double" in reg.describe("widget")  # signatures come from describe
+    assert reg.use("widget").double(21) == 42  # loaded and callable
+
+
+def test_non_core_capability_is_gated_but_not_a_builtin(tmp_path):
+    broker = _broker(tmp_path)
+    broker.register(FilesCapability(Workspace(tmp_path)), core=False)
+    # Not surfaced as a bare-name builtin, in-process or (via op_names) in the child.
+    assert "read" not in broker.namespace()
+    assert "read" not in broker.op_names()
+    # But still registered and callable through the broker, with auditing.
+    import json
+
+    broker.call("files", "write", "note.txt", "data")
+    actions = [json.loads(line).get("action") for line in
+               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    assert "files.write" in actions
+
+
+def test_as_tool_module_surfaces_a_capability_through_the_registry(tmp_path):
+    approved = []
+
+    def approver(request):
+        approved.append(request.action)
+        return True
+
+    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
+                     approver=approver)
+    broker.register(FilesCapability(Workspace(tmp_path)), core=False)
+    reg = Registry()
+    reg.register(broker.as_tool_module("files", summary="Workspace files."),
+                 source="core", name="files")
+
+    # describe_tool shows the real signatures/docstrings, not the (*args, **kwargs) proxy.
+    details = reg.describe("files")
+    assert "read(path: 'str')" in details and "write(path: 'str', content: 'str')" in details
+    # Loading and calling routes through the broker: the write is gated + approved.
+    module = reg.use("files")
+    module.write("note.txt", "data")
+    assert approved == ["files.write"]
+    assert (Workspace(tmp_path).dir / "note.txt").read_text() == "data"
 
 
 def test_subagent_session_cap():

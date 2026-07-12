@@ -57,9 +57,12 @@ def test_registry_discovery_and_use():
 
 
 def test_registry_search_wildcard_lists_tools():
+    from types import ModuleType
+
     registry = Registry()
+    registry.register(ModuleType("widget"), source="installed")  # doc-less throwaway tool
     listing = registry.search("*")
-    assert "# calc" in listing
+    assert "# widget" in listing
 
 
 def test_remote_seal_yields_tool_spec():

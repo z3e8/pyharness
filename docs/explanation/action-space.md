@@ -12,7 +12,7 @@ things each step:
    kernel.
 
 There are no other tools. When the agent needs a capability, it *writes Python*:
-`read(path)`, `web_search(q)`, `map_agents(tasks)`.
+`read(path)`, `bash(cmd)`, `map_agents(tasks)`.
 
 ## Why Python instead of JSON tools
 
@@ -43,14 +43,22 @@ variables already computed* rather than starting over.
 
 ## Builtins vs tools
 
-The agent reaches the world the two ways Python itself does:
+The agent reaches the world the two ways Python itself does, split by one line —
+**builtins are the agent's own body; tools are everything it reaches out to:**
 
-- **Builtins** — a small fixed set always in scope, called by bare name
-  (`read`, `bash`, `llm`, …). See [Builtins](../reference/builtins.md).
-- **Tools** — everything else (installed integrations, MCP servers, learned
-  skills). Not in scope automatically: the agent finds one with `search_tools()`,
-  inspects it with `describe_tool()`, and loads it with `use_tool()`. This
-  two-level discovery keeps a large catalog from flooding the agent's context.
+- **Builtins** — a small fixed set always in scope, called by bare name: its
+  workspace (`read`, `write`, `bash`, `search`), delegation (`llm`, `agent`,
+  `map_agents`), reflection (`history`, `save_skill`, `secrets`), and the
+  tool-discovery entrypoint (`search_tools`, `describe_tool`, `use_tool`). See
+  [Builtins](../reference/builtins.md).
+- **Tools** — every external system: web access, a browser, HTTP APIs, the
+  package index, MCP servers, learned skills. None are in scope automatically.
+  The agent finds one with `search_tools()`, inspects it with `describe_tool()`,
+  and loads it with `use_tool()`. So there is exactly one way to reach anything
+  external — discover it — and the agent must plan what it needs rather than
+  having capabilities handed to it. This two-level discovery also keeps a large
+  catalog from flooding the agent's context. A tool call is broker-gated exactly
+  as a builtin's is; the two-way split is about surfacing, not enforcement.
 
 ## Delegation
 

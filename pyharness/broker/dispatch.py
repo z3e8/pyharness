@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Callable
 
 from .. import telemetry
@@ -63,22 +65,49 @@ class Broker:
         self.metered = metered
         self._ops: dict[tuple[str, str], Callable] = {}
         self._capabilities: dict[str, object] = {}
+        self._core: set[str] = set()  # capabilities surfaced as bare-name builtins
 
-    def register(self, capability) -> None:
+    def register(self, capability, *, core: bool = True) -> None:
+        """Register a capability's ops on the broker. `core=True` (the default)
+        also surfaces them as always-in-scope builtins via `namespace()` /
+        `op_names()`; `core=False` registers them for gating but leaves them off
+        the bare-name namespace, to be reached through the tool registry instead
+        (see `as_tool_module`). Either way every call is broker-gated identically."""
         self._capabilities[capability.name] = capability
+        if core:
+            self._core.add(capability.name)
         for name, func in capability.exports().items():
             self._ops[(capability.name, name)] = func
 
     def namespace(self) -> dict[str, Callable]:
-        """The functions injected into the agent's kernel, each routed through
-        this broker."""
-        return {name: self._proxy(cap, name) for (cap, name) in self._ops}
+        """The functions injected into the agent's kernel as always-in-scope
+        builtins, each routed through this broker. Only `core` capabilities are
+        surfaced here; non-core ones are reached via the tool registry."""
+        return {op: self._proxy(cap, op) for (cap, op) in self._ops if cap in self._core}
 
     def op_names(self) -> list[str]:
-        """The flat operation names the agent calls (`read`, `bash`, ...). The
-        out-of-process child binds a proxy for each and addresses calls by name;
-        names are unique across capabilities, matching `namespace()`."""
-        return [op for (_cap, op) in self._ops]
+        """The flat operation names the agent calls by bare name (`read`, `bash`,
+        ...). The out-of-process child binds a proxy for each and addresses calls
+        by name; must match `namespace()`, so it too is core-only."""
+        return [op for (cap, op) in self._ops if cap in self._core]
+
+    def as_tool_module(self, cap: str, *, summary: str = "") -> ModuleType:
+        """Build a module whose public functions are broker-gated proxies for one
+        capability's ops, each carrying the op's real signature and docstring.
+        Registering this in the tool registry surfaces a capability through the
+        discovery path (search_tools/describe_tool/use_tool) rather than as a bare
+        builtin, with identical policy/audit/budget gating. Pairs with
+        `register(cap, core=False)`."""
+        module = ModuleType(cap)
+        module.__doc__ = summary
+        for (c, op), func in self._ops.items():
+            if c != cap:
+                continue
+            proxy = self._proxy(cap, op)
+            functools.wraps(func)(proxy)  # copy __doc__/__wrapped__ (signature) from the real op
+            proxy.__module__ = cap  # so Registry._public_functions lists it as this module's
+            setattr(module, op, proxy)
+        return module
 
     def call_op(self, op: str, *args, **kwargs):
         """Dispatch by operation name alone — the address the child sends over

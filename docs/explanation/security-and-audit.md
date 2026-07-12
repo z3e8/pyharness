@@ -61,10 +61,11 @@ asks `allow? [y/N]`.
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to
 agent code ever returns a secret's cleartext.** The agent sees only names (via
 the `secrets()` builtin); the value is resolved in the parent and injected at the
-point of use (e.g. `web_fetch(url, auth="github")`, or `request(..., auth=...)`
-and `request(..., secret_fields={"password": "name"})` for a stateful HTTP
-session, or `fill_secret` typing into a browser field — every new action surface
-is another injection sink under the same rule, not an exception to it).
+point of use — on the discovered web/http/browser tools, not in agent-visible
+text (e.g. `web.web_fetch(url, auth="github")`, or `http.request(..., auth=...)`
+and `http.request(..., secret_fields={"password": "name"})` for a stateful HTTP
+session, or `browser.fill_secret` typing into a browser field — every action
+surface is another injection sink under the same rule, not an exception to it).
 `Vault.get()` is deliberately *not* in the kernel namespace.
 
 Each injection surface routes through one small primitive,

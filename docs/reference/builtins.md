@@ -21,52 +21,42 @@ This is the authoritative contract the orchestrator is given (see
 `bash` runs with secret-bearing env vars stripped (see
 [Security & audit](../explanation/security-and-audit.md)).
 
-## Web
+## Reaching the outside world is not a builtin
 
-| Signature | Notes |
-|-----------|-------|
-| `web_search(query) -> str` | Anthropic server-side search; no extra API key |
-| `web_fetch(url, auth=None, auth_style="bearer", auth_name=None, user=None) -> str` | `auth` names a secret, injected parent-side and never shown to the agent |
-| `open_session() -> str` / `close_session(session_id)` | Open/close a persistent HTTP session; cookies persist on the id across cells |
-| `request(session_id, method, url, *, ...) -> dict` | Stateful request on a session (or `None` for one-shot). Returns `{status, url, headers, text, truncated, elapsed_ms}` |
+Everything that reaches an external system — the web, a browser, HTTP APIs, the
+package index, MCP servers, learned skills — is a **tool**, not a builtin. None
+are in scope by default; the agent discovers and loads them the same way
+(`search_tools` → `describe_tool` → `use_tool`), and every call is gated exactly
+as a builtin's is. The line: builtins are the agent's own body; tools are what it
+reaches out to. The first-party external tools ship registered under the `web`
+and `packages` categories — find them with `search_tools("web")` /
+`search_tools("install")`:
 
-`web_fetch` auth styles: `"bearer"` · `"header"` (`auth_name` = header name) ·
-`"query"` (`auth_name` = param) · `"basic"` (`user=...`).
+| Tool | `search_tools` | What it is |
+|------|----------------|------------|
+| `web` | `web` | `web_search` (Anthropic server-side search) + `web_fetch` (one-shot GET, a thin wrapper over `http.request`) |
+| `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, text, truncated, elapsed_ms}`), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
+| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `click` / `fill` / `fill_secret` / `read_text` / `screenshot` / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
+| `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
-`request` reuses those same auth styles (`auth` / `auth_style` / `auth_name` /
-`auth_user`), plus `secret_fields={"field": "secret_name"}` to inject a named
-secret into the `json`/`data` body and `files=[["field", "path"]]` to upload a
-workspace file (read parent-side). Any secret injected this way is masked
-(`***`) out of the returned `url`, `text`, and `headers`, so a `"query"`-style
-auth secret echoed in the final url or a `secret_fields` value reflected in the
-response cannot round-trip back to the agent. The live `httpx.Client` stays
-parent-side, keyed by the session id; the agent only holds the id. State-changing
-methods (POST/PUT/PATCH/DELETE) require human approval; reads do not. `web_fetch`
-is a thin one-shot wrapper over `request`.
+`describe_tool(name)` is the live source for each tool's exact signatures — the
+docs don't duplicate them. The non-inferable semantics that survive the move:
 
-## Browser
+- **Reads are free; state-changing calls need human approval.** GET/HEAD and page
+  reads run unattended; POST/PUT/PATCH/DELETE and `click`/`fill`/`fill_secret`
+  are gated per call. This holds whether the capability is a builtin or a tool.
+- **Secrets never round-trip through agent-visible text.** `auth`/`secret_fields`
+  (http) and `fill_secret` (browser) name a vault secret resolved parent-side;
+  the value is masked (`***`) out of every returned `url`/`text`/`headers` and
+  out of `read_text`. `screenshot` writes to disk only, so a secret visible
+  on-screen still appears in the image.
+- **Prefer the `http` path over `browser` for sensitive credentials** — the
+  browser DOM is agent-readable, so it is lower-assurance.
+- Live handles (the `httpx.Client`, the Playwright page) stay parent-side, keyed
+  by the session id the agent holds; state persists across cells.
 
-Needs the optional `pyharness[browser]` extra plus `playwright install chromium`;
-absent, the first call raises with that instruction.
-
-| Signature | Notes |
-|-----------|-------|
-| `open_browser() -> str` / `close_browser(session_id)` | Launch/close a headless page; it and its cookies persist on the id across cells |
-| `goto(session_id, url) -> dict` | Navigate. Returns `{url, title, status}` |
-| `click(session_id, selector) -> dict` | Click a CSS/text selector. State-changing — approval |
-| `fill(session_id, selector, value) -> dict` | Type non-secret text into a field — approval |
-| `fill_secret(session_id, selector, secret_name) -> dict` | Type a named vault secret into a field — approval |
-| `read_text(session_id, selector=None) -> dict` | Read visible text (whole page or one element). Returns `{text, truncated}` |
-| `screenshot(session_id, path) -> dict` | Save a PNG to a workspace path. Returns `{path}` |
-
-Like the HTTP session, the live Playwright page stays parent-side, keyed by the
-id; the agent only holds the id. Secrets follow the same rule as `request`:
-`fill_secret` names a vault secret, resolved parent-side and typed into the page,
-never returned. Any secret injected this way is masked (`***`) out of every
-`read_text` on that session, so a credential cannot round-trip back through
-agent-visible text. `screenshot` writes to disk only — a secret visible on
-screen appears in the image. State-changing actions (`click` / `fill` /
-`fill_secret`) require human approval; navigation and reads do not.
+See [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md) and
+[Security & audit](../explanation/security-and-audit.md).
 
 ## Credentials
 
@@ -96,7 +86,7 @@ Find a tool, inspect it, then load and call it.
 
 | Signature | Returns |
 |-----------|---------|
-| `search_tools(query="", include_all=False) -> str` | ranked **headers** (name, summary, source/category); empty query lists common tools, `include_all=True` surfaces the long tail |
+| `search_tools(query="", include_all=False) -> str` | ranked **headers** (name, summary, source/category); search by what you need (e.g. `"web"`), `include_all=True` or `"*"` lists the whole catalog |
 | `describe_tool(name) -> str` | that tool's functions (signatures + docstrings); for a learned skill, also its instructions |
 | `use_tool(name) -> module` | load it, then call its functions on the returned module |
 

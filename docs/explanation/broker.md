@@ -28,11 +28,24 @@ Both the denial paths and the success path are recorded. See
 
 ## How capabilities reach the kernel
 
-Each capability (files, shell, search, web, llm, agents, tools, secrets, skills,
-packages) exports named operations. The broker wraps every one in a proxy that
-routes through the `call()` path above, and injects those proxies into the
-kernel namespace. So when the agent calls `read(...)`, it is really calling a
-broker proxy — the plain-looking builtin *is* the enforcement point.
+Each capability (files, shell, search, web, http, browser, llm, agents, tools,
+secrets, skills, packages) exports named operations, and the broker wraps every
+one in a proxy that routes through the `call()` path above. So when the agent
+calls `read(...)`, it is really calling a broker proxy — the plain-looking
+builtin *is* the enforcement point.
+
+Capabilities reach the agent by one of two surfacings, both broker-proxied:
+
+- **Core capabilities** (the agent's own body — files, shell, delegation,
+  discovery, reflection) register with `core=True`; their proxies are injected
+  into the kernel namespace as always-in-scope builtins.
+- **External capabilities** (web, http, browser, packages) register with
+  `core=False`, so they are *not* bare builtins. Instead `Broker.as_tool_module`
+  packages each as a module of the same broker proxies (carrying the real
+  signatures), registered in the [tool registry](../reference/builtins.md); the
+  agent discovers and loads it via `search_tools`/`use_tool`, the same path as an
+  MCP server or a learned skill. Gating is identical either way — the difference
+  is only whether the capability is handed to the agent or discovered by it.
 
 ## Why a single seam
 

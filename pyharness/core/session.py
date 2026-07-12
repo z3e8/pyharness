@@ -114,22 +114,48 @@ class Session:
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(self.workspace, vault=self.vault)
         self.browser = BrowserCapability(self.workspace, vault=self.vault)
+        # Core builtins — the agent's own body (workspace, shell, delegation,
+        # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
             FilesCapability(self.workspace),
             ShellCapability(self.workspace, secret_env_prefixes=secret_prefixes),
             SearchCapability(self.workspace),
-            self.http,
-            self.browser,
-            WebCapability(self.llm, http=self.http),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
-            PackagesCapability(self.session_venv),
             HistoryCapability(self.audit),
         ):
             self.broker.register(capability)
+
+        # External-reaching capabilities — the web, a browser, HTTP APIs, the
+        # package index. Registered for gating but NOT surfaced as builtins; the
+        # agent discovers and loads them through the tool registry
+        # (search_tools -> describe_tool -> use_tool), same path as MCP tools and
+        # learned skills. One coherent, discoverable surface for everything
+        # external; gating is identical to a builtin's.
+        tool_caps = [
+            (WebCapability(self.llm, http=self.http),
+             "Read the web: search, and fetch a single URL.",
+             "web", ("web", "http", "fetch", "search", "url", "download", "browse", "internet")),
+            (self.http,
+             "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
+             "web", ("http", "request", "post", "put", "session", "api", "cookie", "upload", "rest")),
+            (self.browser,
+             "Drive a headless browser: navigate, click, fill, read the page.",
+             "web", ("browser", "playwright", "click", "fill", "page", "dom", "headless", "form")),
+            (PackagesCapability(self.session_venv),
+             "Install Python packages into the session for later import.",
+             "packages", ("install", "pip", "package", "dependency", "library", "import")),
+        ]
+        for capability, summary, category, keywords in tool_caps:
+            self.broker.register(capability, core=False)
+            self.registry.register(
+                self.broker.as_tool_module(capability.name, summary=summary),
+                source="core", name=capability.name,
+                keywords=keywords, category=category,
+            )
 
         # In-process: the broker's proxies run directly in the host namespace.
         # Out-of-process: agent code runs in a restricted child and every call
