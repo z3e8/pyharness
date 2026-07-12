@@ -22,6 +22,8 @@ class ToolInfo:
     category: str | None = None  # intent group (e.g. "chat", "vcs") for grouping
     featured: bool = False  # surfaced by default and ranked first (the common set)
     instructions: str | None = None  # a learned skill's procedure, shown by describe()
+    verified: bool = True  # a learned skill starts False, earning trust on a real run
+    uses: tuple[dict, ...] = ()  # a learned skill's recent-use log (bounded, oldest first)
 
 
 class Registry:
@@ -136,19 +138,32 @@ class Registry:
         loader: Callable[[], ModuleType],
         keywords: tuple[str, ...] = (),
         category: str | None = None,
+        verified: bool = False,
+        uses: tuple[dict, ...] = (),
     ) -> str:
         """Register a learned skill — markdown instructions plus an optional
         bundled module built on first use (`source="learned"`). It is a tool
         like any other: `search`/`use` treat it the same, while `describe`
         additionally surfaces the instructions. Skills are *not* featured: they
         are found by query, not shown in the default browse, so saved procedures
-        don't crowd the common-tools listing."""
+        don't crowd the common-tools listing.
+
+        Unlike repo code, a skill is agent-authored and starts *unverified*: it
+        earns trust only when a real run is logged (`verified`, `uses`), so a
+        freshly written procedure can't masquerade as a proven one."""
         self._tools[name] = ToolInfo(
             name, description, source="learned", loader=loader,
             instructions=instructions, keywords=tuple(keywords),
-            category=category,
+            category=category, verified=verified, uses=tuple(uses),
         )
         return name
+
+    def set_skill_usage(self, name: str, verified: bool, uses: tuple[dict, ...]) -> None:
+        """Update a registered skill's trust state in place, so a `record_use`
+        this session is reflected in `search`/`describe` without a reload."""
+        info = self._tools.get(name)
+        if info is not None:
+            info.verified, info.uses = verified, tuple(uses)
 
     def _resolve(self, info: ToolInfo) -> ModuleType | None:
         """Return a tool's module, building it on demand for lazy tools. Returns
@@ -218,6 +233,8 @@ class Registry:
         info = self._tools[name]
         module = self._resolve(info)
         lines = [self._header(info)]
+        if info.source == "learned":  # lead with the trust signal, before the how-to
+            lines += ["", _skill_trust_block(info)]
         if info.instructions:  # a learned skill carries its procedure inline
             lines += ["", info.instructions]
         if module is None:
@@ -248,6 +265,10 @@ class Registry:
             tags.append(info.category)
         if info.featured:
             tags.append("featured")
+        if info.source == "learned" and not info.verified:
+            tags.append("unverified")  # never run successfully — a hypothesis, not fact
+        if info.uses and info.uses[-1].get("outcome") == "failed":
+            tags.append("last-failed")  # its most recent run broke; read the journal
         status = _status(info)
         if status:
             tags.append(status)
@@ -281,6 +302,26 @@ class Registry:
             except Exception:
                 pass
         self._mcp_clients.clear()
+
+
+def _skill_trust_block(info: ToolInfo) -> str:
+    """The trust preamble shown by `describe` for a learned skill: whether it has
+    ever worked, and its recent outcomes so a breaking change is visible before
+    the agent relies on the procedure below."""
+    if info.verified:
+        head = "verified: yes — has run successfully before."
+    else:
+        head = (
+            "verified: no — never confirmed against the real surface. Treat the "
+            "steps below as a hypothesis: check them before relying on them."
+        )
+    lines = [head]
+    if info.uses:
+        lines.append("recent uses (oldest first):")
+        for entry in info.uses[-3:]:
+            note = f" — {entry['note']}" if entry.get("note") else ""
+            lines.append(f"  {entry.get('at', '?')}  {entry.get('outcome', '?')}{note}")
+    return "\n".join(lines)
 
 
 def _score(info: ToolInfo, q: str, words: list[str]) -> float:

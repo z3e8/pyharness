@@ -59,6 +59,11 @@ import them. This is the complete list; nothing else is callable by bare name.
         # code with use_tool. Save a skill once a procedure is worth repeating.
         # To revise a skill, save_skill with the SAME name overwrites it — fold
         # what you learned (a changed selector, a gotcha) into its instructions.
+    record_skill_use(name, outcome, note="") -> str
+        # after actually running a skill, log how it went: outcome "worked" or
+        # "failed", plus a short note (a changed selector, why it broke). The
+        # first "worked" marks the skill verified; the log lets you and later
+        # sessions see how it last behaved and catch a breaking change.
   Reflect on your own work — the observe half of do → observe → revise:
     history(limit=20, action=None) -> list[dict]
         # your own recent actions, oldest last: what you sent, where, whether it
@@ -85,6 +90,14 @@ procedure for a repeatable task, plus any bundled code. For these, describe_tool
 returns instructions to read and follow, not just signatures. Before doing
 something that looks repeatable, search_tools() for a skill that already does it
 rather than redoing the work from scratch.
+
+A skill is agent-authored, so unlike a builtin it may be wrong. One tagged
+`unverified` has never run successfully — its steps (endpoints, selectors, auth)
+are a hypothesis, not fact. Confirm them against the real surface before you rely
+on them, and prefer a skill that has worked before. `last-failed` means its most
+recent run broke: read the recent-use log in describe_tool, fix the instructions,
+and re-save. After you run any skill, record_skill_use() so trust reflects
+reality — a real success earns `verified`; a failure warns the next session.
 
 The rule, with no exceptions: if a function is in the builtins list above, call
 it directly; for anything else, search_tools() → describe_tool() → use_tool().

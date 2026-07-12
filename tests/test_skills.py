@@ -8,7 +8,14 @@ from pyharness.broker.capabilities.skills import SkillsCapability
 from pyharness.broker.dispatch import PermissionDenied
 from pyharness.core.session import Session
 from pyharness.tools.registry import Registry
-from pyharness.tools.skills import load_skills, parse_skill_md, write_skill
+from pyharness.tools.skills import (
+    _MAX_USES,
+    load_skills,
+    parse_skill_md,
+    read_journal,
+    record_use,
+    write_skill,
+)
 
 
 def test_parse_frontmatter_and_body():
@@ -116,6 +123,79 @@ def test_skills_are_search_only_not_featured(tmp_path):
     assert "# rare" in reg.search("rare")
     assert "# rare" in reg.search("procedure")
     assert "# rare" in reg.search("widget")
+
+
+def test_new_skill_is_unverified(tmp_path):
+    write_skill(tmp_path, "fresh", "a new procedure", "do the thing")
+    reg = Registry()
+    load_skills(reg, tmp_path)
+    # tagged unverified in the header, and described as a hypothesis
+    assert "unverified" in reg.search("fresh")
+    details = reg.describe("fresh")
+    assert "verified: no" in details
+
+
+def test_record_use_worked_verifies_and_logs(tmp_path):
+    reg = Registry()
+    cap = SkillsCapability(reg, tmp_path)
+    cap.save_skill("greet", "greet someone", "say hi")
+    assert "unverified" in reg.search("greet")
+
+    msg = cap.record_skill_use("greet", "worked", note="clean run")
+    assert "verified" in msg and "now verified" in msg
+
+    # on disk (next session) and in this registry, it now reads as verified
+    assert read_journal(tmp_path / "greet")["verified"] is True
+    assert "unverified" not in reg.search("greet")
+    details = reg.describe("greet")
+    assert "verified: yes" in details and "clean run" in details
+
+
+def test_record_use_failed_flags_last_failed(tmp_path):
+    reg = Registry()
+    cap = SkillsCapability(reg, tmp_path)
+    cap.save_skill("scrape", "scrape a site", "load the page")
+    cap.record_skill_use("scrape", "failed", note="site blocks headless")
+
+    assert "last-failed" in reg.search("scrape")
+    assert "unverified" in reg.search("scrape")  # a failure does not verify
+    assert "site blocks headless" in reg.describe("scrape")
+
+
+def test_record_use_rejects_bad_outcome_and_unknown_skill(tmp_path):
+    cap = SkillsCapability(Registry(), tmp_path)
+    cap.save_skill("s", "d", "i")
+    with pytest.raises(ValueError):
+        cap.record_skill_use("s", "maybe")
+    with pytest.raises(KeyError):
+        cap.record_skill_use("nope", "worked")
+
+
+def test_journal_is_bounded(tmp_path):
+    write_skill(tmp_path, "loop", "repeated", "go")
+    for i in range(_MAX_USES + 5):
+        record_use(tmp_path / "loop", "worked", note=f"run {i}", now=f"2026-01-01T00:00:{i:02d}")
+    uses = read_journal(tmp_path / "loop")["uses"]
+    assert len(uses) == _MAX_USES
+    assert uses[-1]["note"] == f"run {_MAX_USES + 4}"  # newest kept, oldest dropped
+
+
+def test_resave_de_verifies_but_keeps_log(tmp_path):
+    reg = Registry()
+    cap = SkillsCapability(reg, tmp_path)
+    cap.save_skill("t", "v1", "old steps")
+    cap.record_skill_use("t", "worked", note="worked once")
+    assert read_journal(tmp_path / "t")["verified"] is True
+
+    # revising the procedure makes it unproven again, but its history survives
+    cap.save_skill("t", "v2", "new steps")
+    journal = read_journal(tmp_path / "t")
+    assert journal["verified"] is False
+    assert any(u.get("note") == "worked once" for u in journal["uses"])
+    # a fresh load (next session) reflects the reset
+    reloaded = Registry()
+    load_skills(reloaded, tmp_path)
+    assert "unverified" in reloaded.search("t")
 
 
 def test_save_skill_requires_approval_by_default(tmp_path):

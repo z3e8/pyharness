@@ -41,14 +41,20 @@ code.
 
 - Skills live under `~/.pyharness/skills/<name>/` (override with
   `Session(skills_dir=...)`), one directory each: a `SKILL.md` (frontmatter +
-  instructions) and optional `*.py` modules.
+  instructions), optional `*.py` modules, and a `journal.json` trust sidecar.
 - **You can author one by hand** — just create that directory; it loads next
-  session, no code required.
+  session, no code required. A hand-authored skill also starts unverified.
 - `save_skill` requires approval by default (it writes code that auto-runs
   later) — see [Security & audit](../explanation/security-and-audit.md).
+- **Trust is earned by a real run.** A new or revised skill is `unverified`
+  (tagged in `search_tools`, spelled out in `describe_tool`) — treat its steps as
+  a hypothesis. After running it, call `record_skill_use(name, "worked"|"failed",
+  note=...)`; the first `"worked"` marks it `verified`, and the bounded journal
+  lets a later session see how it last behaved and catch a breaking change.
 - **Revising** a skill needs no separate step: `save_skill` with the same name
-  overwrites it (stale bundled `.py` are pruned). After a run, the agent reads
-  `history()` to see what happened and folds the lesson into the instructions on
+  overwrites it (stale bundled `.py` are pruned) and resets it to unverified while
+  keeping the use log. After a run, the agent reads `history()` and the skill's
+  journal to see what happened and folds the lesson into the instructions on
   re-save — that is the do → observe → revise loop, no `edit_skill` primitive
   required.
 
