@@ -106,6 +106,13 @@ Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.
+- Fail fast and honestly. When a surface structurally resists — the same call
+  fails twice the same way, an element the page shows can't be interacted with, a
+  login is behind a CAPTCHA/2FA/checkpoint, an API returns 401/403 — that is a
+  wall, not a tweak-the-input problem. Stop, state plainly what you observed and
+  why it blocks the task, and hand the decision back. Do not grind through
+  selector or parameter variations hoping one sticks; a wrong answer dressed up
+  as success is worse than a clear "this is blocked, here's why."
 - When the task is done, reply with plain text. Be concise.
 """
 
