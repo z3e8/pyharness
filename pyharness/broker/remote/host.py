@@ -80,7 +80,15 @@ class RemoteKernel:
     def run(self, code: str) -> str:
         if self._proc is None or not self._proc.is_alive():
             self._start()
-        self._conn.send(("run", code))
+        try:
+            self._conn.send(("run", code))
+        except (BrokenPipeError, OSError):
+            # The child can die between the liveness check and the send: the pipe
+            # closes as the process tears down, a moment before it becomes
+            # reapable, so is_alive() may still read True. Start fresh and resend.
+            self._discard()
+            self._start()
+            self._conn.send(("run", code))
         return self._serve()
 
     def _serve(self) -> str:
@@ -92,6 +100,9 @@ class RemoteKernel:
                 # unsandboxed) parent. See protocol.py.
                 msg = recv_json(self._conn)
             except (EOFError, OSError):
+                # The child is gone. Drop the dead handle so the next run starts a
+                # fresh child instead of sending down a broken pipe.
+                self._discard()
                 return "(kernel process died — session state lost)"
             if msg[0] == "done":
                 return msg[1]
@@ -106,6 +117,19 @@ class RemoteKernel:
                 self._conn.send(reply)
             except Exception as exc:  # noqa: BLE001 - e.g. unpicklable result
                 self._conn.send(("err", RuntimeError(f"{op} result not transferable: {exc!r}")))
+
+    def _discard(self) -> None:
+        """Drop an already-dead child and its broken pipe so the next run starts
+        fresh. Unlike close(), this makes no attempt to shut the child down (it is
+        gone); it just reaps the handle and keeps the sandbox dir for reuse."""
+        if self._proc is not None:
+            self._proc.join(timeout=1)
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+        self._proc, self._conn = None, None
 
     def close(self) -> None:
         if self._proc is None:
