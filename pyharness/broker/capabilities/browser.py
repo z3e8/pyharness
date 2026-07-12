@@ -126,9 +126,13 @@ class BrowserCapability:
         return session_id
 
     def goto(self, session_id: str, url: str) -> dict:
-        """Navigate to `url`. Returns the final url, page title, and HTTP status."""
+        """Navigate to `url`. Returns the final url, page title, and HTTP status.
+
+        Waits for `domcontentloaded` rather than the full `load` event: a heavy
+        page whose trackers and lazy media never quiesce would otherwise time out
+        even though its content is already present."""
         session = self._session(session_id)
-        resp = session.page.goto(url)
+        resp = session.page.goto(url, wait_until="domcontentloaded")
         return self._state(
             session,
             title=session.page.title(),

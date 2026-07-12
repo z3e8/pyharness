@@ -510,9 +510,9 @@ class _FakePage:
         self._text = text
         self.calls: list = []
 
-    def goto(self, url):
+    def goto(self, url, wait_until=None):
         self.url = url
-        self.calls.append(("goto", url))
+        self.calls.append(("goto", url, wait_until))
         return SimpleNamespace(status=200)  # playwright Response.status
 
     def title(self):
