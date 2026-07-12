@@ -63,9 +63,18 @@ load-bearing seams are.
   `.env.example`, `python-api.md` ↔ `__init__.py`). The `docs` skill has the
   full sync map.
 
+## The agents/ folder
+
+`agents/` is gitignored scratch space for agents (Claude Code included) to plan
+work that outlasts one session. If a task is too big to finish in one go, drop
+the plan and running progress here as a living TODO so the next agent resumes
+from it. Keep it tidy: prune stale notes, and move finished or superseded files
+into `agents/old/`. Local-only, not version-tracked — nothing load-bearing.
+
 ## Gotchas
 
-- `docs-legacy/` and `agents/` are gitignored local-only notes — **do not treat
-  them as current or wire anything to them.** The live docs are `docs/`.
+- `docs-legacy/` is gitignored local-only notes — **do not treat it as current
+  or wire anything to it.** The live docs are `docs/`; agent scratch is `agents/`
+  (see above).
 - Session state lives under `.sessions/` (gitignored). The agent's relative
   paths resolve inside its session workspace, not the repo root.
