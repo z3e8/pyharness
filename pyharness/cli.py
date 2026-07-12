@@ -11,7 +11,7 @@ from .budget import Budget, BudgetExceeded
 from .core.session import Session
 from .security.vault import _DEFAULT_FILE
 
-_COLORS = {"note": "\033[2m", "code": "\033[36m", "output": "\033[2m"}
+_COLORS = {"code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
 
 
@@ -33,12 +33,13 @@ def _trace(kind: str, text: str) -> None:
         # Stream LLM tokens inline as they arrive — no box frame, no newline
         print(text, end="", flush=True)
         return
-    if kind == "llm_call":
-        # llm_call fires after streaming is done; already visible via the
-        # streamed tokens above, so suppress the duplicate box here.
+    if kind in ("llm_call", "note"):
+        # Both are already on screen from the streamed llm_token chunks above:
+        # llm_call is the post-stream summary, note is preamble text emitted
+        # before a tool call. Suppress to avoid double-rendering.
         return
     color = _COLORS.get(kind, "")
-    label = {"code": "python", "output": "output", "note": "note"}.get(kind, kind)
+    label = {"code": "python", "output": "output"}.get(kind, kind)
     print(f"\n{color}┌─ {label} ─{_RESET}")
     print(f"{color}{text}{_RESET}")
 
@@ -105,8 +106,9 @@ def main() -> None:
                     print(f"\n[error] {type(exc).__name__}: {exc} — turn aborted.")
             if answer is None:
                 continue
-            print(f"\n{answer}")
-            print(f"\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
+            # The answer already streamed live via llm_token; just close its line
+            # and print the spend summary. Reprinting it here would double-render.
+            print(f"\n\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
     finally:
         session.close()
 
