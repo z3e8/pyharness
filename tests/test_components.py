@@ -381,12 +381,21 @@ def test_web_search_declares_direct_caller():
             captured.update(kwargs)
             return _Stream()
 
-    llm._client = SimpleNamespace(messages=_Messages())
+    class _Client:
+        messages = _Messages()
+
+        def with_options(self, **kwargs):
+            captured["options"] = kwargs
+            return self
+
+    llm._client = _Client()
     assert llm.web_search("harrington jackets", tier="cheap") == "jackets!"
     assert captured["model"] == "claude-haiku-4-5"
     assert captured["tools"] == [
         {"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]}
     ]
+    # Search calls get a read timeout well past the default completion budget.
+    assert captured["options"]["timeout"].read == 600.0
 
 
 def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkeypatch):
