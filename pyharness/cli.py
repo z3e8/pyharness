@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import os
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,19 @@ def _prompt_vault_passphrase() -> None:
         os.environ["PYHARNESS_VAULT_PASSPHRASE"] = getpass.getpass("vault passphrase: ")
 
 
+def _resolve_root(argv: list[str], env: Mapping[str, str], now: str) -> Path:
+    """Where this session's state (workspace, audit, trace) lives. Precedence:
+    an explicit CLI path argument wins; else a configured persistent workspace
+    (`PYHARNESS_WORKSPACE`), so files dropped in — and files the agent creates —
+    survive across runs; else a fresh timestamped directory under `.sessions/`."""
+    if len(argv) > 1:
+        return Path(argv[1])
+    persistent = env.get("PYHARNESS_WORKSPACE")
+    if persistent:
+        return Path(persistent).expanduser()
+    return Path(f".sessions/cli-{now}")
+
+
 def _approve(request: ApprovalRequest) -> bool:
     print(f"\n⚠ approval required [{request.category.value}]: {request.action}")
     print(f"  {request.summary}")
@@ -67,7 +81,7 @@ def main() -> None:
         sys.exit("ANTHROPIC_API_KEY not set (add it to .env or your environment).")
     _prompt_vault_passphrase()
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(f".sessions/cli-{ts}")
+    root = _resolve_root(sys.argv, os.environ, ts)
     mcp_config = Path(os.environ.get("PYHARNESS_MCP_CONFIG", ".mcp.json"))
     session = Session(
         root,

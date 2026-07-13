@@ -11,6 +11,12 @@ itself on startup.
 |----------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key. Required to run the agent; tests don't need it. |
 
+## Session workspace
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_WORKSPACE` | a fresh `.sessions/cli-<timestamp>` | A stable session root reused across runs, so files dropped into `<root>/workspace/` (and files the agent creates there) survive between sessions. `~` expands; relative paths resolve from the repo. A path passed on the CLI (`uv run pyharness <path>`) overrides it. |
+
 ## Telemetry
 
 Off unless enabled. See [Run with observability](../how-to/observability.md).
