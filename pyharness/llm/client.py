@@ -88,12 +88,13 @@ class AnthropicLLM:
         # between chunks, so a silent connection raises instead of blocking the
         # session indefinitely. It has to clear the worst legitimate quiet gap —
         # prefill over a large context plus adaptive thinking before the first
-        # text chunk — or healthy long turns get killed mid-think; 180s covers
+        # text chunk — or healthy long turns get killed mid-think; 240s covers
         # that headroom while still catching a truly dead socket. `max_retries`
-        # lets the SDK transparently recover transient drops.
+        # lets the SDK transparently recover transient drops, which on flaky links
+        # is the difference between a resumed turn and an aborted one.
         self._client = anthropic.Anthropic(
-            timeout=httpx.Timeout(connect=10.0, read=180.0, write=20.0, pool=10.0),
-            max_retries=2,
+            timeout=httpx.Timeout(connect=10.0, read=240.0, write=20.0, pool=10.0),
+            max_retries=4,
         )
         self._budget = budget
         self._max_tokens = max_tokens
