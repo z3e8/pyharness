@@ -38,24 +38,32 @@ def _sbpl_quote(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _project_root() -> Path:
-    """The path added to sys.path for our own package — the repo root under an
-    editable install, or a site-packages dir under a wheel. The child imports
-    pyharness modules (and, editable, lists this directory) from here, so the read
-    jail must keep it readable."""
-    return Path(__file__).resolve().parents[3]
+def _package_dir() -> Path:
+    """Our own package source (`<repo>/pyharness` editable, or `site-packages/
+    pyharness` in a wheel). The child imports these modules to boot, so the read
+    jail must keep the subtree readable."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _sys_path_entry() -> Path:
+    """The sys.path directory that resolves our package — the editable repo root,
+    or the site-packages dir in a wheel. Python must *list* this directory to
+    import pyharness, but nothing else under it (a repo's .env, other sessions,
+    unrelated source) needs to be readable, so it is allow-listed for the directory
+    entry only, not as a subtree."""
+    return _package_dir().parent
 
 
 def _read_allow_roots(workspace: Path) -> list[str]:
-    """Directories the child must still be able to read from inside the $HOME jail:
-    its workspace, the interpreter (the venv and the managed CPython), and our own
-    source. Anything outside $HOME (system libraries, the temp sandbox dir) stays
-    readable via `allow default`, so only these HOME-resident paths need re-allowing."""
+    """Subtrees the child reads in full from inside the $HOME jail: its workspace,
+    the interpreter (the venv and the managed CPython), and our own package source.
+    Anything outside $HOME (system libraries, the temp sandbox dir) stays readable
+    via `allow default`, so only these HOME-resident paths need re-allowing."""
     roots = {
         workspace.resolve(),
         Path(sys.prefix).resolve(),
         Path(sys.base_prefix).resolve(),
-        _project_root(),
+        _package_dir(),
     }
     return sorted(str(p) for p in roots)
 
@@ -88,11 +96,13 @@ def _seatbelt_profile(workspace: Path | None) -> str:
         lines.append("(allow file-read-data")
         for root in _read_allow_roots(ws):
             lines.append(f"  (subpath {_sbpl_quote(root)})")
+        # The sys.path entry that resolves our package must be *listable* so Python
+        # can find pyharness, but its other contents (a repo's .env, prior sessions,
+        # unrelated source) stay unreadable: allow the directory entry itself, not a
+        # subtree. In a wheel install this dir sits under sys.prefix already; the
+        # extra literal is harmless.
+        lines.append(f"  (literal {_sbpl_quote(str(_sys_path_entry()))})")
         lines.append(")")
-        # The project source is read-allowed for imports, but its .env (API keys,
-        # secrets) must never be readable by agent code — re-deny it last.
-        env_file = _project_root() / ".env"
-        lines.append(f"(deny file-read-data (literal {_sbpl_quote(str(env_file))}))")
     return "\n".join(lines) + "\n"
 
 

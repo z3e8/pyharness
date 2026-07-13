@@ -204,7 +204,7 @@ def test_sandbox_allows_workspace_writes_but_denies_escape(kernel_factory, tmp_p
 def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path):
     # The read jail hides the user's personal files: a file under $HOME the agent
     # was never handed is unreadable, even though the child can still read its
-    # workspace, the interpreter, and the project source (or it couldn't import
+    # workspace, the interpreter, and its own package source (or it couldn't import
     # pyharness to start at all).
     probe = Path.home() / ".pyharness_readjail_probe"
     probe.write_text("secret")
@@ -220,6 +220,40 @@ def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path):
         assert out == "denied"
     finally:
         probe.unlink(missing_ok=True)
+
+
+@requires_sandbox
+def test_sandbox_read_jail_allows_package_but_not_repo_neighbours(kernel_factory, tmp_path):
+    # The jail keeps only what the interpreter needs readable. The pyharness
+    # package imports fine, but sibling files under the repo root that Python never
+    # needs — the project's own source outside the package, its .env — are denied,
+    # even though the repo root must be *listable* to resolve the import.
+    import pyharness
+
+    pkg_dir = Path(pyharness.__file__).resolve().parent  # <repo>/pyharness
+    repo_root = pkg_dir.parent
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        "import pyharness, os\n"
+        f"print('import', bool(pyharness.__file__))\n"
+        f"print('listable', 'pyharness' in os.listdir({str(repo_root)!r}))\n"
+        "def readable(p):\n"
+        "    try:\n"
+        "        open(p).read(); return True\n"
+        "    except OSError:\n"
+        "        return False\n"
+        f"print('pkg', readable({str(pkg_dir / '__init__.py')!r}))\n"
+        f"print('readme', readable({str(repo_root / 'README.md')!r}))\n"
+        f"print('dotenv', readable({str(repo_root / '.env')!r}))\n"
+    )
+    assert out.splitlines() == [
+        "import True",
+        "listable True",
+        "pkg True",
+        "readme False",
+        "dotenv False",
+    ]
 
 
 @requires_sandbox

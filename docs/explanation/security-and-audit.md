@@ -99,9 +99,11 @@ boundary itself:
   work, and the child's working directory *is* the workspace), while three channels
   that would bypass the broker are denied: outbound **network**, filesystem
   **writes outside the workspace**, and **reads of the user's personal files** (a
-  read jail hides `$HOME`, re-allowing only the interpreter and the project source
-  the child needs to run and import — the project `.env` stays denied). Anything
-  the child execs inherits the profile.
+  read jail hides `$HOME`, re-allowing only the interpreter and pyharness's own
+  package source the child needs to import — the package's `sys.path` directory is
+  listable so the import resolves, but its other files, a project `.env` or a prior
+  session's data among them, stay unreadable). Anything the child execs inherits
+  the profile.
 - **POSIX rlimits** — no core dumps; on Linux, a process cap to blunt fork bombs
   (skipped on macOS, where the limit is per-user and would break ordinary
   `subprocess`/`fork`).
