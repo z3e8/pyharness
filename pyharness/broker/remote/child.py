@@ -15,6 +15,7 @@ def child_main(
     scrub_prefixes: tuple[str, ...] = (),
     scrub_names: tuple[str, ...] = (),
     venv_site_packages: str | None = None,
+    workdir: str | None = None,
 ) -> None:
     """Entry point for the child process (spawned by the host).
 
@@ -29,6 +30,16 @@ def child_main(
     # the child; spawn inheritance would otherwise leak it via os.environ.
     scrub_secret_env(scrub_prefixes, scrub_names)
     apply_resource_limits()
+    if workdir:
+        # The workspace is the agent's home: chdir into it so raw Python (open,
+        # os.listdir, a library's savefig) and the `files` builtins agree on what a
+        # relative path means. The spawn bootstrap's own imports already ran, so
+        # this can't disturb them; later imports resolve via sys.path (absolute).
+        import os as _os
+        try:
+            _os.chdir(workdir)
+        except OSError:
+            pass
     if venv_site_packages:
         import sys as _sys
         if venv_site_packages not in _sys.path:

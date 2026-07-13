@@ -38,11 +38,13 @@ class RemoteKernel:
         secret_env_prefixes: tuple[str, ...] = (DEFAULT_ENV_PREFIX,),
         secret_env_names: tuple[str, ...] = (PASSPHRASE_ENV,),
         venv: SessionVenv | None = None,
+        workspace=None,
     ):
         self.broker = broker
         self.sandbox = sandbox
         self._secret_env = (secret_env_prefixes, secret_env_names)
         self._venv = venv
+        self._workspace = workspace
         self._ctx = mp.get_context("spawn")
         self._proc = None
         self._conn = None
@@ -54,11 +56,12 @@ class RemoteKernel:
         # before each start (sequential) — to the sandbox wrapper, or back to the
         # real interpreter if sandboxing is off/unsupported.
         exe = None
+        workspace_dir = self._workspace.dir if self._workspace is not None else None
         if self.sandbox or self._venv is not None:
             if self._sbdir is None:
                 self._sbdir = tempfile.mkdtemp(prefix="pyharness-sb-")
         if self.sandbox:
-            exe = make_child_executable(Path(self._sbdir))
+            exe = make_child_executable(Path(self._sbdir), workspace_dir)
         self._ctx.set_executable(exe or sys.executable)
 
         venv_site = None
@@ -71,7 +74,14 @@ class RemoteKernel:
         prefixes, names = self._secret_env
         proc = self._ctx.Process(
             target=child_main,
-            args=(child_conn, self.broker.op_names(), prefixes, names, venv_site),
+            args=(
+                child_conn,
+                self.broker.op_names(),
+                prefixes,
+                names,
+                venv_site,
+                str(workspace_dir) if workspace_dir is not None else None,
+            ),
             daemon=True,
         )
         proc.start()

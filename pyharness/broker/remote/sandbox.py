@@ -6,60 +6,107 @@ from pathlib import Path
 
 # OS-level confinement for the out-of-process child (design §3 / §11).
 #
-# The child is the agent's userland: it runs the LLM-authored Python. Every
-# legitimate side effect goes through the broker in the (unsandboxed) parent
-# over IPC, so the child itself needs neither the network nor write access to
-# the real filesystem — only the ability to read its libraries and compute. The
-# process boundary alone does not enforce that (the child can still `import os`);
-# this module adds the OS enforcement the design defers to "later".
+# The child is the agent's userland: it runs the LLM-authored Python. The guiding
+# rule is "the workspace is the sandbox; the broker guards the perimeter." Agent
+# code may read and write freely *inside* its session workspace (so libraries that
+# persist files just work), but everything that leaves the box — the network,
+# writes anywhere else, reads of the user's personal files — is denied at the OS
+# level. Every legitimate outward side effect goes through the broker in the
+# (unsandboxed) parent over IPC instead.
 #
 # Two complementary layers, both best-effort and degrading silently where a
 # platform can't honor them:
-#   1. A macOS Seatbelt profile (`sandbox-exec`) that denies exactly the two
-#      channels that would bypass the broker: outbound network and filesystem
-#      writes. Any process the child execs inherits the profile, so shelling out
-#      cannot escape these limits either.
+#   1. A macOS Seatbelt profile (`sandbox-exec`) enforcing three things: no
+#      outbound network, no filesystem write outside the workspace, and a read
+#      jail that hides the user's $HOME (re-allowing only what the interpreter
+#      needs to run and import). Any process the child execs inherits the profile.
 #   2. POSIX resource limits applied inside the child to bound blast radius
-#      (no core dumps; a cap on processes blunts fork bombs).
+#      (no core dumps; on Linux, a cap on processes blunts fork bombs).
 #
 # Linux/container confinement (seccomp, namespaces) is not built here; on
 # non-macOS only the resource limits apply. See docs/explanation/security-and-audit.md.
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
-# Seatbelt profile. We allow by default (the interpreter must read its shared
-# libraries and the agent may compute freely) and deny the two side-effect
-# channels: outbound network and *all* filesystem writes. The child needs no
-# disk write to function — spawn/IPC is over pipes, and the .pyc cache write
-# that imports attempt is denied harmlessly (imports fall back to in-memory
-# compilation). The only write-allowance is the null sink and the tty, which is
-# a human-visible diagnostic channel, not hidden persistence. Anything else the
-# child wrote would be invisible to both the agent and the human and would
-# bypass the broker — exactly what this sandbox exists to prevent.
-_PROFILE = r"""(version 1)
-(allow default)
-(deny network*)
-(deny file-write*)
-(allow file-write-data
-  (literal "/dev/null")
-  (regex #"^/dev/tty"))
-"""
-
 
 def macos_sandbox_supported() -> bool:
     return sys.platform == "darwin" and os.path.exists(_SANDBOX_EXEC)
 
 
-def make_child_executable(workdir: Path) -> str | None:
-    """Return a launcher to use as the spawn executable, or None if this
-    platform has no OS sandbox. The launcher runs the real interpreter under
-    `sandbox-exec` with our profile; multiprocessing's spawn args (`$@`) and the
-    inherited IPC pipe pass straight through."""
+def _sbpl_quote(path: str) -> str:
+    """Quote a path as an SBPL string literal."""
+    return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _project_root() -> Path:
+    """The path added to sys.path for our own package — the repo root under an
+    editable install, or a site-packages dir under a wheel. The child imports
+    pyharness modules (and, editable, lists this directory) from here, so the read
+    jail must keep it readable."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _read_allow_roots(workspace: Path) -> list[str]:
+    """Directories the child must still be able to read from inside the $HOME jail:
+    its workspace, the interpreter (the venv and the managed CPython), and our own
+    source. Anything outside $HOME (system libraries, the temp sandbox dir) stays
+    readable via `allow default`, so only these HOME-resident paths need re-allowing."""
+    roots = {
+        workspace.resolve(),
+        Path(sys.prefix).resolve(),
+        Path(sys.base_prefix).resolve(),
+        _project_root(),
+    }
+    return sorted(str(p) for p in roots)
+
+
+def _seatbelt_profile(workspace: Path | None) -> str:
+    """Build the Seatbelt profile. Two invariants always hold: no outbound network,
+    and no filesystem write outside the workspace. When a workspace is known, the
+    child also gets ergonomic in-workspace writes and a read jail over $HOME."""
+    lines = [
+        "(version 1)",
+        "(allow default)",
+        "(deny network*)",
+        "(deny file-write*)",
+        '(allow file-write-data (literal "/dev/null") (regex #"^/dev/tty"))',
+    ]
+    if workspace is not None:
+        ws = workspace.resolve()
+        # Ergonomic writes: read and write freely *inside* the workspace, so
+        # libraries that persist files (savefig, to_csv, ...) work unchanged. Every
+        # other write stays denied by the rule above.
+        lines.append(f"(allow file-write* (subpath {_sbpl_quote(str(ws))}))")
+        # Read jail: deny the *contents* of the user's personal files ($HOME), then
+        # re-allow only what the interpreter needs to run and import. We deny
+        # `file-read-data`, not `file-read*`: the latter also covers read-metadata,
+        # which the loader needs to exec the interpreter, so denying it wholesale
+        # breaks process startup (EPERM). Denying data alone hides file contents
+        # while leaving stat/exec intact. Last matching rule wins, so the narrower
+        # allows below override the $HOME deny.
+        lines.append(f"(deny file-read-data (subpath {_sbpl_quote(str(Path.home()))}))")
+        lines.append("(allow file-read-data")
+        for root in _read_allow_roots(ws):
+            lines.append(f"  (subpath {_sbpl_quote(root)})")
+        lines.append(")")
+        # The project source is read-allowed for imports, but its .env (API keys,
+        # secrets) must never be readable by agent code — re-deny it last.
+        env_file = _project_root() / ".env"
+        lines.append(f"(deny file-read-data (literal {_sbpl_quote(str(env_file))}))")
+    return "\n".join(lines) + "\n"
+
+
+def make_child_executable(sbdir: Path, workspace: Path | None = None) -> str | None:
+    """Return a launcher to use as the spawn executable, or None if this platform
+    has no OS sandbox. The launcher runs the real interpreter under `sandbox-exec`
+    with our profile; multiprocessing's spawn args (`$@`) and the inherited IPC
+    pipe pass straight through. `sbdir` holds the generated profile and launcher;
+    `workspace`, when given, scopes the write allowance and read jail to it."""
     if not macos_sandbox_supported():
         return None
-    profile = workdir / "child.sb"
-    profile.write_text(_PROFILE)
-    launcher = workdir / "sandboxed-python"
+    profile = sbdir / "child.sb"
+    profile.write_text(_seatbelt_profile(workspace))
+    launcher = sbdir / "sandboxed-python"
     launcher.write_text(
         "#!/bin/sh\n"
         f'exec {_SANDBOX_EXEC} -f "{profile}" "{sys.executable}" "$@"\n'

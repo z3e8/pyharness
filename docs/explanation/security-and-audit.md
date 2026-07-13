@@ -92,15 +92,31 @@ boundary itself:
   passphrase) are deleted from the child's environment before any agent code
   runs, and from any subprocess the child spawns. So even `printenv` can't read a
   secret the parent legitimately holds.
-- **macOS Seatbelt** (`sandbox-exec`) — denies exactly the two channels that
-  would bypass the broker: outbound network and filesystem writes. Anything the
-  child execs inherits the profile.
-- **POSIX rlimits** — no core dumps; a process cap to blunt fork bombs.
+- **macOS Seatbelt** (`sandbox-exec`) — enforces the perimeter, not a blanket
+  lockdown. The guiding rule is **the workspace is the sandbox; the broker guards
+  everything that leaves it.** Agent code reads and writes freely *inside* its
+  session workspace (so libraries that persist files — `savefig`, `to_csv` — just
+  work, and the child's working directory *is* the workspace), while three channels
+  that would bypass the broker are denied: outbound **network**, filesystem
+  **writes outside the workspace**, and **reads of the user's personal files** (a
+  read jail hides `$HOME`, re-allowing only the interpreter and the project source
+  the child needs to run and import — the project `.env` stays denied). Anything
+  the child execs inherits the profile.
+- **POSIX rlimits** — no core dumps; on Linux, a process cap to blunt fork bombs
+  (skipped on macOS, where the limit is per-user and would break ordinary
+  `subprocess`/`fork`).
 
-Both are best-effort and degrade silently where a platform can't honor them. On
+All are best-effort and degrade silently where a platform can't honor them. On
 non-macOS, only the resource limits apply (seccomp/namespace confinement isn't
-built yet). The child needs neither network nor disk-write to function, because
-every legitimate side effect goes back through the broker in the parent.
+built yet). The child needs no network and no writes outside its workspace:
+every side effect that leaves the box goes back through the broker in the parent,
+while scratch files stay in the workspace where both the agent and the human can
+see them.
+
+> Workspace-internal writes are deliberately *not* individually audited — the
+> audit chain records effects that cross the perimeter, not every `savefig`. The
+> workspace is inspectable on disk; the broker is where outward actions are gated
+> and logged.
 
 ## Audit — a tamper-evident record
 

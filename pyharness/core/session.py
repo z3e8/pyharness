@@ -161,7 +161,12 @@ class Session:
         # Out-of-process: agent code runs in a restricted child and every call
         # crosses IPC back to the same broker (see broker/remote).
         self.kernel = (
-            RemoteKernel(self.broker, secret_env_prefixes=secret_prefixes, venv=self.session_venv)
+            RemoteKernel(
+                self.broker,
+                secret_env_prefixes=secret_prefixes,
+                venv=self.session_venv,
+                workspace=self.workspace,
+            )
             if out_of_process
             else Kernel(self.broker.namespace())
         )

@@ -92,8 +92,8 @@ def _broker(tmp_path, policy=None, *, with_agents=False):
 def kernel_factory():
     kernels = []
 
-    def make(broker):
-        k = RemoteKernel(broker)
+    def make(broker, **kwargs):
+        k = RemoteKernel(broker, **kwargs)
         kernels.append(k)
         return k
 
@@ -160,6 +160,66 @@ def test_map_agents_returns_results(kernel_factory, tmp_path):
         "print(sum(r.ok for r in rs), rs[0].value)"
     )
     assert out == "3 worked"
+
+
+def test_child_cwd_is_workspace(kernel_factory, tmp_path):
+    # With a workspace, the child chdirs into it, so raw Python and the `files`
+    # builtins agree on what a relative path means: a broker write lands in the
+    # workspace and a bare `open(name)` reads it back.
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        "write('f.txt', 'hi')\n"
+        "import os\n"
+        "print(os.path.basename(os.getcwd()), open('f.txt').read())\n"
+    )
+    assert out == "workspace hi"
+
+
+@requires_sandbox
+def test_sandbox_allows_workspace_writes_but_denies_escape(kernel_factory, tmp_path):
+    # "The workspace is the sandbox": raw writes *inside* the workspace succeed, so
+    # libraries that persist files just work — but a write one step outside it is
+    # still denied by the OS.
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    wrote = kernel.run(
+        "f = open('scratch.txt', 'w'); f.write('hi'); f.close()\n"
+        "print(open('scratch.txt').read())\n"
+    )
+    assert wrote == "hi"
+    assert (ws.dir / "scratch.txt").read_text() == "hi"
+    denied = kernel.run(
+        "try:\n"
+        "    open('../escape.txt', 'w').write('x')\n"
+        "    print('WROTE')\n"
+        "except OSError:\n"
+        "    print('denied')\n"
+    )
+    assert denied == "denied"
+    assert not (tmp_path / "escape.txt").exists()
+
+
+@requires_sandbox
+def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path):
+    # The read jail hides the user's personal files: a file under $HOME the agent
+    # was never handed is unreadable, even though the child can still read its
+    # workspace, the interpreter, and the project source (or it couldn't import
+    # pyharness to start at all).
+    probe = Path.home() / ".pyharness_readjail_probe"
+    probe.write_text("secret")
+    try:
+        ws = Workspace(tmp_path)
+        kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+        out = kernel.run(
+            f"try:\n"
+            f"    print('READ', open({str(probe)!r}).read())\n"
+            f"except OSError:\n"
+            f"    print('denied')\n"
+        )
+        assert out == "denied"
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 @requires_sandbox
