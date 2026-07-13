@@ -163,12 +163,24 @@ class AnthropicLLM:
 
         Uses streaming so the HTTP connection stays active while the server
         executes the search (non-streaming hangs when the server goes silent
-        during tool execution)."""
+        during tool execution). The read timeout is widened well past the default
+        completion budget: a server-side search can leave the stream quiet for far
+        longer than prefill+thinking ever would, and killing it as a dead socket
+        would surface as a spurious ReadTimeout."""
+        httpx = import_module("httpx")
+        client = self._client.with_options(
+            timeout=httpx.Timeout(connect=10.0, read=600.0, write=20.0, pool=10.0)
+        )
         model = TIERS.get(tier, tier)
         messages: list[dict] = [{"role": "user", "content": query}]
-        tools = [{"type": "web_search_20260209", "name": "web_search"}]
+        # allowed_callers=["direct"] makes the server run the search and inject
+        # results directly, rather than the model driving it via programmatic tool
+        # calling. Without it the API rejects the request on models that lack
+        # programmatic tool calling (e.g. the cheap tier, claude-haiku-4-5), and
+        # direct calling is what this one-shot query wants regardless of tier.
+        tools = [{"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]}]
         for _ in range(max_rounds):
-            with self._client.messages.stream(
+            with client.messages.stream(
                 model=model, max_tokens=4000, messages=messages, tools=tools
             ) as stream:
                 resp = stream.get_final_message()

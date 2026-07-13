@@ -34,7 +34,7 @@ and `packages` categories — find them with `search_tools("web")` /
 
 | Tool | `search_tools` | What it is |
 |------|----------------|------------|
-| `web` | `web` | `web_search` (Anthropic server-side search) + `web_fetch` (one-shot GET, a thin wrapper over `http.request`) |
+| `web` | `web` | `web_search` (Anthropic server-side search) + `web_fetch` (one-shot GET that returns readable text — HTML is reduced to its visible text, non-HTML passes through — a thin wrapper over `http.request`) |
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, text, truncated, elapsed_ms}`), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
 | `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `click` / `fill` / `fill_secret` / `read_text` / `screenshot` / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
