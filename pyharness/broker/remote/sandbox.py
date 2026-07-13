@@ -151,7 +151,11 @@ def apply_resource_limits() -> None:
     except ImportError:
         return
     limits = [(resource.RLIMIT_CORE, 0)]  # no core dumps (could leak memory to disk)
-    if hasattr(resource, "RLIMIT_NPROC"):
+    # RLIMIT_NPROC is per *user* on macOS/BSD, not per process tree, so a modest cap
+    # counts every process the user already runs and makes ordinary fork()s
+    # (subprocess, multiprocessing) fail with EAGAIN. Only apply it where it bounds
+    # this process's descendants (Linux); skip it on Darwin.
+    if hasattr(resource, "RLIMIT_NPROC") and sys.platform != "darwin":
         limits.append((resource.RLIMIT_NPROC, 512))  # blunt fork bombs
     for what, soft in limits:
         try:

@@ -245,6 +245,22 @@ def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where):
 
 
 @requires_sandbox
+def test_child_can_spawn_subprocess(kernel_factory, tmp_path):
+    # RLIMIT_NPROC is per-user on macOS, so the old 512 cap made every fork() —
+    # subprocess included — fail with EAGAIN once the desktop crossed that many
+    # processes. Skipped on Darwin now, so a plain subprocess runs (under the
+    # inherited Seatbelt profile: reading /bin/echo and forking are both fine).
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        "import subprocess\n"
+        "r = subprocess.run(['/bin/echo', 'hi'], capture_output=True, text=True)\n"
+        "print(r.stdout.strip())\n"
+    )
+    assert out == "hi"
+
+
+@requires_sandbox
 def test_sandbox_denies_outbound_network(kernel_factory, tmp_path):
     kernel = kernel_factory(_broker(tmp_path))
     out = kernel.run(
