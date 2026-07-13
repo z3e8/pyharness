@@ -78,7 +78,7 @@ def html_to_text(html: str) -> str:
 
 def _apply_secret_auth(headers: dict, params: dict, *, secret: str, style: str, name, user) -> None:
     """Attach a resolved secret to the outgoing request the way `auth_style`
-    selects. Mirrors the four styles `web_fetch` has always supported; the secret
+    selects. Mirrors the four styles `web.fetch` has always supported; the secret
     is already cleartext here (resolved parent-side), never seen by agent code."""
     if style == "bearer":
         headers["Authorization"] = f"Bearer {secret}"
@@ -104,10 +104,10 @@ class HttpSessionCapability:
     parent, keyed by a session-id string; the agent only ever holds the id.
     child->parent calls are JSON, so a live client could not cross the wire even
     if we wanted it to — the id is the handle. `request` also accepts
-    `session_id=None` for a one-shot throwaway client, which is all `web_fetch`
+    `session_id=None` for a one-shot throwaway client, which is all `web.fetch`
     now needs.
 
-    Secrets follow the same use-but-don't-view rule as `web_fetch`: the agent
+    Secrets follow the same use-but-don't-view rule as `web.fetch`: the agent
     passes a secret *name*, this capability resolves the cleartext parent-side and
     injects it at the point of use (header / query / basic / body field). The
     audit log records the name (via `summarize_args`), never the value.
@@ -248,7 +248,7 @@ class HttpSessionCapability:
         text = resp.text
         # Reduce HTML to readable text before truncating, so the 10k cap keeps
         # article content rather than the megabytes of <style>/<script> that lead
-        # a modern page. Extraction is opt-in (web_fetch sets it) and only fires
+        # a modern page. Extraction is opt-in (web.fetch sets it) and only fires
         # for HTML, so JSON/API and raw-file reads pass through verbatim.
         if extract_text and "html" in resp.headers.get("content-type", "").lower():
             text = html_to_text(text)

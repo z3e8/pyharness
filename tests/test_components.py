@@ -317,16 +317,16 @@ def test_web_fetch_injects_auth_parent_side(tmp_path, fake_httpx):
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
     web = WebCapability(llm=None, http=http)
 
-    web.web_fetch("http://x", auth="k")
+    web.fetch("http://x", auth="k")
     assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == "Bearer S3CRET"
 
-    web.web_fetch("http://x", auth="k", auth_style="header", auth_name="X-API-Key")
+    web.fetch("http://x", auth="k", auth_style="header", auth_name="X-API-Key")
     assert fake_httpx.instances[-1].calls[-1]["headers"]["X-API-Key"] == "S3CRET"
 
-    web.web_fetch("http://x", auth="k", auth_style="query", auth_name="api_key")
+    web.fetch("http://x", auth="k", auth_style="query", auth_name="api_key")
     assert fake_httpx.instances[-1].calls[-1]["params"] == {"api_key": "S3CRET"}
 
-    web.web_fetch("http://x", auth="k", auth_style="basic", user="alice")
+    web.fetch("http://x", auth="k", auth_style="basic", user="alice")
     import base64
 
     expected = "Basic " + base64.b64encode(b"alice:S3CRET").decode()
@@ -420,11 +420,11 @@ def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkey
         httpx, "Client",
         client_returning("text/html; charset=utf-8", "<html><body><script>x</script><p>Hello <b>world</b></p></body></html>"),
     )
-    assert web.web_fetch("http://x").strip() == "Hello world"
+    assert web.fetch("http://x").strip() == "Hello world"
 
     # A non-HTML body is returned verbatim, not run through the reducer.
     monkeypatch.setattr(httpx, "Client", client_returning("application/json", '{"a": 1}'))
-    assert web.web_fetch("http://x") == '{"a": 1}'
+    assert web.fetch("http://x") == '{"a": 1}'
 
 
 def test_http_session_reuses_one_client(tmp_path, fake_httpx):

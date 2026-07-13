@@ -78,7 +78,7 @@ automatically. You find one with search_tools(), read its functions with
 describe_tool(name), load it with use_tool(name), then call its functions on the
 returned module. Each call is gated (policy/audit/approval) exactly as a builtin
 would be. Some tools worth knowing you can reach:
-  search_tools("web")       # web -> web_search/web_fetch; http -> stateful sessions,
+  search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/click/fill/read). Reads are free;
                             #   state-changing calls need human approval. Prefer the

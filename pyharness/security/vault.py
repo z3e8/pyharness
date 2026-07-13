@@ -71,7 +71,7 @@ class Vault:
     returns a secret's cleartext.
 
     The agent references a secret by name; the broker/tools resolve it here, in
-    the parent, and inject it at the point of use (see web.web_fetch). `get` is
+    the parent, and inject it at the point of use (see web.fetch). `get` is
     deliberately NOT placed in the agent's kernel namespace — only `names()` is
     exposed (via the vault capability), and that returns names, never values.
 

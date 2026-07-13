@@ -44,7 +44,7 @@ class BrowserCapability:
     persistent Playwright driver and the per-session pages live for the whole
     `Session`, so state persists across cells for free.
 
-    Secrets follow the same use-but-don't-view rule as `web_fetch`: `fill_secret`
+    Secrets follow the same use-but-don't-view rule as `web.fetch`: `fill_secret`
     takes a secret *name*, resolves the cleartext parent-side, types it into the
     field, and records it on the session so every subsequent read masks it. The
     agent never sees the value, and the audit log records the name (via

@@ -42,7 +42,7 @@ of how it's surfaced:
 secrets()                                   # -> ["github", ...]  (names only, a builtin)
 
 web = use_tool("web")
-web.web_fetch("https://api.github.com/user", auth="github")   # value injected parent-side
+web.fetch("https://api.github.com/user", auth="github")   # value injected parent-side
 
 # On a stateful HTTP session, the same names inject into headers or a body field:
 http = use_tool("http")
@@ -51,7 +51,7 @@ http.request(s, "POST", "https://api.example.com/login",
              json={"user": "me"}, secret_fields={"password": "example_pw"})
 ```
 
-`web_fetch` and `request` share these auth styles: `bearer` (default), `header`
+`web.fetch` and `request` share these auth styles: `bearer` (default), `header`
 (`auth_name` = header), `query` (`auth_name` = param), `basic` (`user=`/
 `auth_user=`). `request` adds `secret_fields={"field": "secret_name"}` to inject
 into the JSON/form body. Load them with `use_tool` (`search_tools("web")` to find

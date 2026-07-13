@@ -12,15 +12,15 @@ class WebCapability:
         self.tier = tier
 
     def exports(self) -> dict:
-        return {"web_search": self.web_search, "web_fetch": self.web_fetch}
+        return {"search": self.search, "fetch": self.fetch}
 
-    def web_search(self, query: str, tier: str | None = None) -> str:
+    def search(self, query: str, tier: str | None = None) -> str:
         """Search the web and return a text answer with sources, via Anthropic's
         server-side search tool (no separate search API key). `tier` selects the
         model that runs the search; defaults to the capability's tier."""
         return self.llm.web_search(query, tier=tier or self.tier)
 
-    def web_fetch(
+    def fetch(
         self,
         url: str,
         auth: str | None = None,
