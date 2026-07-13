@@ -351,6 +351,44 @@ def test_html_to_text_strips_markup_and_noise():
     assert "<" not in text  # no tags survive
 
 
+def test_web_search_declares_direct_caller():
+    # The cheap tier (haiku) rejects the web_search tool unless it is called
+    # directly; assert the declaration carries allowed_callers=["direct"] so the
+    # server runs the search rather than requiring programmatic tool calling.
+    from types import SimpleNamespace
+
+    from pyharness.llm.client import AnthropicLLM
+
+    llm = AnthropicLLM()
+    captured: dict = {}
+
+    class _Stream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_final_message(self):
+            return SimpleNamespace(
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                stop_reason="end_turn",
+                content=[SimpleNamespace(type="text", text="jackets!")],
+            )
+
+    class _Messages:
+        def stream(self, **kwargs):
+            captured.update(kwargs)
+            return _Stream()
+
+    llm._client = SimpleNamespace(messages=_Messages())
+    assert llm.web_search("harrington jackets", tier="cheap") == "jackets!"
+    assert captured["model"] == "claude-haiku-4-5"
+    assert captured["tools"] == [
+        {"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]}
+    ]
+
+
 def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkeypatch):
     import httpx
 

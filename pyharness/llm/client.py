@@ -166,7 +166,12 @@ class AnthropicLLM:
         during tool execution)."""
         model = TIERS.get(tier, tier)
         messages: list[dict] = [{"role": "user", "content": query}]
-        tools = [{"type": "web_search_20260209", "name": "web_search"}]
+        # allowed_callers=["direct"] makes the server run the search and inject
+        # results directly, rather than the model driving it via programmatic tool
+        # calling. Without it the API rejects the request on models that lack
+        # programmatic tool calling (e.g. the cheap tier, claude-haiku-4-5), and
+        # direct calling is what this one-shot query wants regardless of tier.
+        tools = [{"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]}]
         for _ in range(max_rounds):
             with self._client.messages.stream(
                 model=model, max_tokens=4000, messages=messages, tools=tools
