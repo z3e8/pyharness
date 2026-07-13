@@ -89,9 +89,11 @@ layers confine it (`pyharness/broker/remote/sandbox.py`), on top of the process
 boundary itself:
 
 - **Env scrubbing** — secret-bearing variables (`PYHARNESS_SECRET_*`, the vault
-  passphrase) are deleted from the child's environment before any agent code
-  runs, and from any subprocess the child spawns. So even `printenv` can't read a
-  secret the parent legitimately holds.
+  passphrase, and the provider API keys the parent uses to call the LLM — e.g.
+  `ANTHROPIC_API_KEY`) are deleted from the child's environment before any agent
+  code runs, and from any subprocess the child spawns. The child has no LLM client
+  of its own (completions route through the broker), so it needs none of them, and
+  even `printenv` can't read a key the parent legitimately holds.
 - **macOS Seatbelt** (`sandbox-exec`) — enforces the perimeter, not a blanket
   lockdown. The guiding rule is **the workspace is the sandbox; the broker guards
   everything that leaves it.** Agent code reads and writes freely *inside* its

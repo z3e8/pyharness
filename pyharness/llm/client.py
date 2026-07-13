@@ -7,6 +7,22 @@ from typing import Callable, Protocol
 from .. import telemetry
 from ..budget import Budget
 
+# Provider credentials the *parent* holds so it can call the LLM. The child has no
+# LLM client — every completion routes through the broker back to the parent — so
+# these are stripped from the child's environment and from any bash subprocess.
+# Otherwise agent code could read a live key straight from `os.environ` or
+# `printenv`, sidestepping the vault's "cleartext never reaches the agent" contract.
+PROVIDER_SECRET_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "COHERE_API_KEY",
+)
+
 # Tiers let the agent reason about cost/capability instead of model strings.
 TIERS = {
     "smart": "claude-opus-4-8",

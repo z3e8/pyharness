@@ -26,9 +26,9 @@ from ..broker.capabilities.http import MUTATING_METHODS
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
-from ..llm.client import AnthropicLLM
+from ..llm.client import PROVIDER_SECRET_ENV, AnthropicLLM
 from ..security.policy import Policy
-from ..security.vault import Vault
+from ..security.vault import PASSPHRASE_ENV, Vault
 from ..tools.registry import Registry
 from ..trace import TraceLog
 from .agent import Agent
@@ -104,9 +104,11 @@ class Session:
         load_skills(self.registry, self.skills_dir)
 
         # Variables agent-controlled code must never see: env-backed secrets
-        # (the vault's prefix) and the file-vault passphrase. Stripped from the
-        # child's environment and from any shell subprocess.
+        # (the vault's prefix), the file-vault passphrase, and the provider API
+        # keys the parent uses to call the LLM. Stripped from the child's
+        # environment and from any shell subprocess.
         secret_prefixes = (self.vault.env_prefix,)
+        secret_names = (PASSPHRASE_ENV, *PROVIDER_SECRET_ENV)
 
         self.session_venv = SessionVenv()
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
@@ -118,7 +120,11 @@ class Session:
         # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
             FilesCapability(self.workspace),
-            ShellCapability(self.workspace, secret_env_prefixes=secret_prefixes),
+            ShellCapability(
+                self.workspace,
+                secret_env_prefixes=secret_prefixes,
+                secret_env_names=secret_names,
+            ),
             SearchCapability(self.workspace),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
@@ -164,6 +170,7 @@ class Session:
             RemoteKernel(
                 self.broker,
                 secret_env_prefixes=secret_prefixes,
+                secret_env_names=secret_names,
                 venv=self.session_venv,
                 workspace=self.workspace,
             )
