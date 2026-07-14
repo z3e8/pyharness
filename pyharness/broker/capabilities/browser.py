@@ -12,7 +12,21 @@ from .payload import deliver
 # Page actions that change page/remote state. The default policy gates these
 # behind human approval (see session.py); navigation and reads stay free. Kept
 # here so the capability and the policy share one list.
-MUTATING_ACTIONS = frozenset({"browser.click", "browser.fill", "browser.fill_secret"})
+MUTATING_ACTIONS = frozenset(
+    {
+        "browser.click",
+        "browser.fill",
+        "browser.fill_secret",
+        "browser.select_option",
+        "browser.press",
+        "browser.upload",
+    }
+)
+
+# Ops whose second positional arg is the element selector (used by preview() to
+# describe the target). press/upload take other positional args first, so they
+# rely on the ref=/selector= keyword instead.
+_SELECTOR_POS_OPS = frozenset({"click", "fill", "fill_secret", "select_option"})
 
 
 class _BrowserSession:
@@ -74,6 +88,11 @@ class BrowserCapability:
             "click": self.click,
             "fill": self.fill,
             "fill_secret": self.fill_secret,
+            "select_option": self.select_option,
+            "press": self.press,
+            "scroll": self.scroll,
+            "wait_for": self.wait_for,
+            "upload": self.upload,
             "read_text": self.read_text,
             "screenshot": self.screenshot,
             "close_browser": self.close_browser,
@@ -91,14 +110,21 @@ class BrowserCapability:
         and capped — a crafted accessible name cannot impersonate harness output."""
         session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
         ref = kwargs.get("ref")
+        selector = kwargs.get("selector")
+        if selector is None and op in _SELECTOR_POS_OPS and len(args) >= 2:
+            selector = args[1]
         if ref is not None:
             line = self._ref_line(session, ref) if session else None
             target = f"[ref={ref}] {line}" if line else f"[ref={ref}]"
-        else:
-            selector = kwargs.get("selector") or (args[1] if len(args) >= 2 else "")
+        elif selector is not None:
             target = repr(selector)
+        else:
+            target = ""
+        if op == "upload":  # name the file being staged into the page
+            path = kwargs.get("path") or (args[1] if len(args) >= 2 else None)
+            target = f"{target} file={path!r}".strip()
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
-        return ActionCategory.OUTWARD, f"{op} {target}{where}"
+        return ActionCategory.OUTWARD, " ".join(f"{op} {target}{where}".split())
 
     @staticmethod
     def _ref_line(session: _BrowserSession, ref: str) -> str | None:
@@ -245,6 +271,72 @@ class BrowserCapability:
         secret = session.sink.resolve(secret_name)
         session.page.fill(self._target(session, selector, ref), secret)
         return self._state(session)
+
+    def select_option(
+        self,
+        session_id: str,
+        selector: str | None = None,
+        *,
+        ref: str | None = None,
+        value: str | None = None,
+        label: str | None = None,
+        index: int | None = None,
+    ) -> dict:
+        """Choose an option in a `<select>` dropdown, targeted by a snapshot `ref`
+        (preferred) or a CSS/text `selector`. Give exactly one of `value=` (the
+        option's value attribute), `label=` (its visible text), or `index=`.
+        State-changing — gated for approval."""
+        session = self._session(session_id)
+        target = self._target(session, selector, ref)
+        chosen = {k: v for k, v in (("value", value), ("label", label), ("index", index)) if v is not None}
+        session.page.select_option(target, **chosen)
+        return self._state(session)
+
+    def press(self, session_id: str, key: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+        """Press a key or chord (`"Enter"`, `"Tab"`, `"Control+A"`). With a `ref`/
+        `selector` the key is sent to that element; otherwise to whatever is
+        focused. State-changing (Enter submits a form) — gated for approval."""
+        session = self._session(session_id)
+        if selector is not None or ref is not None:
+            session.page.press(self._target(session, selector, ref), key)
+        else:
+            session.page.keyboard.press(key)
+        return self._state(session)
+
+    def scroll(self, session_id: str, dy: int = 0, dx: int = 0) -> dict:
+        """Scroll the viewport by `dy` (and `dx`) pixels — positive `dy` scrolls
+        down. For lazy-loaded content, scroll then `snapshot` again. Free (viewport
+        only, no remote effect)."""
+        session = self._session(session_id)
+        session.page.mouse.wheel(dx, dy)
+        return self._state(session)
+
+    def wait_for(self, session_id: str, selector: str, state: str = "visible", timeout_ms: int = 10_000) -> dict:
+        """Wait until `selector` reaches `state` (`"visible"`/`"attached"`/
+        `"hidden"`/`"detached"`). Returns `{... , "found": bool}` — a timeout is a
+        clean `found=False`, not a traceback, so polling for an element that may
+        not appear doesn't burn the turn. Free."""
+        session = self._session(session_id)
+        try:
+            session.page.wait_for_selector(selector, state=state, timeout=timeout_ms)
+            found = True
+        except Exception as exc:  # noqa: BLE001 - a real Playwright TimeoutError is the "not found" signal
+            if type(exc).__name__ != "TimeoutError":
+                raise
+            found = False
+        return self._state(session, found=found)
+
+    def upload(self, session_id: str, path: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+        """Attach a workspace file to a file-input, targeted by a snapshot `ref`
+        (preferred) or a CSS/text `selector`. `path` is workspace-relative and
+        escape-guarded. This stages the file's *contents* into the remote page (a
+        page can auto-submit on change), so it is state-changing — gated, and the
+        confirmation shows the filename."""
+        session = self._session(session_id)
+        target = self._target(session, selector, ref)
+        source = self.ws.path(path)  # resolves inside the workspace; raises on escape
+        session.page.set_input_files(target, str(source))
+        return self._state(session, uploaded=path)
 
     def read_text(self, session_id: str, selector: str | None = None, save: str | None = None) -> dict:
         """Read visible text from the page (or the element matching `selector`).

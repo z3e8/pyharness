@@ -19,8 +19,9 @@ Rules match by prefix, so `"files"` gates every file operation and
 `skills.save_skill` and `packages.install` — both write code that would run in
 later sessions, so a human signs off at author time. It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
-**state-changing browser actions** (`click` / `fill` / `fill_secret`), since
-those act outward on the user's behalf; reads and navigation stay free.
+**state-changing browser actions** (`click` / `fill` / `fill_secret` /
+`select_option` / `press` / `upload`), since those act outward on the user's
+behalf; reads, navigation, `snapshot`, `scroll`, and `wait_for` stay free.
 
 Most rules match on the action name alone, but a rule can also judge a call from
 its arguments: `Policy(approve_if=[predicate])` runs each predicate over

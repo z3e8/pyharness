@@ -856,7 +856,10 @@ class _FakePage:
         self.url = url
         self._text = text
         self._snapshot = snapshot
+        self._wait_timeout = False  # when True, wait_for_selector raises TimeoutError
         self.calls: list = []
+        self.keyboard = SimpleNamespace(press=lambda key: self.calls.append(("keyboard.press", key)))
+        self.mouse = SimpleNamespace(wheel=lambda dx, dy: self.calls.append(("wheel", dx, dy)))
 
     def goto(self, url, wait_until=None):
         self.url = url
@@ -875,6 +878,21 @@ class _FakePage:
 
     def fill(self, selector, value, **kw):
         self.calls.append(("fill", selector, value))
+
+    def select_option(self, selector, **kw):
+        self.calls.append(("select_option", selector, kw))
+
+    def press(self, selector, key, **kw):
+        self.calls.append(("press", selector, key))
+
+    def wait_for_selector(self, selector, state=None, timeout=None):
+        self.calls.append(("wait_for_selector", selector, state))
+        if self._wait_timeout:
+            raise TimeoutError("waiting for selector timed out")
+        return object()
+
+    def set_input_files(self, selector, files, **kw):
+        self.calls.append(("set_input_files", selector, files))
 
     def inner_text(self, selector):
         return self._text
@@ -1096,6 +1114,85 @@ def test_browser_preview_shows_ref_element(tmp_path):
     cat, summary = cap.preview("click", ("sid",), {"ref": "e6"})
     assert cat is ActionCategory.OUTWARD
     assert "[ref=e6]" in summary and "Submit application" in summary
+
+
+# --- Browser verbs: select / press / scroll / wait / upload (Direction #3, PR-2) --
+
+
+def test_browser_select_option_by_ref(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cap.select_option("sid", ref="e6", label="Remote")
+    assert ("select_option", "aria-ref=e6", {"label": "Remote"}) in page.calls
+
+
+def test_browser_press_targets_element_or_focused(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cap.press("sid", "Enter", ref="e6")
+    assert ("press", "aria-ref=e6", "Enter") in page.calls
+    cap.press("sid", "Tab")  # no target -> goes to the focused element
+    assert ("keyboard.press", "Tab") in page.calls
+
+
+def test_browser_scroll_uses_wheel(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.scroll("sid", 400)
+    assert ("wheel", 0, 400) in page.calls
+
+
+def test_browser_wait_for_found_and_timeout(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    assert cap.wait_for("sid", "#ready")["found"] is True
+    page._wait_timeout = True  # a real Playwright TimeoutError becomes a clean False
+    assert cap.wait_for("sid", "#never")["found"] is False
+
+
+def test_browser_upload_stages_workspace_file(tmp_path):
+    ws = Workspace(tmp_path)
+    cap, page = _browser_with_fake(ws)
+    cap.snapshot("sid")
+    r = cap.upload("sid", "resume.pdf", ref="e5")
+    call = next(c for c in page.calls if c[0] == "set_input_files")
+    assert call[1] == "aria-ref=e5" and call[2] == str(ws.path("resume.pdf"))
+    assert r["uploaded"] == "resume.pdf"
+
+
+def test_browser_upload_rejects_workspace_escape(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    with pytest.raises(ValueError):
+        cap.upload("sid", "../secret.pdf", "#f")
+
+
+def test_browser_g9_verb_gating(tmp_path):
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompted = []
+
+    def approver(request):
+        prompted.append(request.action)
+        return True  # allow, so the fake actions proceed
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+
+    ns["scroll"]("sid", 200)  # viewport-only: free
+    ns["wait_for"]("sid", "#x")  # read: free
+    assert prompted == []
+
+    ns["select_option"]("sid", "#s", value="a")
+    ns["press"]("sid", "Enter", "#f")
+    ns["upload"]("sid", "cv.pdf", "#u")
+    assert prompted == ["browser.select_option", "browser.press", "browser.upload"]
+
+
+def test_browser_upload_preview_names_the_file(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    cat, summary = cap.preview("upload", ("sid", "resume.pdf"), {"selector": "#f"})
+    assert cat is ActionCategory.OUTWARD
+    assert "resume.pdf" in summary and "#f" in summary
 
 
 # --- Approval preview & taxonomy (C5) ----------------------------------------
