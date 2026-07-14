@@ -26,6 +26,15 @@ def test_kernel_persists_and_captures(tmp_path):
     assert "ZeroDivisionError" in kernel.run("print(1 / 0)")
 
 
+def test_truncate_keeps_head_and_tail(tmp_path):
+    from pyharness.util import truncate
+
+    text = "H" * 500 + "M" * 40_000 + "T" * 500
+    out = truncate(text)
+    assert out.startswith("H") and out.rstrip().endswith("T")  # both ends survive
+    assert "truncated" in out and len(out) < len(text)
+
+
 def test_workspace_confines_relative_paths(tmp_path):
     ws = Workspace(tmp_path)
     files = FilesCapability(ws)
@@ -33,6 +42,24 @@ def test_workspace_confines_relative_paths(tmp_path):
     assert files.read("a.txt") == "hi"
     files.edit("a.txt", "hi", "bye")
     assert (ws.dir / "a.txt").read_text() == "bye"
+
+
+def test_read_pages_by_line_and_never_truncates(tmp_path):
+    ws = Workspace(tmp_path)
+    files = FilesCapability(ws)
+    content = "".join(f"line {i}\n" for i in range(2000))
+    files.write("log.txt", content)
+    # A window pages the file; the full read returns every byte (no 10k cap).
+    assert files.read("log.txt", offset=2, limit=3) == "line 2\nline 3\nline 4\n"
+    full = files.read("log.txt")
+    assert full == content and len(full) > 10_000
+
+
+def test_bash_output_not_truncated(tmp_path):
+    from pyharness.broker.capabilities.shell import ShellCapability
+
+    out = ShellCapability(Workspace(tmp_path)).bash("printf 'z%.0s' $(seq 1 20000)")
+    assert len(out) == 20_000 and "truncated" not in out
 
 
 def test_workspace_rejects_escape(tmp_path):
@@ -174,7 +201,7 @@ def test_as_tool_module_surfaces_a_capability_through_the_registry(tmp_path):
 
     # describe_tool shows the real signatures/docstrings, not the (*args, **kwargs) proxy.
     details = reg.describe("files")
-    assert "read(path: 'str')" in details and "write(path: 'str', content: 'str')" in details
+    assert "read(path: 'str'" in details and "write(path: 'str', content: 'str')" in details
     # Loading and calling routes through the broker: the write is gated + approved.
     module = reg.use("files")
     module.write("note.txt", "data")
@@ -274,12 +301,13 @@ def test_secret_sink_without_vault_raises():
 
 
 class _FakeResp:
-    def __init__(self, status=200, text="ok", url="http://x", content_type="text/plain"):
+    def __init__(self, status=200, text="ok", url="http://x", content_type="text/plain", content=None):
         import datetime
 
         self.status_code = status
         self.text = text
         self.url = url
+        self.content = content if content is not None else text.encode()
         self.headers = {"content-type": content_type}
         self.elapsed = datetime.timedelta(milliseconds=2)
 
@@ -445,7 +473,7 @@ def test_http_request_returns_structured_result(tmp_path, fake_httpx):
     assert r["status"] == 200
     assert r["text"] == "ok"
     assert r["url"] == "http://x"
-    assert r["truncated"] is False
+    assert r["saved"] is False and r["path"] is None
     assert r["elapsed_ms"] == 2
 
 
@@ -513,6 +541,79 @@ def test_http_upload_rejects_workspace_escape(tmp_path, fake_httpx):
     http = HttpSessionCapability(Workspace(tmp_path))
     with pytest.raises(ValueError):
         http.request(None, "POST", "http://x", files=[["file", "../secret.txt"]])
+
+
+def _serve(monkeypatch, resp):
+    """Point httpx.Client at a client that returns `resp` for every request."""
+    import httpx
+
+    class _C:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return resp
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(httpx, "Client", _C)
+
+
+def test_http_returns_full_body_uncapped(tmp_path, monkeypatch):
+    # The G1 fix: a textual body larger than the old 10k display cap now reaches
+    # the agent's variable whole, not a truncated head — the design's core promise.
+    big = "x" * 50_000
+    _serve(monkeypatch, _FakeResp(text=big, content_type="application/json"))
+    r = HttpSessionCapability(Workspace(tmp_path)).request(None, "GET", "http://x")
+    assert r["saved"] is False and r["path"] is None
+    assert r["text"] == big  # full 50k, nothing dropped
+
+
+def test_http_saves_binary_body_to_workspace(tmp_path, monkeypatch):
+    # A binary content-type spills to a workspace file (full bytes intact) instead
+    # of returning mojibake text; the agent reads/parses the file with its own lib.
+    pdf = b"%PDF-1.7\n" + b"\x00\x01\x02" * 1000
+    _serve(monkeypatch, _FakeResp(text="ignored", content_type="application/pdf", content=pdf))
+    ws = Workspace(tmp_path)
+    r = HttpSessionCapability(ws).request(None, "GET", "http://x/report.pdf")
+    assert r["text"] is None and r["saved"] is True
+    assert r["bytes"] == len(pdf)
+    assert ws.path(r["path"]).read_bytes() == pdf  # full body on disk
+    assert r["path"].endswith(".pdf")  # extension guessed from content-type
+
+
+def test_http_spills_oversized_text_to_workspace(tmp_path, monkeypatch):
+    from pyharness.broker.capabilities import payload
+
+    monkeypatch.setattr(payload, "INLINE_TEXT_LIMIT", 100)
+    body = "y" * 500
+    _serve(monkeypatch, _FakeResp(text=body, content_type="text/plain"))
+    ws = Workspace(tmp_path)
+    r = HttpSessionCapability(ws).request(None, "GET", "http://x")
+    assert r["saved"] is True and r["text"] is None
+    assert r["preview"] == body[:payload.PREVIEW_CHARS]
+    assert ws.path(r["path"]).read_text() == body  # full text, not the preview
+
+
+def test_http_explicit_save_writes_full_body_to_named_path(tmp_path, monkeypatch):
+    _serve(monkeypatch, _FakeResp(text='{"a": 1}', content_type="application/json"))
+    ws = Workspace(tmp_path)
+    r = HttpSessionCapability(ws).request(None, "GET", "http://x", save="out.json")
+    assert r["saved"] is True and r["path"] == "out.json" and r["text"] is None
+    assert ws.path("out.json").read_text() == '{"a": 1}'
+
+
+def test_http_saved_body_redacts_injected_secret(tmp_path, monkeypatch):
+    # A secret echoed in a spilled body must be masked on disk, not just in the
+    # returned dict — same use-but-don't-view rule as an inline response.
+    echoed = b"binary blob with hunter2 inside"
+    _serve(monkeypatch, _FakeResp(text="x", content_type="application/octet-stream", content=echoed))
+    ws = Workspace(tmp_path)
+    http = HttpSessionCapability(ws, vault=Vault({"pw": "hunter2"}))
+    r = http.request(None, "POST", "http://x", json={"u": "me"}, secret_fields={"password": "pw"})
+    on_disk = ws.path(r["path"]).read_bytes()
+    assert b"hunter2" not in on_disk and b"***" in on_disk
 
 
 def test_policy_approve_if_predicate():
@@ -628,6 +729,23 @@ def test_browser_read_text_masks_injected_secret(tmp_path):
     r = cap.read_text("sid")
     assert "hunter2" not in r["text"]
     assert "***" in r["text"]
+
+
+def test_browser_read_text_returns_full_page_and_can_save(tmp_path, monkeypatch):
+    from pyharness.broker.capabilities import payload
+
+    page = "p" * 30_000
+    cap, _ = _browser_with_fake(Workspace(tmp_path), text=page)
+    # Under the ceiling the whole page rides back inline, uncapped.
+    r = cap.read_text("sid")
+    assert r["saved"] is False and r["text"] == page
+    # Past the ceiling it spills to the workspace with the full text on disk.
+    monkeypatch.setattr(payload, "INLINE_TEXT_LIMIT", 100)
+    ws = Workspace(tmp_path)
+    cap2, _ = _browser_with_fake(ws, text=page)
+    r2 = cap2.read_text("sid")
+    assert r2["saved"] is True and r2["text"] is None
+    assert ws.path(r2["path"]).read_text() == page
 
 
 def test_browser_audit_summary_never_holds_secret_value(tmp_path):

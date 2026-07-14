@@ -7,7 +7,7 @@ from ...core.workspace import Workspace
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
-from ...util import MAX_OUTPUT, truncate
+from .payload import deliver
 
 # Page actions that change page/remote state. The default policy gates these
 # behind human approval (see session.py); navigation and reads stay free. Kept
@@ -162,13 +162,19 @@ class BrowserCapability:
         session.page.fill(selector, secret)
         return self._state(session)
 
-    def read_text(self, session_id: str, selector: str | None = None) -> dict:
+    def read_text(self, session_id: str, selector: str | None = None, save: str | None = None) -> dict:
         """Read visible text from the page (or the element matching `selector`).
-        Any secret this session injected is masked before returning."""
+        Any secret this session injected is masked before returning.
+
+        The whole text comes back, not a capped head: a normal page rides back
+        inline as `text`; a page past the inline ceiling — or an explicit
+        `save="path"` — is written to the workspace and returned as
+        `path`/`bytes`/`preview` with `text=None`. See `payload.deliver`."""
         session = self._session(session_id)
         raw = session.page.inner_text(selector or "body")
         text = session.sink.redact(raw)
-        return {"text": truncate(text), "truncated": len(text) > MAX_OUTPUT}
+        body = deliver(ws=self.ws, content_type="text/plain", text=text, save=save, default_name="page.txt")
+        return session.sink.redacted(body)
 
     def screenshot(self, session_id: str, path: str) -> dict:
         """Save a PNG screenshot to a workspace-relative `path` (resolved

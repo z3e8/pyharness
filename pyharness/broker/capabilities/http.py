@@ -10,7 +10,7 @@ from ...core.workspace import Workspace
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
-from ...util import MAX_OUTPUT, truncate
+from .payload import deliver, is_textual
 
 # Methods that mutate remote state. The default policy gates these behind human
 # approval (see session.py / _is_mutating_http); reads (GET/HEAD/OPTIONS) stay
@@ -183,6 +183,7 @@ class HttpSessionCapability:
         auth_user: str | None = None,
         secret_fields: dict | None = None,
         extract_text: bool = False,
+        save: str | None = None,
     ) -> dict:
         """Perform one request on `session_id` (or a throwaway client if None).
 
@@ -191,8 +192,14 @@ class HttpSessionCapability:
         secret name and injects into the `json`/`data` body. `files` is a list of
         `[field, workspace_path]`; each file is read parent-side (path confined to
         the workspace) so agent code never handles the bytes. `extract_text`
-        reduces an HTML response to readable text before truncation (no-op for
-        non-HTML responses)."""
+        reduces an HTML response to readable text (no-op for non-HTML responses).
+
+        The body comes back whole, not capped. A textual response rides back
+        inline as `text` (parse it in the kernel); a binary one — or an explicit
+        `save="path"`, or text past the inline ceiling — is written to the
+        workspace and returned as `path`/`bytes`/`preview` with `text=None`. Either
+        way the full data is available: inline as a variable, or on disk for the
+        agent's own Python to read. See `payload.deliver`."""
         headers = dict(headers or {})
         params = dict(params or {})
         sink = SecretSink(self.vault)
@@ -245,23 +252,34 @@ class HttpSessionCapability:
                 client.close()
 
         elapsed = getattr(resp, "elapsed", None)
+        content_type = resp.headers.get("content-type", "")
         text = resp.text
-        # Reduce HTML to readable text before truncating, so the 10k cap keeps
-        # article content rather than the megabytes of <style>/<script> that lead
-        # a modern page. Extraction is opt-in (web.fetch sets it) and only fires
-        # for HTML, so JSON/API and raw-file reads pass through verbatim.
-        if extract_text and "html" in resp.headers.get("content-type", "").lower():
+        # Reduce HTML to readable text, so an inline body is article content rather
+        # than the megabytes of <style>/<script> that lead a modern page.
+        # Extraction is opt-in (web.fetch sets it) and only fires for HTML, so
+        # JSON/API and raw-file reads pass through verbatim.
+        if extract_text and "html" in content_type.lower():
             text = html_to_text(text)
-        # Mask any injected secret out of every string the agent reads back: a
+        # Mask any injected secret before it can reach agent code *or* the disk: a
         # query-string `auth` secret can survive into the final url, and a
         # `secret_fields` body value can be echoed in the response text/headers.
+        text = sink.redact(text)
+        content = None if is_textual(content_type) else sink.redact_bytes(resp.content)
+        body = deliver(
+            ws=self.ws,
+            content_type=content_type,
+            text=text,
+            content=content,
+            save=save,
+            default_name=url.rstrip("/").rsplit("/", 1)[-1] or "body",
+        )
         return sink.redacted(
             {
                 "status": resp.status_code,
                 "url": str(resp.url),
                 "headers": dict(resp.headers),
-                "text": truncate(text),
-                "truncated": len(text) > MAX_OUTPUT,
+                "content_type": content_type,
                 "elapsed_ms": round(elapsed.total_seconds() * 1000) if elapsed else None,
+                **body,
             }
         )

@@ -42,6 +42,16 @@ class SecretSink:
                 text = text.replace(secret, "***")
         return text
 
+    def redact_bytes(self, data: bytes) -> bytes:
+        """Mask every resolved cleartext out of a raw byte body before it is
+        written to disk. The binary counterpart of `redact`: a secret echoed into
+        a saved payload must not survive to the workspace file any more than it may
+        round-trip through returned text."""
+        for secret in self._injected:
+            if secret:
+                data = data.replace(secret.encode(), b"***")
+        return data
+
     def redacted(self, value):
         """Redact `value` wherever a string can hide a resolved secret: a bare
         string, or the string values of a (possibly one-level-nested) mapping such

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ...core.workspace import Workspace
-from ...util import truncate
 
 
 class FilesCapability:
@@ -13,8 +12,18 @@ class FilesCapability:
     def exports(self) -> dict:
         return {"read": self.read, "write": self.write, "edit": self.edit}
 
-    def read(self, path: str) -> str:
-        return truncate(self.ws.path(path).read_text())
+    def read(self, path: str, offset: int = 0, limit: int | None = None) -> str:
+        """Read a workspace file whole, or a line-window of it. `offset` skips that
+        many leading lines and `limit` caps how many are returned — page a long
+        file instead of pulling it all into context. The content is never
+        truncated: with no window it comes back complete, in a kernel variable to
+        process as the agent sees fit."""
+        text = self.ws.path(path).read_text()
+        if offset or limit is not None:
+            lines = text.splitlines(keepends=True)
+            end = offset + limit if limit is not None else None
+            text = "".join(lines[offset:end])
+        return text
 
     def write(self, path: str, content: str) -> str:
         target = self.ws.path(path)

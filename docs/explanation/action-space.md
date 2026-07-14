@@ -41,6 +41,32 @@ variables already computed* rather than starting over.
 > State is in-memory and disposable. If the kernel (or, out-of-process, the child)
 > dies mid-session, its variables are lost — there is no durable resume yet.
 
+## Large and binary payloads
+
+The token-economy promise above only holds if large data can actually *reach* a
+variable. There are two distinct size boundaries, and only one of them is a cap:
+
+- **The variable boundary** (capability → kernel). A fetched page, an API
+  response, a file read, a command's output — the *full* body crosses into the
+  agent's Python. It is never truncated on the way in. This is what lets a cell
+  parse a whole page with BeautifulSoup or page through a long log.
+- **The display boundary** (kernel → context). What the agent chooses to
+  `print()` back to itself is capped (`util.MAX_OUTPUT`, ~10k chars, kept
+  head-and-tail so an ending survives). This is the only truncation, and it
+  guards the context window, not the data.
+
+Keeping these separate is the point: the agent holds the whole thing and decides
+how much to surface. It searches, slices, and prints just the part it needs.
+
+Two payloads can't live in a string variable and take a different route
+(`broker/capabilities/payload.py`): a **binary** body (PDF, image, zip) and a
+**very large** text body both spill to a workspace file, and the capability
+returns a `path` + head `preview` instead of inline `text`. The agent then reads
+or parses the file with ordinary Python — which is the whole bet: the workspace
+is its filesystem, and a saved payload is just data on disk. An explicit
+`save="path"` forces the same route. Injected secrets are masked *before* a body
+is written, so a spilled file is as safe as an inline read.
+
 ## Builtins vs tools
 
 The agent reaches the world the two ways Python itself does, split by one line —

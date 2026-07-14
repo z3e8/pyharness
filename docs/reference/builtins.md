@@ -12,12 +12,17 @@ This is the authoritative contract the orchestrator is given (see
 
 | Signature | Returns |
 |-----------|---------|
-| `read(path)` | file contents |
+| `read(path, offset=0, limit=None)` | file contents (whole, or a line window) |
 | `write(path, content)` | — (creates/overwrites) |
 | `edit(path, old, new)` | — (replaces `old` with `new`) |
 | `bash(cmd, timeout=60)` | combined stdout/stderr |
 | `search(pattern, path=".")` | matching lines |
 
+`read` returns the file whole by default; `offset`/`limit` page it by line
+(skip `offset` lines, return at most `limit`) instead of pulling a long file
+into context. None of these cap their result — the content lands in a kernel
+variable intact; the only cap is on what the agent chooses to `print()` back to
+itself (see [the action space](../explanation/action-space.md#large-and-binary-payloads)).
 `bash` runs with secret-bearing env vars stripped (see
 [Security & audit](../explanation/security-and-audit.md)).
 
@@ -34,8 +39,8 @@ and `packages` categories — find them with `search_tools("web")` /
 
 | Tool | `search_tools` | What it is |
 |------|----------------|------------|
-| `web` | `web` | `search` (Anthropic server-side search) + `fetch` (one-shot GET that returns readable text — HTML is reduced to its visible text, non-HTML passes through — a thin wrapper over `http.request`) |
-| `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, text, truncated, elapsed_ms}`), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
+| `web` | `web` | `search` (Anthropic server-side search) + `fetch` (one-shot GET returning the full readable text — HTML reduced to visible text, non-HTML verbatim — a thin wrapper over `http.request`; `save="path"` or a binary body writes to the workspace and returns a note pointing at the file) |
+| `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, text, path, bytes, preview, saved}`), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
 | `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `click` / `fill` / `fill_secret` / `read_text` / `screenshot` / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
@@ -45,6 +50,12 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
 - **Reads are free; state-changing calls need human approval.** GET/HEAD and page
   reads run unattended; POST/PUT/PATCH/DELETE and `click`/`fill`/`fill_secret`
   are gated per call. This holds whether the capability is a builtin or a tool.
+- **Bodies come back whole — inline or on disk.** A textual response (and
+  `browser.read_text`) rides back as `text`, uncapped, for the kernel to parse.
+  A binary body, a response past the inline ceiling, or an explicit `save="path"`
+  is written to the workspace instead: `text` is `None` and `path`/`bytes`/`preview`
+  point at the file, which the agent reads with its own Python. Never a truncated
+  head. See [the action space](../explanation/action-space.md#large-and-binary-payloads).
 - **Secrets never round-trip through agent-visible text.** `auth`/`secret_fields`
   (http) and `fill_secret` (browser) name a vault secret resolved parent-side;
   the value is masked (`***`) out of every returned `url`/`text`/`headers` and

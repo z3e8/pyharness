@@ -19,7 +19,11 @@ The kernel is persistent: variables, imports, and functions defined in one
 run_python call remain available in the next. Only what you print() is returned
 to you — everything else stays in the kernel, unseen. Keep large or intermediate
 data in variables and pass it between calls; never print large data back to
-yourself.
+yourself. A fetched page, API response, file read, or command output arrives in
+your Python whole, never a truncated head — hold it in a variable, then search,
+slice, and print only the part you need. A binary or very large body instead
+lands in your workspace as a file: the call returns its path (with a short
+preview), and you read or parse it from disk.
 
 You reach the outside world the same two ways Python itself does: a small set of
 BUILTINS that are always in scope — your own body — and TOOLS you discover and
@@ -33,7 +37,8 @@ BUILTINS — always in scope. Call them directly by name, like print(); never
 import them. This is the complete list; nothing else is callable by bare name.
 (Paths are relative to the session workspace.)
   Files & shell:
-    read(path) / write(path, content) / edit(path, old, new)
+    read(path, offset=0, limit=None) / write(path, content) / edit(path, old, new)
+        # read returns the file whole; offset/limit page a long one by line.
     bash(cmd, timeout=60)
     search(pattern, path=".")
   Credentials:

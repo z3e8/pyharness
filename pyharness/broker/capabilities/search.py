@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from ...core.workspace import Workspace
-from ...util import truncate
 
 
 class SearchCapability:
@@ -29,4 +28,4 @@ class SearchCapability:
                         hits.append(f"{file}:{n}:{line}")
             except (OSError, UnicodeDecodeError):
                 continue
-        return truncate("\n".join(hits)) or "(no matches)"
+        return "\n".join(hits) or "(no matches)"

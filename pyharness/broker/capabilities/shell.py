@@ -4,7 +4,6 @@ import subprocess
 
 from ...core.workspace import Workspace
 from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
-from ...util import truncate
 from ..remote.sandbox import scrubbed_environ
 
 
@@ -27,7 +26,10 @@ class ShellCapability:
     def bash(self, cmd: str, timeout: int = 60) -> str:
         # The command runs parent-side (out-of-process) or in-process; either
         # way it must not inherit vault secrets the parent holds, so it gets an
-        # environment with the secret-bearing variables stripped.
+        # environment with the secret-bearing variables stripped. Output comes
+        # back whole into a kernel variable; the display cap the agent sees is the
+        # kernel's print guardrail, not this call. Redirect to a file for a body
+        # too large to hold if needed.
         try:
             proc = subprocess.run(
                 cmd,
@@ -40,5 +42,5 @@ class ShellCapability:
             )
         except subprocess.TimeoutExpired as exc:
             output = (exc.stdout or "") + (exc.stderr or "")
-            return truncate(output + f"\n[timed out after {timeout}s]")
-        return truncate(proc.stdout + proc.stderr)
+            return output + f"\n[timed out after {timeout}s]"
+        return proc.stdout + proc.stderr

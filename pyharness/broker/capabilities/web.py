@@ -27,13 +27,19 @@ class WebCapability:
         auth_style: str = "bearer",
         auth_name: str | None = None,
         user: str | None = None,
+        save: str | None = None,
     ) -> str:
         """Fetch a URL (stateless GET) and return its content as readable text:
         an HTML page is reduced to its visible text (scripts, styles, and markup
         stripped), while JSON and other non-HTML responses pass through verbatim.
-        A thin wrapper over the HTTP session capability's one-shot `request`;
-        `auth` names a vault secret injected parent-side and never returned to the
-        caller. See `request` for the `auth_style` options."""
+        The whole body is returned, not a capped head. A thin wrapper over the
+        HTTP session capability's one-shot `request`; `auth` names a vault secret
+        injected parent-side and never returned to the caller. See `request` for
+        the `auth_style` options.
+
+        Pass `save="path"` (or fetch a binary body) and the full content lands in
+        the workspace instead; the return is then a short note pointing at the
+        file, which the agent reads or parses with its own Python."""
         result = self.http.request(
             None,
             "GET",
@@ -43,5 +49,11 @@ class WebCapability:
             auth_name=auth_name,
             auth_user=user,
             extract_text=True,
+            save=save,
         )
-        return result["text"]
+        if result["text"] is not None:
+            return result["text"]
+        return (
+            f"[saved {result['bytes']} bytes to {result['path']} "
+            f"({result['content_type']}) — read/parse it from the workspace]"
+        )
