@@ -23,7 +23,8 @@ pyharness [SESSION_DIR]
   and a one-line summary of the effect (method + url + body fields, or a browser
   action with the page it lands on), then ask `allow? [y/N]`.
 - A turn that fails mid-stream is retried once, then aborted without crashing the
-  REPL. `Ctrl-D` exits.
+  REPL. `Ctrl-C` aborts the in-flight turn (e.g. a slow web search) and drops back
+  to the prompt with history intact; `Ctrl-D` exits.
 
 Each turn prints the streamed reply and a `[spent $… over N calls]` line.
 

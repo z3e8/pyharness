@@ -113,6 +113,12 @@ def main() -> None:
                 except BudgetExceeded as exc:
                     print(f"\n[budget] {exc}")
                     break
+                except KeyboardInterrupt:
+                    # Ctrl-C aborts the in-flight turn, not the whole session.
+                    # Agent.run has rolled history back to before this turn, so
+                    # the next prompt starts clean. Ctrl-D still exits the REPL.
+                    print("\n[interrupted] turn aborted.")
+                    break
                 except Exception as exc:
                     if attempt == 1:
                         print(f"\n[retry] stream failed ({type(exc).__name__}) — resending…")

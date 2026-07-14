@@ -90,6 +90,31 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
     assert messages[0] == {"role": "user", "content": "second task"}
 
 
+class InterruptedLLM:
+    """Raises KeyboardInterrupt on complete() to simulate a Ctrl-C mid-turn."""
+
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
+        raise KeyboardInterrupt
+
+
+def test_ctrl_c_rolls_back_user_message(tmp_path):
+    # Ctrl-C (KeyboardInterrupt is a BaseException, not an Exception) must roll
+    # history back just like any other aborted turn, or the REPL it drops back to
+    # is wedged with two consecutive user turns.
+    messages = []
+    agent = Agent(InterruptedLLM(), Kernel({}), Budget())
+
+    try:
+        agent.run("interrupted task", messages)
+    except KeyboardInterrupt:
+        pass
+    assert messages == []
+
+    # History is clean, so the next turn after the interrupt works normally.
+    ok = Agent(ScriptedLLM([_text_completion("done")]), Kernel({}), Budget())
+    assert ok.run("next task", messages) == "done"
+
+
 def test_render_context_carries_date_platform_and_workspace():
     now = datetime(2026, 7, 13, 14, 30, tzinfo=timezone.utc)
     block = render_context("/tmp/ws", now=now)

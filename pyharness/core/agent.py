@@ -190,11 +190,13 @@ class Agent:
         # An aborted turn must leave history exactly as it was before this user
         # turn. Otherwise the next send appends a second consecutive user message
         # and the API rejects every subsequent call — wedging the whole session,
-        # not just the failed turn. Roll back to here on any failure.
+        # not just the failed turn. Roll back to here on any failure, including a
+        # Ctrl-C (KeyboardInterrupt is a BaseException, not an Exception): an
+        # interrupted turn must not wedge the session it drops back to.
         rollback_to = len(messages) - 1
         try:
             return self._run_loop(messages)
-        except Exception:
+        except BaseException:
             del messages[rollback_to:]
             raise
 
