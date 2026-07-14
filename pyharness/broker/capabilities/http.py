@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import base64
-import re
-from html.parser import HTMLParser
 from importlib import import_module
 from uuid import uuid4
 
@@ -10,70 +8,17 @@ from ...core.workspace import Workspace
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
+from .page import extract_content, html_to_text, parse_affordances
 from .payload import deliver, is_textual
+
+# Re-exported so `from ...http import html_to_text` (and existing callers/tests)
+# keep working now that the HTML-perception layer lives in page.py.
+__all__ = ["HttpSessionCapability", "MUTATING_METHODS", "html_to_text"]
 
 # Methods that mutate remote state. The default policy gates these behind human
 # approval (see session.py / _is_mutating_http); reads (GET/HEAD/OPTIONS) stay
 # free. Kept here so the capability and the policy predicate share one list.
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-
-# Tags whose text is markup noise, not content, and block-level tags that mark a
-# line boundary — used by the HTML->text reducer below.
-_HTML_SKIP_TAGS = frozenset({"script", "style", "noscript", "template", "svg", "head"})
-_HTML_BLOCK_TAGS = frozenset(
-    {"p", "div", "section", "article", "header", "footer", "nav", "main", "aside",
-     "li", "ul", "ol", "table", "tr", "br", "hr", "h1", "h2", "h3", "h4", "h5",
-     "h6", "blockquote", "pre", "figure", "figcaption"}
-)
-
-
-class _TextExtractor(HTMLParser):
-    """Collect visible text from an HTML document, dropping script/style/head
-    noise and inserting newlines at block boundaries so structure survives."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self._chunks: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in _HTML_SKIP_TAGS:
-            self._skip_depth += 1
-        elif tag in _HTML_BLOCK_TAGS:
-            self._chunks.append("\n")
-
-    def handle_endtag(self, tag):
-        if tag in _HTML_SKIP_TAGS and self._skip_depth:
-            self._skip_depth -= 1
-        elif tag in _HTML_BLOCK_TAGS:
-            self._chunks.append("\n")
-
-    def handle_data(self, data):
-        # A newline inside text content is just whitespace in HTML, so collapse
-        # every run to a single space here; the only real line breaks are the
-        # "\n" sentinels emitted at block boundaries above.
-        if self._skip_depth == 0:
-            self._chunks.append(re.sub(r"\s+", " ", data))
-
-    def text(self) -> str:
-        return "".join(self._chunks)
-
-
-def html_to_text(html: str) -> str:
-    """Reduce an HTML document to readable text: drop script/style/head noise,
-    keep block boundaries as newlines, and collapse whitespace. Stdlib only — a
-    lightweight stand-in for a full readability pass, enough to keep an agent
-    (and its context window) from drowning in markup. Falls back to the raw input
-    if parsing fails."""
-    parser = _TextExtractor()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception:  # noqa: BLE001 - malformed markup must not fail the fetch
-        return html
-    text = re.sub(r"[ \t]*\n[ \t]*", "\n", parser.text())  # trim spaces around breaks
-    text = re.sub(r"\n{3,}", "\n\n", text)  # squeeze blank-line runs to one
-    return text.strip()
 
 
 def _apply_secret_auth(headers: dict, params: dict, *, secret: str, style: str, name, user) -> None:
@@ -254,12 +199,19 @@ class HttpSessionCapability:
         elapsed = getattr(resp, "elapsed", None)
         content_type = resp.headers.get("content-type", "")
         text = resp.text
-        # Reduce HTML to readable text, so an inline body is article content rather
-        # than the megabytes of <style>/<script> that lead a modern page.
-        # Extraction is opt-in (web.fetch sets it) and only fires for HTML, so
-        # JSON/API and raw-file reads pass through verbatim.
+        title: str | None = None
+        links: list[dict] = []
+        forms: list[dict] = []
+        # Reduce HTML to readable content and pull the links/forms the agent needs
+        # to navigate and fill (parse_affordances runs on the raw markup, before
+        # `text` is reassigned to the reduced content). Extraction is opt-in
+        # (web.fetch sets it) and only fires for HTML, so JSON/API and raw-file
+        # reads pass through verbatim. trafilatura gives clean markdown; the stdlib
+        # reducer is the fallback when it declines (returns None) on thin markup.
         if extract_text and "html" in content_type.lower():
-            text = html_to_text(text)
+            title, links, forms = parse_affordances(text, str(resp.url))
+            reduced = extract_content(text)
+            text = reduced if reduced is not None else html_to_text(text)
         # Mask any injected secret before it can reach agent code *or* the disk: a
         # query-string `auth` secret can survive into the final url, and a
         # `secret_fields` body value can be echoed in the response text/headers.
@@ -273,6 +225,10 @@ class HttpSessionCapability:
             save=save,
             default_name=url.rstrip("/").rsplit("/", 1)[-1] or "body",
         )
+        # links/forms/title are small and ride inline on the result dict even when
+        # the body itself spilled to disk — the affordances are exactly what the
+        # agent needs to orient on a page too big to inline. sink.redacted recurses
+        # into these lists so a secret echoed into an href or field never survives.
         return sink.redacted(
             {
                 "status": resp.status_code,
@@ -280,6 +236,9 @@ class HttpSessionCapability:
                 "headers": dict(resp.headers),
                 "content_type": content_type,
                 "elapsed_ms": round(elapsed.total_seconds() * 1000) if elapsed else None,
+                "title": title,
+                "links": links,
+                "forms": forms,
                 **body,
             }
         )

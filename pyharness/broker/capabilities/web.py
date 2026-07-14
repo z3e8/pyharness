@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .http import HttpSessionCapability
+from .page import render_page_map
 
 
 class WebCapability:
@@ -29,17 +30,24 @@ class WebCapability:
         user: str | None = None,
         save: str | None = None,
     ) -> str:
-        """Fetch a URL (stateless GET) and return its content as readable text:
-        an HTML page is reduced to its visible text (scripts, styles, and markup
-        stripped), while JSON and other non-HTML responses pass through verbatim.
-        The whole body is returned, not a capped head. A thin wrapper over the
-        HTTP session capability's one-shot `request`; `auth` names a vault secret
-        injected parent-side and never returned to the caller. See `request` for
-        the `auth_style` options.
+        """Fetch a URL (stateless GET) and return it as a readable page map: an
+        HTML page is reduced to clean markdown content, followed by a `## FORMS`
+        section (each form's action/method and every field) and a `## LINKS`
+        section (the links to navigate) — so the agent can see what to click and
+        fill, not just prose. JSON and other non-HTML responses pass through
+        verbatim. The whole body is returned, not a capped head. A thin wrapper
+        over the HTTP session capability's one-shot `request`; `auth` names a vault
+        secret injected parent-side and never returned to the caller. See `request`
+        for the `auth_style` options, and for the structured `links`/`forms` lists
+        if you want to drive HTTP directly instead of reading the markdown.
+
+        Only static HTML is parsed — links and forms rendered by JavaScript need
+        the `browser` capability.
 
         Pass `save="path"` (or fetch a binary body) and the full content lands in
-        the workspace instead; the return is then a short note pointing at the
-        file, which the agent reads or parses with its own Python."""
+        the workspace instead; the return is then a note pointing at the file plus
+        the same FORMS/LINKS map, so even a page too big to inline stays
+        navigable."""
         result = self.http.request(
             None,
             "GET",
@@ -52,8 +60,12 @@ class WebCapability:
             save=save,
         )
         if result["text"] is not None:
-            return result["text"]
-        return (
+            return render_page_map(
+                result["text"], result["links"], result["forms"], result["title"]
+            )
+        note = (
             f"[saved {result['bytes']} bytes to {result['path']} "
             f"({result['content_type']}) — read/parse it from the workspace]"
         )
+        affordances = render_page_map("", result["links"], result["forms"])
+        return f"{note}\n\n{affordances}" if affordances else note

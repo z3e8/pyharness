@@ -9,6 +9,14 @@ dependencies = [
     "cryptography>=42",
     "opentelemetry-sdk>=1.30",
     "opentelemetry-exporter-otlp-proto-grpc>=1.30",
+    # Web page perception (broker/capabilities/page.py): trafilatura reduces an
+    # HTML body to clean readable content, lxml drives the links/forms affordance
+    # pass. Core, not an optional extra — unlike the browser, a good default
+    # `web.fetch` is table stakes, and the stdlib fallback only covers the
+    # degraded case. lxml is declared explicitly because page.py imports it
+    # directly (trafilatura also pulls it in transitively).
+    "trafilatura>=2.1",
+    "lxml>=6.1",
 ]
 
 [project.optional-dependencies]

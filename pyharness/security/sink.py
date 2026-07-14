@@ -54,10 +54,13 @@ class SecretSink:
 
     def redacted(self, value):
         """Redact `value` wherever a string can hide a resolved secret: a bare
-        string, or the string values of a (possibly one-level-nested) mapping such
-        as an HTTP result and its headers. Non-string leaves pass through."""
+        string, or the string leaves of a nested mapping or list such as an HTTP
+        result, its headers, and its parsed links/forms. Non-string leaves pass
+        through."""
         if isinstance(value, str):
             return self.redact(value)
         if isinstance(value, dict):
             return {key: self.redacted(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.redacted(item) for item in value]
         return value

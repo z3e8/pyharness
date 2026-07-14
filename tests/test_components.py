@@ -379,6 +379,197 @@ def test_html_to_text_strips_markup_and_noise():
     assert "<" not in text  # no tags survive
 
 
+# A page carrying every affordance shape: a <base> that reroutes relative links,
+# duplicate/javascript/fragment anchors the parser must handle, and a login form
+# with a labelled field, a required password, a hidden CSRF token, and a select.
+_RICH_HTML = """
+<html><head><title>Sign in — Example</title>
+<base href="https://example.com/app/"></head>
+<body>
+  <nav>
+    <a href="/pricing">Pricing</a>
+    <a href="/pricing">Pricing again</a>
+    <a href="https://docs.example.com">Docs</a>
+    <a href="javascript:void(0)">JS</a>
+    <a href="#top">Top</a>
+  </nav>
+  <main>
+    <h1>Welcome back</h1>
+    <p>Please sign in to your account to continue reading the full guide,
+       which covers everything you need to get started with the platform.</p>
+    <form action="login" method="post" enctype="multipart/form-data">
+      <label for="email">Email address</label>
+      <input id="email" name="user[email]" type="text" required>
+      <input id="pw" name="user[password]" type="password" required>
+      <input type="hidden" name="csrf" value="tok-abc123">
+      <input type="checkbox" name="remember">
+      <select name="plan"><option value="free">Free</option><option value="pro">Pro</option></select>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body></html>
+"""
+
+
+def test_parse_affordances_links_dedup_resolve_and_filter():
+    from pyharness.broker.capabilities.page import parse_affordances
+
+    title, links, forms = parse_affordances(_RICH_HTML, "https://example.com/page")
+    assert title == "Sign in — Example"
+    hrefs = [link["href"] for link in links]
+    # <base> reroutes the relative link; absolute survives; duplicate collapses;
+    # javascript: and fragment-only anchors are dropped.
+    assert "https://example.com/pricing" in hrefs
+    assert "https://docs.example.com" in hrefs
+    assert hrefs.count("https://example.com/pricing") == 1
+    assert not any(h.startswith("javascript:") or "#top" in h for h in hrefs)
+
+
+def test_parse_affordances_form_fields():
+    from pyharness.broker.capabilities.page import parse_affordances
+
+    _, _, forms = parse_affordances(_RICH_HTML, "https://example.com/page")
+    assert len(forms) == 1
+    form = forms[0]
+    assert form["method"] == "POST"
+    assert form["action"] == "https://example.com/app/login"  # relative + <base>
+    assert form["enctype"] == "multipart/form-data"
+    assert form["submit"] == "Sign in"
+    fields = {f["name"]: f for f in form["fields"]}
+    assert fields["user[email]"]["label"] == "Email address"
+    assert fields["user[password]"]["required"] is True
+    assert fields["csrf"]["type"] == "hidden" and fields["csrf"]["value"] == "tok-abc123"
+    assert fields["plan"]["options"] == ["free", "pro"]
+    # the submit button is captured as `submit`, not as a fillable field
+    assert "" not in fields
+
+
+def test_parse_affordances_captures_option_values():
+    from pyharness.broker.capabilities.page import parse_affordances
+
+    html = (
+        "<form><input type='radio' name='size' value='s'>"
+        "<input type='radio' name='size' value='l'>"
+        "<input type='text' name='q' value='prefilled'></form>"
+    )
+    _, _, forms = parse_affordances(html, "http://x")
+    values = [f.get("value") for f in forms[0]["fields"]]
+    assert values == ["s", "l", "prefilled"]  # radio choices + prefilled default
+
+
+def test_parse_affordances_select_options_capped():
+    from pyharness.broker.capabilities.page import parse_affordances
+
+    options = "".join(f"<option value='c{i}'>C{i}</option>" for i in range(60))
+    html = f"<form><select name='country'>{options}</select></form>"
+    _, _, forms = parse_affordances(html, "http://x")
+    field = forms[0]["fields"][0]
+    assert len(field["options"]) == 30
+    assert field["options_truncated"] == 30
+
+
+def test_extract_content_returns_none_on_empty():
+    from pyharness.broker.capabilities.page import extract_content
+
+    assert extract_content("") is None
+    assert extract_content("<html><body></body></html>") is None
+
+
+def test_render_page_map_caps_and_omits_empty_sections():
+    from pyharness.broker.capabilities.page import render_page_map
+
+    # Plain prose: no FORMS/LINKS headings appear.
+    assert render_page_map("Just an article.", [], []) == "Just an article."
+
+    links = [{"text": f"L{i}", "href": f"http://x/{i}"} for i in range(130)]
+    mapped = render_page_map("body", links, [], title="T")
+    assert mapped.startswith("# T")
+    assert "## LINKS" in mapped
+    assert "and 30 more links" in mapped  # 130 links, 100 shown
+
+
+def test_web_fetch_renders_full_page_map(tmp_path, monkeypatch):
+    import httpx
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return _FakeResp(text=_RICH_HTML, url=url, content_type="text/html")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    out = web.fetch("https://example.com/page")
+
+    assert out.startswith("# Sign in — Example")
+    assert "## FORMS" in out and "## LINKS" in out
+    assert "POST https://example.com/app/login" in out
+    assert "user[password]" in out and "required" in out
+    assert "https://docs.example.com" in out
+
+
+def test_web_fetch_spilled_page_keeps_affordances(tmp_path, monkeypatch):
+    import httpx
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return _FakeResp(text=_RICH_HTML, url=url, content_type="text/html")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    # save= forces the body to disk; the affordance map must still ride back.
+    out = web.fetch("https://example.com/page", save="page.html")
+    assert "saved" in out and "page.html" in out
+    assert "## FORMS" in out and "## LINKS" in out
+    assert (Workspace(tmp_path).path("page.html")).exists()
+
+
+def test_web_fetch_falls_back_when_extract_content_declines(tmp_path, monkeypatch):
+    import httpx
+
+    import pyharness.broker.capabilities.http as http_mod
+
+    # trafilatura declines (returns None) -> the stdlib reducer must still yield
+    # readable content, and the affordance parse is unaffected.
+    monkeypatch.setattr(http_mod, "extract_content", lambda html: None)
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return _FakeResp(text=_RICH_HTML, url=url, content_type="text/html")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    out = web.fetch("https://example.com/page")
+    assert "Welcome back" in out  # fallback reducer produced the content
+    assert "## LINKS" in out  # affordances unaffected by the content fallback
+
+
+def test_sink_redacted_recurses_into_lists():
+    from pyharness.security.sink import SecretSink
+
+    sink = SecretSink(Vault({"k": "S3CRET"}))
+    sink.resolve("k")
+    out = sink.redacted({"links": [{"href": "http://x?t=S3CRET", "text": "S3CRET"}]})
+    assert out["links"][0]["href"] == "http://x?t=***"
+    assert out["links"][0]["text"] == "***"
+
+
 def test_web_search_declares_direct_caller():
     # The cheap tier (haiku) rejects the web_search tool unless it is called
     # directly; assert the declaration carries allowed_callers=["direct"] so the
@@ -448,9 +639,11 @@ def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkey
         httpx, "Client",
         client_returning("text/html; charset=utf-8", "<html><body><script>x</script><p>Hello <b>world</b></p></body></html>"),
     )
-    assert web.fetch("http://x").strip() == "Hello world"
+    out = web.fetch("http://x")
+    assert "Hello" in out and "world" in out  # content extracted...
+    assert "<" not in out and "script" not in out  # ...markup and noise stripped
 
-    # A non-HTML body is returned verbatim, not run through the reducer.
+    # A non-HTML body is returned verbatim, not run through extraction.
     monkeypatch.setattr(httpx, "Client", client_returning("application/json", '{"a": 1}'))
     assert web.fetch("http://x") == '{"a": 1}'
 
