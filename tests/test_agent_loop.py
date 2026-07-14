@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
+
 from pyharness import Budget
-from pyharness.core.agent import Agent
+from pyharness.core.agent import Agent, render_context
 from pyharness.core.kernel import Kernel
 from pyharness.llm.client import Completion, ToolCall
 
@@ -11,10 +13,12 @@ class ScriptedLLM:
         self.completions = list(completions)
         self.calls = []
         self.tiers = []
+        self.systems = []
 
     def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
         self.calls.append(list(messages))
         self.tiers.append(tier)
+        self.systems.append(system)
         return self.completions.pop(0)
 
 
@@ -84,6 +88,31 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
     answer = ok.run("second task", messages)
     assert answer == "done"
     assert messages[0] == {"role": "user", "content": "second task"}
+
+
+def test_render_context_carries_date_platform_and_workspace():
+    now = datetime(2026, 7, 13, 14, 30, tzinfo=timezone.utc)
+    block = render_context("/tmp/ws", now=now)
+    assert "2026-07-13 14:30" in block
+    assert "Monday" in block
+    assert "/tmp/ws" in block
+
+
+def test_render_context_omits_workspace_when_unknown():
+    block = render_context(None, now=datetime(2026, 7, 13, tzinfo=timezone.utc))
+    assert "Workspace" not in block
+
+
+def test_dynamic_context_is_appended_to_system_prompt(tmp_path):
+    llm = ScriptedLLM([_text_completion("done")])
+    agent = Agent(llm, Kernel({}), Budget(), workspace_root=tmp_path)
+
+    agent.run("answer", [])
+
+    system = llm.systems[0]
+    assert "You are the orchestrator of pyharness." in system  # static contract
+    assert "## Session" in system  # dynamic preamble
+    assert str(tmp_path) in system
 
 
 def test_kernel_state_persists_across_cells(tmp_path):

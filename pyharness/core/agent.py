@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import platform
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 from .. import telemetry
@@ -25,13 +28,15 @@ slice, and print only the part you need. A binary or very large body instead
 lands in your workspace as a file: the call returns its path (with a short
 preview), and you read or parse it from disk.
 
-You reach the outside world the same two ways Python itself does: a small set of
-BUILTINS that are always in scope — your own body — and TOOLS you discover and
-import to reach any external system. The line: builtins are you (your workspace,
-your kernel, delegating to sub-agents, finding tools); tools are everything you
-reach *out* to (the web, a browser, HTTP APIs, MCP servers, the package index).
-There is one way to reach anything external — discover it. Nothing external is in
-scope by default; plan what you need, find it, load it.
+Your Python has no ambient powers. It cannot reach the network and holds no
+credentials: a bare socket, `urllib`, or `requests` call, or reading a key from
+`os.environ`, fails or comes back empty — by design, not by accident. That
+failure (a connection error, an empty value) means "route it through a tool," not
+"retry." Everything is reached two ways: BUILTINS, always in scope — your own
+body (workspace, shell, kernel, delegation, finding tools); and TOOLS you
+discover and load to reach anything external (the web, a browser, HTTP APIs, MCP
+servers, the package index). Nothing external is in scope by default: plan what
+you need, find it, load it.
 
 BUILTINS — always in scope. Call them directly by name, like print(); never
 import them. This is the complete list; nothing else is callable by bare name.
@@ -76,13 +81,12 @@ import them. This is the complete list; nothing else is callable by bare name.
         # "browser.click"). Use it to confirm an effect landed, or to see why an
         # action was refused, before deciding what to do next.
 
-TOOLS — everything external: a library you discover and import. Anything not in
-the builtins list above is a tool: web access, a browser, HTTP sessions, package
-installation, MCP servers, and learned skills all live here. None are in scope
-automatically. You find one with search_tools(), read its functions with
-describe_tool(name), load it with use_tool(name), then call its functions on the
-returned module. Each call is gated (policy/audit/approval) exactly as a builtin
-would be. Some tools worth knowing you can reach:
+TOOLS — everything external. Anything not in the builtins list above is a tool:
+web access, a browser, HTTP sessions, package installation, MCP servers, and
+learned skills. None are in scope automatically. Find one with search_tools(),
+read its functions with describe_tool(name), load it with use_tool(name), then
+call its functions on the returned module. Each call is gated
+(policy/audit/approval) exactly as a builtin would be. Some worth knowing:
   search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/click/fill/read). Reads are free;
@@ -90,19 +94,15 @@ would be. Some tools worth knowing you can reach:
                             #   http path over the browser for sensitive credentials.
   search_tools("install")   # packages -> install a PyPI lib into the session, then import it
 
-A learned skill (tagged `learned`) is a tool that ships with a runbook: a saved
-procedure for a repeatable task, plus any bundled code. For these, describe_tool
-returns instructions to read and follow, not just signatures. Before doing
-something that looks repeatable, search_tools() for a skill that already does it
-rather than redoing the work from scratch.
-
-A skill is agent-authored, so unlike a builtin it may be wrong. One tagged
-`unverified` has never run successfully — its steps (endpoints, selectors, auth)
-are a hypothesis, not fact. Confirm them against the real surface before you rely
-on them, and prefer a skill that has worked before. `last-failed` means its most
-recent run broke: read the recent-use log in describe_tool, fix the instructions,
-and re-save. After you run any skill, record_skill_use() so trust reflects
-reality — a real success earns `verified`; a failure warns the next session.
+A learned skill (tagged `learned`) is a tool that ships with a runbook —
+describe_tool returns instructions to read and follow, not just signatures.
+Before doing something repeatable, search_tools() for a skill that already does
+it. But a skill is agent-authored, so it may be wrong: `unverified` means it has
+never run successfully — treat its steps (endpoints, selectors, auth) as a
+hypothesis, confirm them before relying on it; `last-failed` means its last run
+broke — read the log in describe_tool, fix the instructions, re-save. Prefer a
+skill that has worked. After running one, record_skill_use() so trust reflects
+reality — a success earns `verified`, a failure warns the next session.
 
 The rule, with no exceptions: if a function is in the builtins list above, call
 it directly; for anything else, search_tools() → describe_tool() → use_tool().
@@ -111,6 +111,8 @@ Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.
+- You run under a bounded step count and a spend budget. Be economical; for long
+  work, checkpoint state to the workspace as you go so it survives a stop.
 - Fail fast and honestly. When a surface structurally resists — the same call
   fails twice the same way, an element the page shows can't be interacted with, a
   login is behind a CAPTCHA/2FA/checkpoint, an API returns 401/403 — that is a
@@ -120,6 +122,24 @@ Guidance:
   as success is worse than a clear "this is blocked, here's why."
 - When the task is done, reply with plain text. Be concise.
 """
+
+
+def render_context(workspace_root: str | Path | None, *, now: datetime | None = None) -> str:
+    """The dynamic session preamble appended to SYSTEM_PROMPT each turn. Static
+    prose carries the rules; this carries the world-state the model would
+    otherwise burn turns discovering — the date (its training cutoff silently
+    substitutes otherwise), the platform, and where its relative paths resolve.
+    Deliberately minimal; grow it only with facts the agent cannot cheaply see."""
+    now = now or datetime.now().astimezone()
+    lines = [
+        "## Session",
+        f"- Now: {now:%Y-%m-%d %H:%M %Z} ({now:%A})",
+        f"- Platform: {platform.system().lower()} / {platform.machine()}",
+    ]
+    if workspace_root is not None:
+        lines.append(f"- Workspace: {workspace_root} — your relative paths resolve here")
+    return "\n".join(lines)
+
 
 RUN_PYTHON_TOOL = {
     "name": "run_python",
@@ -148,6 +168,7 @@ class Agent:
         *,
         tier: str = "mid",
         max_steps: int = 30,
+        workspace_root: str | Path | None = None,
         on_event: Callable[[str, str], None] | None = None,
     ):
         self.llm = llm
@@ -155,6 +176,7 @@ class Agent:
         self.budget = budget
         self.tier = tier
         self.max_steps = max_steps
+        self.workspace_root = workspace_root
         self.on_event = on_event or (lambda kind, text, **kw: None)
 
     def run(self, task: str, messages: list[dict]) -> str:
@@ -171,6 +193,7 @@ class Agent:
             raise
 
     def _run_loop(self, messages: list[dict]) -> str:
+        system = f"{SYSTEM_PROMPT}\n\n{render_context(self.workspace_root)}"
         for _ in range(self.max_steps):
             self.budget.check()
 
@@ -183,7 +206,7 @@ class Agent:
 
             try:
                 completion = self.llm.complete(
-                    system=SYSTEM_PROMPT,
+                    system=system,
                     messages=messages,
                     tier=self.tier,
                     tools=[RUN_PYTHON_TOOL],
@@ -198,7 +221,7 @@ class Agent:
                 completion.text or "",
                 model=TIERS.get(self.tier, self.tier),
                 tier=self.tier,
-                system=SYSTEM_PROMPT,
+                system=system,
                 messages=prompt_snapshot,
                 tool_calls=[{"name": tc.name, "input": tc.input} for tc in completion.tool_calls],
                 cost_usd=round(self.budget.spent_usd - cost_before, 6),

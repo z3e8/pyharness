@@ -185,7 +185,13 @@ class Session:
             if on_event is not None:
                 on_event(kind, text)
 
-        self.agent = Agent(self.llm, self.kernel, self.budget, on_event=on_event_traced)
+        self.agent = Agent(
+            self.llm,
+            self.kernel,
+            self.budget,
+            workspace_root=self.workspace.dir,
+            on_event=on_event_traced,
+        )
         self.messages: list[dict] = []
 
     def run(self, task: str) -> str:

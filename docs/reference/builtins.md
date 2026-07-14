@@ -6,7 +6,10 @@ bare name** — never import them. This list is the whole set; anything else is 
 to the session workspace.
 
 This is the authoritative contract the orchestrator is given (see
-`SYSTEM_PROMPT` in `pyharness/core/agent.py`).
+`SYSTEM_PROMPT` in `pyharness/core/agent.py`). Each turn a small dynamic
+**session block** is appended to that static prompt — the current date/time and
+zone, the platform, and the workspace path — so the model has the world-state it
+would otherwise burn turns discovering (`render_context` in the same module).
 
 ## Files & shell
 
