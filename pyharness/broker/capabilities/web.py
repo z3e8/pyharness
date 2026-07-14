@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+
+from . import exa
 from .http import HttpSessionCapability
 from .page import render_page_map
 
@@ -13,13 +16,37 @@ class WebCapability:
         self.tier = tier
 
     def exports(self) -> dict:
-        return {"search": self.search, "fetch": self.fetch}
+        return {
+            "search": self.search,
+            "search_results": self.search_results,
+            "fetch": self.fetch,
+        }
 
     def search(self, query: str, tier: str | None = None) -> str:
         """Search the web and return a text answer with sources, via Anthropic's
         server-side search tool (no separate search API key). `tier` selects the
         model that runs the search; defaults to the capability's tier."""
         return self.llm.web_search(query, tier=tier or self.tier)
+
+    def search_results(self, query: str, num_results: int = 10) -> list[dict]:
+        """Search the web and return a *raw ranked list* to fan out over, instead
+        of `search`'s single digested answer — each item a dict
+        `{title, url, snippet, published_date, author, score}`. Use this for
+        systematic research (fetch the URLs with `web.fetch`/`http.request`, rank
+        by `score`); use `search` when you just want a synthesized answer.
+
+        `snippet` is a short relevant excerpt, not the page body — fetch the url
+        for the full content. `num_results` is clamped to 1–100 (default 10).
+
+        Backed by Exa; needs `EXA_API_KEY` in the environment. The key is resolved
+        parent-side and never reaches agent code. Note: each search carries a small
+        per-query dollar cost at Exa that is not recorded to the budget."""
+        api_key = os.environ.get("EXA_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "EXA_API_KEY not set — add it to .env to use web.search_results"
+            )
+        return exa.search(query, api_key=api_key, num_results=num_results)
 
     def fetch(
         self,

@@ -43,6 +43,12 @@ environment, **not** committed to `.env` if sensitive.
 | `PYHARNESS_VAULT_FILE` | `~/.pyharness/secrets.enc` | Path to the encrypted file. |
 | `PYHARNESS_SECRET_<NAME>` | — | An env-backed secret the agent can reference as `<name>` (lowercased). |
 
+## Web search
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `EXA_API_KEY` | — | Exa API key for `web.search_results` (the raw ranked-list search). `web.search` (Anthropic server-side) and `web.fetch` don't need it. Held parent-side and scrubbed from the child sandbox like the LLM keys; never reaches agent code. |
+
 ## MCP
 
 | Variable | Default | Effect |

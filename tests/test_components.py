@@ -1062,3 +1062,117 @@ def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):
     assert "supersecret" not in out
     assert "hunter2" not in out
     assert "kept=ok" in out  # non-secret env still passes through
+
+
+# --- web.search_results (Exa raw-results search) ---------------------------
+
+
+class _FakeExaClient:
+    """A one-shot httpx.Client stand-in for the Exa POST: records the call and
+    returns a canned response. `bodies`/`status` are set per test on the class."""
+
+    body = {"results": []}
+    status = 200
+    calls: list = []
+
+    def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
+
+    def request(self, method, url, **kwargs):
+        _FakeExaClient.calls.append({"method": method, "url": url, "init": self.init_kwargs, **kwargs})
+        return SimpleNamespace(
+            status_code=type(self).status,
+            json=lambda: type(self).body,
+            text="error-body-no-key",
+        )
+
+    def close(self):
+        pass
+
+
+def _patch_exa(monkeypatch, *, body=None, status=200):
+    import httpx
+
+    _FakeExaClient.calls = []
+    _FakeExaClient.body = {"results": []} if body is None else body
+    _FakeExaClient.status = status
+    monkeypatch.setattr(httpx, "Client", _FakeExaClient)
+    return _FakeExaClient
+
+
+def test_web_search_results_queries_exa_and_parses(monkeypatch):
+    fake = _patch_exa(monkeypatch, body={"results": [
+        {"title": "T1", "url": "https://a.example", "publishedDate": "2026-01-01",
+         "author": "Ann", "score": 0.9, "highlights": ["snip one", "snip two"]},
+    ]})
+    monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
+    web = WebCapability(llm=None, http=None)
+
+    out = web.search_results("harrington jackets", num_results=5)
+
+    call = fake.calls[-1]
+    assert call["method"] == "POST"
+    assert call["url"] == "https://api.exa.ai/search"
+    assert call["headers"] == {"x-api-key": "EXA-SECRET"}
+    assert call["json"] == {
+        "query": "harrington jackets", "numResults": 5, "type": "auto",
+        "contents": {"highlights": True},
+    }
+    assert call["init"] == {"timeout": 30}  # not the 600s web_search read timeout
+    assert out == [{
+        "title": "T1", "url": "https://a.example", "snippet": "snip one",
+        "published_date": "2026-01-01", "author": "Ann", "score": 0.9,
+    }]
+    assert "EXA-SECRET" not in repr(out)  # the key never rides back on the result
+
+
+def test_web_search_results_clamps_num_results(monkeypatch):
+    fake = _patch_exa(monkeypatch)
+    monkeypatch.setenv("EXA_API_KEY", "k")
+    web = WebCapability(llm=None, http=None)
+
+    web.search_results("q", num_results=0)
+    web.search_results("q", num_results=500)
+
+    assert [c["json"]["numResults"] for c in fake.calls] == [1, 100]
+
+
+def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
+    # A result missing highlights/score/date/author parses to None/"" (no KeyError),
+    # and a response with no "results" key yields [].
+    _patch_exa(monkeypatch, body={"results": [{"url": "https://x.example"}]})
+    monkeypatch.setenv("EXA_API_KEY", "k")
+    web = WebCapability(llm=None, http=None)
+    assert web.search_results("q") == [{
+        "title": None, "url": "https://x.example", "snippet": "",
+        "published_date": None, "author": None, "score": None,
+    }]
+
+    _patch_exa(monkeypatch, body={})
+    assert web.search_results("q") == []
+
+
+def test_web_search_results_raises_without_leaking_key(monkeypatch):
+    _patch_exa(monkeypatch, status=429)
+    monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
+    web = WebCapability(llm=None, http=None)
+
+    with pytest.raises(RuntimeError) as exc:
+        web.search_results("q")
+    assert "429" in str(exc.value)
+    assert "EXA-SECRET" not in str(exc.value)
+
+
+def test_web_search_results_requires_key(monkeypatch):
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    web = WebCapability(llm=None, http=None)
+    with pytest.raises(RuntimeError, match="EXA_API_KEY not set"):
+        web.search_results("q")
+
+
+def test_exa_key_is_scrubbed_from_child():
+    # Provider keys held parent-side are stripped from the sandboxed child; the Exa
+    # key must ride the same list so agent code can't read it via os.environ/printenv.
+    from pyharness.llm.client import PROVIDER_SECRET_ENV
+
+    assert "EXA_API_KEY" in PROVIDER_SECRET_ENV
