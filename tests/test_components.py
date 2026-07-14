@@ -571,53 +571,6 @@ def test_sink_redacted_recurses_into_lists():
     assert out["links"][0]["text"] == "***"
 
 
-def test_web_search_declares_direct_caller():
-    # The cheap tier (haiku) rejects the web_search tool unless it is called
-    # directly; assert the declaration carries allowed_callers=["direct"] so the
-    # server runs the search rather than requiring programmatic tool calling.
-    from types import SimpleNamespace
-
-    from pyharness.llm.client import AnthropicLLM
-
-    llm = AnthropicLLM()
-    captured: dict = {}
-
-    class _Stream:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def get_final_message(self):
-            return SimpleNamespace(
-                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
-                stop_reason="end_turn",
-                content=[SimpleNamespace(type="text", text="jackets!")],
-            )
-
-    class _Messages:
-        def stream(self, **kwargs):
-            captured.update(kwargs)
-            return _Stream()
-
-    class _Client:
-        messages = _Messages()
-
-        def with_options(self, **kwargs):
-            captured["options"] = kwargs
-            return self
-
-    llm._client = _Client()
-    assert llm.web_search("harrington jackets", tier="cheap") == "jackets!"
-    assert captured["model"] == "claude-haiku-4-5"
-    assert captured["tools"] == [
-        {"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]}
-    ]
-    # Search calls get a read timeout well past the default completion budget.
-    assert captured["options"]["timeout"].read == 600.0
-
-
 def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkeypatch):
     import httpx
 
@@ -1380,7 +1333,7 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
         "query": "harrington jackets", "numResults": 5, "type": "auto",
         "contents": {"highlights": True},
     }
-    assert call["init"] == {"timeout": 30}  # not the 600s web_search read timeout
+    assert call["init"] == {"timeout": 30}  # Exa's own short HTTP timeout
     assert out == [{
         "title": "T1", "url": "https://a.example", "snippet": "snip one",
         "published_date": "2026-01-01", "author": "Ann", "score": 0.9,

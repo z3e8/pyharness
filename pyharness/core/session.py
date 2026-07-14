@@ -156,7 +156,7 @@ class Session:
         # external; gating is identical to a builtin's.
         tool_caps = [
             (WebCapability(self.llm, http=self.http),
-             "Read the web: search (digested answer or raw results list), and fetch a single URL.",
+             "Read the web: search_results (a raw ranked list to fan out over), and fetch a single URL.",
              "web", ("web", "http", "fetch", "search", "results", "url", "download", "browse", "internet")),
             (self.http,
              "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",

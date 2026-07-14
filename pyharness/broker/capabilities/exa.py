@@ -24,7 +24,7 @@ def search(
     response carries, or None. `num_results` is clamped to Exa's 1–100 range.
 
     Requests `contents.highlights` only — not full `text` (that's what `web.fetch`
-    /`http` are for) and not `summary` (that duplicates `web.search`'s digestion).
+    /`http` are for) and not `summary` (fetch the ranked URLs to read the body).
     Raises RuntimeError on a non-2xx response, carrying the status and a short body
     snippet only — never the key or request headers. httpx is imported lazily and
     `Client` is constructed here (not `httpx.post`) so tests can monkeypatch it;
