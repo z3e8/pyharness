@@ -25,6 +25,10 @@ class _BrowserSession:
         self.context = context
         self.page = page
         self.sink = sink
+        # The most recent aria snapshot's redacted text, or None. Element refs
+        # (`[ref=eN]`) are only valid against this snapshot; navigation clears it
+        # since a new page's DOM makes every prior ref meaningless.
+        self.last_snapshot: str | None = None
 
     def close(self) -> None:
         for obj in (self.context, self.browser):
@@ -66,6 +70,7 @@ class BrowserCapability:
         return {
             "open_browser": self.open_browser,
             "goto": self.goto,
+            "snapshot": self.snapshot,
             "click": self.click,
             "fill": self.fill,
             "fill_secret": self.fill_secret,
@@ -78,11 +83,35 @@ class BrowserCapability:
         """Describe a gated page action for the approver, enriched with the page
         it will land on — context the broker can't see, since the live page is
         session state here. The url is redacted through the session's sink so a
-        secret in a query string never surfaces in the confirmation."""
-        selector = kwargs.get("selector") or (args[1] if len(args) >= 2 else "")
+        secret in a query string never surfaces in the confirmation.
+
+        When the action targets an element by `ref`, a bare `[ref=e12]` is opaque,
+        so we resolve it against the stored snapshot to show what it points at
+        (`button "Submit"`). That line is page-controlled text, so it is repr-quoted
+        and capped — a crafted accessible name cannot impersonate harness output."""
         session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+        ref = kwargs.get("ref")
+        if ref is not None:
+            line = self._ref_line(session, ref) if session else None
+            target = f"[ref={ref}] {line}" if line else f"[ref={ref}]"
+        else:
+            selector = kwargs.get("selector") or (args[1] if len(args) >= 2 else "")
+            target = repr(selector)
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
-        return ActionCategory.OUTWARD, f"{op} {selector!r}{where}"
+        return ActionCategory.OUTWARD, f"{op} {target}{where}"
+
+    @staticmethod
+    def _ref_line(session: _BrowserSession, ref: str) -> str | None:
+        """The stored-snapshot line describing `ref`, repr-quoted and capped so the
+        page's own text can neither forge harness output nor bloat the prompt."""
+        snap = session.last_snapshot
+        if not snap:
+            return None
+        marker = f"[ref={ref}]"
+        for raw in snap.splitlines():
+            if marker in raw:
+                return repr(raw.strip().lstrip("- ")[:120])
+        return None
 
     def _driver(self):
         """Start (once) and return the Playwright driver. Playwright is an
@@ -133,33 +162,88 @@ class BrowserCapability:
         even though its content is already present."""
         session = self._session(session_id)
         resp = session.page.goto(url, wait_until="domcontentloaded")
+        session.last_snapshot = None  # new page: every prior ref is now meaningless
         return self._state(
             session,
             title=session.page.title(),
             status=resp.status if resp is not None else None,
         )
 
-    def click(self, session_id: str, selector: str) -> dict:
-        """Click the element matching `selector` (CSS/text). State-changing —
-        gated for approval."""
+    def snapshot(self, session_id: str, save: str | None = None) -> dict:
+        """Read the page as an accessibility tree with stable element refs — the
+        way to *see* what you can act on before clicking or filling.
+
+        Returns YAML where each element carries a `[ref=eN]` handle and links show
+        their url, e.g.::
+
+            - textbox "Email" [ref=e5]
+            - button "Submit application" [ref=e6]
+            - link "Jobs" [ref=e7]:
+              - /url: /careers
+
+        Pass those refs to `click(ref=...)` / `fill(ref=...)` instead of guessing a
+        CSS selector. Refs stay valid until you navigate (`goto` invalidates them —
+        snapshot again on the new page); re-snapshot after an action that rewrites
+        the page. Any secret this session injected is masked. A normal page rides
+        back inline as `text`; an oversized one — or an explicit `save="path"` —
+        spills to the workspace as `path`/`bytes`/`preview` with `text=None` (see
+        `read_text`)."""
         session = self._session(session_id)
-        session.page.click(selector)
+        raw = session.page.aria_snapshot(mode="ai")
+        text = session.sink.redact(raw)
+        session.last_snapshot = text  # refs and preview() resolve against this
+        body = deliver(ws=self.ws, content_type="text/plain", text=text, save=save, default_name="snapshot.yaml")
+        return session.sink.redacted({"url": session.page.url, "title": session.page.title(), **body})
+
+    def _target(self, session: _BrowserSession, selector: str | None, ref: str | None) -> str:
+        """Resolve an element target to a Playwright selector string, accepting a
+        CSS/text `selector` or a snapshot `ref` (exactly one). A ref becomes an
+        `aria-ref=` selector; it is validated against the current snapshot first so
+        a stale or unknown ref fails immediately with a clear message instead of
+        after Playwright's multi-second locator timeout."""
+        if (selector is None) == (ref is None):
+            raise ValueError("pass exactly one of selector= or ref=")
+        if ref is None:
+            return selector
+        snap = session.last_snapshot
+        if snap is None:
+            raise ValueError(
+                f"ref {ref!r} needs a current snapshot — call snapshot() (again after any navigation) first"
+            )
+        if f"[ref={ref}]" not in snap:
+            raise ValueError(
+                f"ref {ref!r} is not in the current snapshot — call snapshot() again after the page changed"
+            )
+        return f"aria-ref={ref}"
+
+    def click(self, session_id: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+        """Click an element, targeted by a snapshot `ref` (preferred — take a
+        `snapshot()` first) or a CSS/text `selector`. State-changing — gated for
+        approval."""
+        session = self._session(session_id)
+        session.page.click(self._target(session, selector, ref))
         return self._state(session, title=session.page.title())
 
-    def fill(self, session_id: str, selector: str, value: str) -> dict:
-        """Type `value` into the field matching `selector`. For credentials use
-        `fill_secret` instead, so the value never passes through agent code."""
+    def fill(
+        self, session_id: str, selector: str | None = None, value: str | None = None, *, ref: str | None = None
+    ) -> dict:
+        """Type `value` into a field, targeted by a snapshot `ref` (preferred) or a
+        CSS/text `selector`. For credentials use `fill_secret` instead, so the
+        value never passes through agent code."""
         session = self._session(session_id)
-        session.page.fill(selector, value)
+        session.page.fill(self._target(session, selector, ref), value)
         return self._state(session)
 
-    def fill_secret(self, session_id: str, selector: str, secret_name: str) -> dict:
-        """Type a named vault secret into a field. The cleartext is resolved
-        parent-side, typed into the page, and recorded so later reads mask it —
-        it never reaches agent code."""
+    def fill_secret(
+        self, session_id: str, selector: str | None = None, secret_name: str | None = None, *, ref: str | None = None
+    ) -> dict:
+        """Type a named vault secret into a field, targeted by a snapshot `ref`
+        (preferred) or a CSS/text `selector`. The cleartext is resolved
+        parent-side, typed into the page, and recorded so later reads mask it — it
+        never reaches agent code."""
         session = self._session(session_id)
         secret = session.sink.resolve(secret_name)
-        session.page.fill(selector, secret)
+        session.page.fill(self._target(session, selector, ref), secret)
         return self._state(session)
 
     def read_text(self, session_id: str, selector: str | None = None, save: str | None = None) -> dict:

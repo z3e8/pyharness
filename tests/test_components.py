@@ -842,13 +842,20 @@ def test_mutating_http_requires_approval(tmp_path, fake_httpx):
 # @pytest.mark.skipif(playwright missing) and is intentionally left out of CI.
 
 
+# A canned aria snapshot (mode="ai" shape) — one ref per line, a link with a url.
+# The live `aria-ref=` resolution is proven against real chromium; here the fake
+# only needs the ref markers so the capability's routing/validation is exercised.
+_FAKE_SNAPSHOT = '- textbox "Email" [ref=e5]\n- button "Submit application" [ref=e6]\n- link "Jobs" [ref=e7]:\n  - /url: /careers'
+
+
 class _FakePage:
     """Records every action; `_text` is what inner_text returns (used to prove
-    injected secrets get masked on read-back)."""
+    injected secrets get masked on read-back); `_snapshot` is the aria tree."""
 
-    def __init__(self, url="http://start", text="page body"):
+    def __init__(self, url="http://start", text="page body", snapshot=_FAKE_SNAPSHOT):
         self.url = url
         self._text = text
+        self._snapshot = snapshot
         self.calls: list = []
 
     def goto(self, url, wait_until=None):
@@ -859,10 +866,14 @@ class _FakePage:
     def title(self):
         return "Title"
 
-    def click(self, selector):
+    def aria_snapshot(self, *, mode=None, **kw):
+        self.calls.append(("aria_snapshot", mode))
+        return self._snapshot
+
+    def click(self, selector, **kw):
         self.calls.append(("click", selector))
 
-    def fill(self, selector, value):
+    def fill(self, selector, value, **kw):
         self.calls.append(("fill", selector, value))
 
     def inner_text(self, selector):
@@ -872,14 +883,14 @@ class _FakePage:
         self.calls.append(("screenshot", path))
 
 
-def _browser_with_fake(ws, vault=None, text="page body"):
+def _browser_with_fake(ws, vault=None, text="page body", snapshot=_FAKE_SNAPSHOT):
     """A BrowserCapability with one fake session injected under id "sid" — skips
     open_browser so no real driver/chromium is launched."""
     from pyharness.broker.capabilities.browser import BrowserCapability, _BrowserSession
     from pyharness.security.sink import SecretSink
 
     cap = BrowserCapability(ws, vault=vault)
-    page = _FakePage(text=text)
+    page = _FakePage(text=text, snapshot=snapshot)
     cap._sessions["sid"] = _BrowserSession(
         browser=_FakeClient(), context=_FakeClient(), page=page, sink=SecretSink(vault)
     )
@@ -985,6 +996,106 @@ def test_mutating_browser_requires_approval(tmp_path):
     # The preview enriches the confirmation with the page the click lands on.
     assert prompted[0].category is ActionCategory.OUTWARD
     assert "#submit" in prompted[0].summary and "http://x" in prompted[0].summary
+
+
+# --- Browser perception: snapshot + refs (Direction #3, PR-1) ----------------
+
+
+def test_browser_snapshot_returns_refs_and_stores_it(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    r = cap.snapshot("sid")
+    assert r["url"] == "http://start" and r["title"] == "Title"
+    assert "[ref=e6]" in r["text"] and "/url: /careers" in r["text"]
+    # Stored so refs and preview() can resolve against it.
+    assert "[ref=e6]" in cap._sessions["sid"].last_snapshot
+    assert ("aria_snapshot", "ai") in page.calls
+
+
+def test_browser_snapshot_masks_injected_secret(tmp_path):
+    # A fill_secret value can surface as a textbox value in the aria tree exactly
+    # as it can in read_text; it must be masked before it reaches agent code.
+    snap = '- textbox "Email" [ref=e5]\n- textbox "Password" [ref=e6]: hunter2'
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), snapshot=snap)
+    cap.fill_secret("sid", "#password", "pw")
+    r = cap.snapshot("sid")
+    assert "hunter2" not in r["text"] and "***" in r["text"]
+
+
+def test_browser_snapshot_can_save(tmp_path, monkeypatch):
+    from pyharness.broker.capabilities import payload
+
+    big = "- generic [ref=e1]\n" + "x" * 30_000
+    monkeypatch.setattr(payload, "INLINE_TEXT_LIMIT", 100)
+    ws = Workspace(tmp_path)
+    cap, _ = _browser_with_fake(ws, snapshot=big)
+    r = cap.snapshot("sid")
+    assert r["saved"] is True and r["text"] is None
+    assert ws.path(r["path"]).read_text() == big
+    # Even spilled to disk, the ref stays resolvable — stored snapshot is the text.
+    assert "[ref=e1]" in cap._sessions["sid"].last_snapshot
+
+
+def test_browser_click_by_ref_resolves_to_aria_ref(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cap.click("sid", ref="e6")
+    assert ("click", "aria-ref=e6") in page.calls
+
+
+def test_browser_fill_by_ref(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cap.fill("sid", ref="e5", value="ada@x.com")
+    assert ("fill", "aria-ref=e5", "ada@x.com") in page.calls
+
+
+def test_browser_ref_without_snapshot_fails_fast(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    with pytest.raises(ValueError, match="snapshot"):
+        cap.click("sid", ref="e6")
+    assert not any(c[0] == "click" for c in page.calls)  # never reached Playwright
+
+
+def test_browser_unknown_ref_fails_fast(tmp_path):
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    with pytest.raises(ValueError, match="not in the current snapshot"):
+        cap.click("sid", ref="e9")
+    assert not any(c[0] == "click" for c in page.calls)
+
+
+def test_browser_ref_substring_is_not_a_false_match(tmp_path):
+    # "[ref=e1]" must not match a snapshot that only contains "[ref=e12]".
+    cap, _ = _browser_with_fake(Workspace(tmp_path), snapshot="- button [ref=e12]")
+    cap.snapshot("sid")
+    with pytest.raises(ValueError, match="not in the current snapshot"):
+        cap.click("sid", ref="e1")
+    cap.click("sid", ref="e12")  # the real ref resolves
+
+
+def test_browser_selector_and_ref_mutually_exclusive(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    with pytest.raises(ValueError, match="exactly one"):
+        cap.click("sid", "#go", ref="e6")
+    with pytest.raises(ValueError, match="exactly one"):
+        cap.click("sid")  # neither
+
+
+def test_browser_goto_invalidates_refs(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cap.goto("sid", "http://elsewhere")  # navigation clears the snapshot
+    with pytest.raises(ValueError, match="snapshot"):
+        cap.click("sid", ref="e6")
+
+
+def test_browser_preview_shows_ref_element(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    cap.snapshot("sid")
+    cat, summary = cap.preview("click", ("sid",), {"ref": "e6"})
+    assert cat is ActionCategory.OUTWARD
+    assert "[ref=e6]" in summary and "Submit application" in summary
 
 
 # --- Approval preview & taxonomy (C5) ----------------------------------------

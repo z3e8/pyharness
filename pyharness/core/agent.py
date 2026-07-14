@@ -89,7 +89,8 @@ call its functions on the returned module. Each call is gated
 (policy/audit/approval) exactly as a builtin would be. Some worth knowing:
   search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
-                            #   Playwright (navigate/click/fill/read). Reads are free;
+                            #   Playwright (navigate/snapshot the page for element
+                            #   refs/click/fill by ref/read). Reads are free;
                             #   state-changing calls need human approval. Prefer the
                             #   http path over the browser for sensitive credentials.
   search_tools("install")   # packages -> install a PyPI lib into the session, then import it
