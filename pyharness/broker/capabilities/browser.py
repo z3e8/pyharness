@@ -74,9 +74,12 @@ class BrowserCapability:
 
     name = "browser"
 
-    def __init__(self, workspace: Workspace, vault: Vault | None = None):
+    def __init__(self, workspace: Workspace, vault: Vault | None = None, media=None):
         self.ws = workspace
         self.vault = vault
+        # Parent-side staging for screenshots that reach the model (browser.look).
+        # None means no image channel is wired (e.g. a test that never looks).
+        self.media = media
         self._pw = None  # the persistent Playwright driver, started on first use
         self._sessions: dict[str, _BrowserSession] = {}
 
@@ -94,6 +97,7 @@ class BrowserCapability:
             "wait_for": self.wait_for,
             "upload": self.upload,
             "read_text": self.read_text,
+            "look": self.look,
             "screenshot": self.screenshot,
             "close_browser": self.close_browser,
         }
@@ -362,6 +366,32 @@ class BrowserCapability:
         target.parent.mkdir(parents=True, exist_ok=True)
         session.page.screenshot(path=str(target))
         return {"path": path}
+
+    def look(self, session_id: str, full_page: bool = False) -> dict:
+        """Take a screenshot and hand it to the model as an image it can actually
+        *see* — for reading a chart, a rendered PDF, a layout, or a CAPTCHA the
+        page shows, or confirming a visual state that text can't capture. Unlike
+        `screenshot` (which writes a PNG to disk for your own tooling), `look`
+        attaches the image to this call's result so the model sees it directly.
+
+        Prefer `snapshot` for structure and reach for `look` only when you need
+        pixels: the image stays in history and costs context on every later turn.
+        A secret visible on screen reaches the model this way, so under the default
+        policy `look` needs approval once this session has typed a secret into the
+        page."""
+        session = self._session(session_id)
+        if self.media is None:
+            raise RuntimeError("look() has no image channel in this session; use screenshot() to save to disk")
+        data = session.page.screenshot(type="jpeg", quality=80, full_page=full_page)
+        self.media.attach(media_type="image/jpeg", data=data)
+        return self._state(session, attached=True, bytes=len(data))
+
+    def has_injected_secrets(self, session_id: str) -> bool:
+        """Whether this session has typed a vault secret into the page. The default
+        policy reads this to gate `look` — a screenshot would carry that secret's
+        pixels into the model's context, where text redaction can't reach."""
+        session = self._sessions.get(session_id)
+        return bool(session and session.sink.has_injected)
 
     def close_browser(self, session_id: str) -> str:
         session = self._sessions.pop(session_id, None)

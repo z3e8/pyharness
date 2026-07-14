@@ -44,7 +44,7 @@ and `packages` categories — find them with `search_tools("web")` /
 |------|----------------|------------|
 | `web` | `web` | `search` (Anthropic server-side search — one digested answer with sources) + `search_results` (a raw ranked list to fan out over — each item `{title, url, snippet, published_date, author, score}`; backed by Exa, needs `EXA_API_KEY`, its per-query cost is not metered) + `fetch` (one-shot GET returning a readable page map — HTML reduced to clean markdown content plus `## FORMS` (each form's action/method and every field) and `## LINKS` (navigable links, resolved to absolute URLs) so the agent can see what to click and fill; non-HTML verbatim; static HTML only, JS-rendered affordances need `browser`. A thin wrapper over `http.request`; `save="path"` or a binary body writes to the workspace and returns a note pointing at the file, still carrying the FORMS/LINKS map) |
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, title, links, forms, text, path, bytes, preview, saved}` — `title`/`links`/`forms` are the parsed affordances, populated for HTML and riding inline even when the body spills to disk), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
-| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `screenshot` / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
+| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
 `describe_tool(name)` is the live source for each tool's exact signatures — the
@@ -61,9 +61,16 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
   head. See [the action space](../explanation/action-space.md#large-and-binary-payloads).
 - **Secrets never round-trip through agent-visible text.** `auth`/`secret_fields`
   (http) and `fill_secret` (browser) name a vault secret resolved parent-side;
-  the value is masked (`***`) out of every returned `url`/`text`/`headers` and
-  out of `read_text`. `screenshot` writes to disk only, so a secret visible
-  on-screen still appears in the image.
+  the value is masked (`***`) out of every returned `url`/`text`/`headers`, out
+  of `read_text`, and out of the `snapshot` tree. Pixels are the one channel
+  redaction can't reach: `screenshot` writes the image to disk only, and `look`
+  puts it in the model's context — so `look` is gated once this session has typed
+  a secret into the page.
+- **`look` is the one non-text channel back to the model.** Every other result is
+  text; `look` attaches a JPEG screenshot to the call's result as an image block
+  the model actually sees (for a chart, a rendered PDF, a layout, a CAPTCHA the
+  page shows). It stays in history and costs context on every later turn, so
+  prefer `snapshot` for structure and reach for `look` only when you need pixels.
 - **See the page before acting on it — `browser.snapshot` then act by `ref`.**
   The snapshot is an accessibility tree where every element has a stable
   `[ref=eN]` handle; `click`/`fill`/`fill_secret` take that `ref=` (or a CSS/text

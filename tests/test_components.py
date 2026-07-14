@@ -1,3 +1,4 @@
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -897,8 +898,9 @@ class _FakePage:
     def inner_text(self, selector):
         return self._text
 
-    def screenshot(self, path):
-        self.calls.append(("screenshot", path))
+    def screenshot(self, path=None, *, type=None, quality=None, full_page=False):
+        self.calls.append(("screenshot", path, type))
+        return b"\xff\xd8fake-jpeg-bytes"  # look() reads the return; screenshot(path=) ignores it
 
 
 def _browser_with_fake(ws, vault=None, text="page body", snapshot=_FAKE_SNAPSHOT):
@@ -1193,6 +1195,58 @@ def test_browser_upload_preview_names_the_file(tmp_path):
     cat, summary = cap.preview("upload", ("sid", "resume.pdf"), {"selector": "#f"})
     assert cat is ActionCategory.OUTWARD
     assert "resume.pdf" in summary and "#f" in summary
+
+
+# --- Browser image path: look + MediaOutbox (Direction #3, PR-3) -------------
+
+
+def test_media_outbox_attach_drain_and_caps():
+    from pyharness.core.media import MediaOutbox
+
+    box = MediaOutbox(max_bytes=100, max_items=2)
+    box.attach(media_type="image/jpeg", data=b"abc")
+    blocks = box.drain()
+    assert len(blocks) == 1 and blocks[0]["type"] == "image"
+    assert blocks[0]["source"]["media_type"] == "image/jpeg"
+    assert base64.b64decode(blocks[0]["source"]["data"]) == b"abc"
+    assert box.drain() == []  # drained empties the buffer
+
+    box.attach(media_type="image/jpeg", data=b"x")
+    box.attach(media_type="image/jpeg", data=b"y")
+    with pytest.raises(ValueError):  # over the per-cell count
+        box.attach(media_type="image/jpeg", data=b"z")
+    box.drain()
+    with pytest.raises(ValueError):  # over the per-image byte cap
+        box.attach(media_type="image/jpeg", data=b"x" * 101)
+
+
+def test_browser_look_stages_image_and_returns_no_bytes(tmp_path):
+    from pyharness.core.media import MediaOutbox
+
+    box = MediaOutbox()
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    cap.media = box
+    r = cap.look("sid")
+    assert r["attached"] is True and r["bytes"] == len(b"\xff\xd8fake-jpeg-bytes")
+    # The raw bytes are staged for the agent loop, never returned to agent code.
+    assert "fake-jpeg-bytes" not in repr(r)
+    blocks = box.drain()
+    assert len(blocks) == 1 and blocks[0]["source"]["media_type"] == "image/jpeg"
+
+
+def test_browser_look_without_media_channel_raises(tmp_path):
+    cap, _ = _browser_with_fake(Workspace(tmp_path))  # no media wired
+    with pytest.raises(RuntimeError, match="no image channel"):
+        cap.look("sid")
+
+
+def test_browser_look_gated_only_after_secret_injected(tmp_path):
+    # Models the default-policy predicate: look is free until a secret is typed
+    # into the page, then it needs approval (pixels can carry the secret).
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    assert cap.has_injected_secrets("sid") is False
+    cap.fill_secret("sid", "#password", "pw")
+    assert cap.has_injected_secrets("sid") is True
 
 
 # --- Approval preview & taxonomy (C5) ----------------------------------------

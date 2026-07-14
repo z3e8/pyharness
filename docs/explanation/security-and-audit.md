@@ -73,9 +73,18 @@ Each injection surface routes through one small primitive,
 `security/sink.py:SecretSink`, scoped to a single injection context (one browser
 session, one HTTP request). It is the only place a name becomes cleartext, and it
 records every value it resolves so the capability can mask it (`***`) back out of
-anything the agent then reads — a browser `read_text`, or an HTTP response `url`
-(a `"query"`-style secret can survive into the final url), `text`, or `headers`.
-A resolved secret never round-trips through agent-visible output.
+anything the agent then reads — a browser `read_text` or `snapshot` tree, or an
+HTTP response `url` (a `"query"`-style secret can survive into the final url),
+`text`, or `headers`. A resolved secret never round-trips through agent-visible
+output.
+
+Masking works on text; pixels it cannot reach. A secret typed into a page is
+visible in a screenshot, so `browser.look` (which puts a screenshot in the
+model's context) is gated by the default policy once a session has injected a
+secret — an argument-dependent `approve_if` predicate, the same mechanism that
+gates state-changing HTTP by method. `screenshot` only writes to disk, so a
+secret on-screen still lands in that file; keep credential entry on the `http`
+path where the value never renders.
 
 Resolution order, first hit wins: in-memory dict → environment
 (`PYHARNESS_SECRET_<NAME>`) → encrypted file. The file is sealed with a

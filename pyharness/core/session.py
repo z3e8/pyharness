@@ -33,6 +33,7 @@ from ..tools.registry import Registry
 from ..trace import TraceLog
 from .agent import Agent
 from .kernel import Kernel
+from .media import MediaOutbox
 from .session_venv import SessionVenv
 from .workspace import Workspace
 
@@ -79,6 +80,15 @@ class Session:
         # Saving a skill (agent-authored code that auto-loads later) and
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
+        def _look_after_injected_secret(action: str, args: tuple, kwargs: dict) -> bool:
+            """Gate a screenshot-to-model once a secret was typed into the page —
+            pixels carry the credential into the model's context where text
+            redaction can't reach. Reads self.browser at call time (set below)."""
+            if action != "browser.look":
+                return False
+            sid = args[0] if args else kwargs.get("session_id")
+            return sid is not None and self.browser.has_injected_secrets(sid)
+
         self.policy = policy or Policy(
             require_approval={
                 "skills.save_skill",
@@ -86,7 +96,7 @@ class Session:
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
             },
-            approve_if=[_is_mutating_http],
+            approve_if=[_is_mutating_http, _look_after_injected_secret],
         )
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
@@ -115,7 +125,10 @@ class Session:
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(self.workspace, vault=self.vault)
-        self.browser = BrowserCapability(self.workspace, vault=self.vault)
+        # One outbox shared by the browser (fills it via look()) and the agent
+        # loop (drains it into image content blocks after each cell).
+        self.media = MediaOutbox()
+        self.browser = BrowserCapability(self.workspace, vault=self.vault, media=self.media)
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
@@ -149,8 +162,8 @@ class Session:
              "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
              "web", ("http", "request", "post", "put", "session", "api", "cookie", "upload", "rest")),
             (self.browser,
-             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill by ref or selector, read the page.",
-             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "page", "dom", "headless", "form")),
+             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page.",
+             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form")),
             (PackagesCapability(self.session_venv),
              "Install Python packages into the session for later import.",
              "packages", ("install", "pip", "package", "dependency", "library", "import")),
@@ -191,6 +204,7 @@ class Session:
             self.budget,
             workspace_root=self.workspace.dir,
             on_event=on_event_traced,
+            media=self.media,
         )
         self.messages: list[dict] = []
 

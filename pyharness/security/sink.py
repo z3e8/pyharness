@@ -25,6 +25,14 @@ class SecretSink:
         self._vault = vault
         self._injected: set[str] = set()
 
+    @property
+    def has_injected(self) -> bool:
+        """Whether this sink has resolved any secret — i.e. a live credential is
+        present in its injection context. The default policy reads this to gate a
+        screenshot-to-model (`browser.look`) once a secret was typed into the page,
+        since pixels can't be masked the way text can."""
+        return bool(self._injected)
+
     def resolve(self, name: str) -> str:
         """Resolve a secret name to cleartext parent-side and record it for later
         masking. Raises if no vault is configured to inject from."""

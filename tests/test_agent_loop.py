@@ -115,6 +115,74 @@ def test_dynamic_context_is_appended_to_system_prompt(tmp_path):
     assert str(tmp_path) in system
 
 
+class _LookKernel:
+    """A kernel whose cell attaches an image to the outbox, as browser.look would
+    during real execution, then returns text output."""
+
+    def __init__(self, outbox, data=b"\xff\xd8jpeg"):
+        self.outbox = outbox
+        self.data = data
+
+    def run(self, code):
+        self.outbox.attach(media_type="image/jpeg", data=self.data)
+        return "looked"
+
+
+def test_agent_attaches_image_blocks_from_outbox():
+    import base64
+
+    from pyharness.core.media import MediaOutbox
+
+    outbox = MediaOutbox()
+    llm = ScriptedLLM([_tool_completion("look()"), _text_completion("done")])
+    agent = Agent(llm, _LookKernel(outbox), Budget(), media=outbox)
+
+    agent.run("look at it", [])
+
+    # The tool_result the second LLM call saw carries a text block + an image block.
+    tool_msg = llm.calls[-1][-1]
+    content = tool_msg["content"][0]["content"]
+    assert content[0] == {"type": "text", "text": "looked"}
+    assert content[1]["type"] == "image"
+    assert base64.b64decode(content[1]["source"]["data"]) == b"\xff\xd8jpeg"
+
+
+def test_agent_tool_result_is_plain_string_without_images():
+    # No outbox, no images -> content stays a bare string exactly as before.
+    llm = ScriptedLLM([_tool_completion("print('hi')"), _text_completion("done")])
+    agent = Agent(llm, Kernel({}), Budget())
+
+    agent.run("x", [])
+
+    tool_msg = llm.calls[-1][-1]
+    assert tool_msg["content"][0]["content"] == "hi"
+
+
+def test_serialize_elides_nested_image_data():
+    import json
+
+    from pyharness.core.agent import _serialize_messages
+
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t",
+                    "content": [
+                        {"type": "text", "text": "looked"},
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJDRA=="}},
+                    ],
+                }
+            ],
+        }
+    ]
+    dumped = json.dumps(_serialize_messages(msgs))
+    assert "QUJDRA==" not in dumped  # base64 payload elided from the trace snapshot
+    assert "image/jpeg" in dumped  # but the summary keeps the media type
+
+
 def test_kernel_state_persists_across_cells(tmp_path):
     llm = ScriptedLLM([
         _tool_completion("n = 41"),

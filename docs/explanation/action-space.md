@@ -21,7 +21,10 @@ There are no other tools. When the agent needs a capability, it *writes Python*:
   The model expresses a whole sub-plan in code the way a programmer would.
 - **Token economy.** Intermediate data stays in kernel variables. Only what the
   agent `print()`s comes back into its context, so a 10k-row dataset can live in
-  a variable and never cost context tokens.
+  a variable and never cost context tokens. The one non-text exception is
+  `browser.look`: it attaches a screenshot to the call's result as an image block
+  the model sees (staged parent-side through a `MediaOutbox`, never across the
+  child pipe) — pixels are the one thing text output can't carry.
 - **A familiar action space.** Models are extraordinarily fluent in Python.
   Writing code is closer to how they were trained than filling bespoke tool
   schemas.

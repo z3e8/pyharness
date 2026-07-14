@@ -90,7 +90,8 @@ call its functions on the returned module. Each call is gated
   search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element
-                            #   refs/click/fill by ref/read). Reads are free;
+                            #   refs/click/fill by ref/look — a screenshot you
+                            #   see/read). Reads are free;
                             #   state-changing calls need human approval. Prefer the
                             #   http path over the browser for sensitive credentials.
   search_tools("install")   # packages -> install a PyPI lib into the session, then import it
@@ -171,6 +172,7 @@ class Agent:
         max_steps: int = 30,
         workspace_root: str | Path | None = None,
         on_event: Callable[[str, str], None] | None = None,
+        media=None,
     ):
         self.llm = llm
         self.kernel = kernel
@@ -179,6 +181,9 @@ class Agent:
         self.max_steps = max_steps
         self.workspace_root = workspace_root
         self.on_event = on_event or (lambda kind, text, **kw: None)
+        # Parent-side outbox a cell's capabilities fill with images (browser.look);
+        # drained after each kernel.run into the tool_result's content blocks.
+        self.media = media
 
     def run(self, task: str, messages: list[dict]) -> str:
         messages.append({"role": "user", "content": task})
@@ -244,12 +249,32 @@ class Agent:
                 with telemetry.code_cell_span(code):
                     output = self.kernel.run(code)
                 self.on_event("output", output)
+                # A cell may have staged images (browser.look). With none, the
+                # tool_result content stays a plain string — unchanged for every
+                # text-only cell; with images it becomes a text block + image blocks.
+                images = self.media.drain() if self.media is not None else []
+                content = output if not images else [{"type": "text", "text": output}, *images]
                 results.append(
-                    {"type": "tool_result", "tool_use_id": call.id, "content": output}
+                    {"type": "tool_result", "tool_use_id": call.id, "content": content}
                 )
             messages.append({"role": "user", "content": results})
 
         return "(stopped: reached max_steps)"
+
+
+def _elide_image_data(obj):
+    """Replace base64 image payloads with a small summary, recursing through the
+    lists and dicts a tool_result nests. Trace snapshots and the llm_call event go
+    through here so a screenshot doesn't bloat trace.jsonl; the real message
+    history keeps the full block."""
+    if isinstance(obj, dict):
+        if obj.get("type") == "image" and isinstance(obj.get("source"), dict):
+            source = obj["source"]
+            return {"type": "image", "media_type": source.get("media_type"), "bytes": len(source.get("data", ""))}
+        return {key: _elide_image_data(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_elide_image_data(item) for item in obj]
+    return obj
 
 
 def _serialize_messages(msgs: list[dict]) -> list[dict]:
@@ -263,7 +288,7 @@ def _serialize_messages(msgs: list[dict]) -> list[dict]:
             parts = []
             for block in content:
                 if isinstance(block, dict):
-                    parts.append(block)
+                    parts.append(_elide_image_data(block))
                 elif hasattr(block, "type"):
                     t = block.type
                     if t == "text":
