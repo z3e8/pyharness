@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.egress import check_url
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
@@ -83,13 +84,22 @@ class HttpSessionCapability:
         }
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """Describe a gated request for the approver: method + target url, plus the
-        body field *names* (never values — those can be workspace data). A DELETE
-        is classed IRREVERSIBLE; other mutating methods are OUTWARD."""
+        """Describe a gated request for the approver: method + target url, any vault
+        secret being attached (name and style — never the value), and the body field
+        *names* (never values — those can be workspace data). Naming the credential
+        lets the human catch a token being sent to the wrong host. A DELETE is
+        classed IRREVERSIBLE; other mutating methods are OUTWARD."""
         method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
         url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
         body = kwargs.get("json") if kwargs.get("json") is not None else kwargs.get("data")
         summary = f"{method} {url}"
+        creds: list[str] = []
+        if kwargs.get("auth"):
+            creds.append(f"auth={kwargs['auth']} via {kwargs.get('auth_style', 'bearer')}")
+        if kwargs.get("secret_fields"):
+            creds.append("secret fields: " + ", ".join(map(str, kwargs["secret_fields"])))
+        if creds:
+            summary += " [" + "; ".join(creds) + "]"
         if isinstance(body, dict) and body:
             summary += f" (body: {', '.join(map(str, body))})"
         category = ActionCategory.IRREVERSIBLE if method == "DELETE" else ActionCategory.OUTWARD
@@ -97,13 +107,16 @@ class HttpSessionCapability:
 
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
         """The grant key for a gated request: action-class "http" plus the target
-        host, parsed from the same method/url args `preview()` uses. Only mutating
-        methods that are not DELETE are grantable; DELETE (IRREVERSIBLE) and any
-        url without a parseable host yield None (not grantable → always prompts)."""
+        host, parsed from the same method/url args `preview()` uses. Grantable per
+        host for mutating (non-DELETE) methods and for any secret-carrying request
+        (so authenticated reads to a vetted host don't re-prompt). DELETE
+        (IRREVERSIBLE) and any url without a parseable host yield None (not
+        grantable → always prompts)."""
         if op != "request":
             return None
         method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
-        if method not in _GRANTABLE_METHODS:
+        carries_secret = bool(kwargs.get("auth") or kwargs.get("secret_fields"))
+        if method == "DELETE" or (method not in _GRANTABLE_METHODS and not carries_secret):
             return None
         url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
         host = urlsplit(url).hostname if url else None
@@ -166,9 +179,17 @@ class HttpSessionCapability:
         workspace and returned as `path`/`bytes`/`preview` with `text=None`. Either
         way the full data is available: inline as a variable, or on disk for the
         agent's own Python to read. See `payload.deliver`."""
+        check_url(url)  # SSRF guard: no link-local/metadata (or private, if strict) targets
         headers = dict(headers or {})
         params = dict(params or {})
         sink = SecretSink(self.vault)
+        # A request that carries a credential must not follow redirects: httpx
+        # strips only `Authorization` across origins, so a custom-header (`header`
+        # style) or body-field (`secret_fields`) secret would be resent verbatim to
+        # an attacker-controlled `Location` — an exfil path the approval prompt (it
+        # shows only the initial url) never sees. Fail safe by returning the 3xx;
+        # the agent can re-issue against the resolved url, re-deciding auth.
+        carries_secret = bool(auth or secret_fields)
 
         if auth:
             _apply_secret_auth(
@@ -212,6 +233,7 @@ class HttpSessionCapability:
                 json=json,
                 data=data,
                 files=built_files,
+                follow_redirects=not carries_secret,
             )
         finally:
             if transient:

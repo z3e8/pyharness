@@ -41,11 +41,18 @@ class AgentsCapability:
         default_tier: str = "cheap",
         max_per_call: int = 64,
         session_cap: int = 256,
+        budget=None,
     ):
         self.llm = llm
         self.default_tier = default_tier
         self.max_per_call = max_per_call
         self.session_cap = session_cap
+        # Shared session Budget, checked before each sub-agent completion. The
+        # broker's metered gate checks once at the start of the fan-out; without a
+        # per-task check a single map_agents call could run up to max_per_call x
+        # retries LLM calls and overshoot the limit by a large multiple before the
+        # next broker call catches it. None (tests/bare use) skips the check.
+        self._budget = budget
         self._spawned = 0
         self._lock = threading.Lock()
 
@@ -61,6 +68,11 @@ class AgentsCapability:
             self._spawned += 1
 
     def _complete(self, task: str, tier: str | None, context: str | None) -> str:
+        # Fail fast once the session budget is exhausted, so a fan-out can't keep
+        # spending past the limit. In map_agents this surfaces as a per-task error
+        # (work() turns it into data); in agent() it propagates like any overrun.
+        if self._budget is not None:
+            self._budget.check()
         content = task if context is None else f"{task}\n\nContext:\n{context}"
         completion = self.llm.complete(
             system=WORKER_SYSTEM,

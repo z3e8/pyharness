@@ -55,6 +55,21 @@ def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
     return bool(method) and method.upper() in MUTATING_METHODS
 
 
+def _request_carries_secret(action: str, args: tuple, kwargs: dict) -> bool:
+    """Force approval whenever a call attaches a vault secret to an outbound
+    request — on `http.request` (`auth`/`secret_fields`) or `web.fetch` (`auth`) —
+    regardless of HTTP method. Sending a credential off-box is a credential-release
+    action, like `browser.fill_secret`; without this gate a GET (a free read) could
+    exfiltrate a *named* secret to any attacker host with no human checkpoint, since
+    reads are otherwise unapproved. Grantable per host (see the capabilities'
+    `scope()`), so repeated authenticated reads to a vetted host don't re-prompt."""
+    if action == "http.request":
+        return bool(kwargs.get("auth") or kwargs.get("secret_fields"))
+    if action == "web.fetch":
+        return bool(kwargs.get("auth") or (args[1] if len(args) >= 2 else None))
+    return False
+
+
 def _opens_with_profile(action: str, args: tuple, kwargs: dict) -> bool:
     """Force approval when a browser opens with a saved login profile — it acts as
     that identity, and this is the one human checkpoint before free navigation
@@ -109,10 +124,12 @@ class Session:
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
         def _look_after_injected_secret(action: str, args: tuple, kwargs: dict) -> bool:
-            """Gate a screenshot-to-model once a secret was typed into the page —
-            pixels carry the credential into the model's context where text
-            redaction can't reach. Reads self.browser at call time (set below)."""
-            if action != "browser.look":
+            """Gate a screenshot once a secret was typed into the page — pixels
+            carry the credential where text redaction can't reach. `look` puts the
+            image in the model's context; `screenshot` writes a PNG the agent can
+            then read back (via files.read or raw open()), so both are covered.
+            Reads self.browser at call time (set below)."""
+            if action not in ("browser.look", "browser.screenshot"):
                 return False
             sid = args[0] if args else kwargs.get("session_id")
             return sid is not None and self.browser.has_injected_secrets(sid)
@@ -130,6 +147,7 @@ class Session:
             },
             approve_if=[
                 _is_mutating_http,
+                _request_carries_secret,
                 _look_after_injected_secret,
                 _opens_with_profile,
                 # MCP tool calls prompt unless the server marks them read-only;
@@ -201,7 +219,7 @@ class Session:
             ),
             SearchCapability(self.workspace),
             LLMCapability(self.llm),
-            AgentsCapability(self.llm),
+            AgentsCapability(self.llm, budget=self.budget),
             ToolsCapability(
                 self.registry,
                 broker=self.broker,
