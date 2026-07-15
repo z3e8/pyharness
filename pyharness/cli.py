@@ -11,6 +11,8 @@ from .broker.dispatch import ApprovalOutcome, ApprovalRequest
 from .budget import Budget, BudgetExceeded
 from .core.session import Session
 from .security.policy import ActionCategory
+from .security.profiles import PROFILES_DIR_ENV
+from .security.profiles import _DEFAULT_DIR as _PROFILES_DEFAULT_DIR
 from .security.vault import _DEFAULT_FILE
 
 _COLORS = {"code": "\033[36m", "output": "\033[2m"}
@@ -47,13 +49,16 @@ def _trace(kind: str, text: str) -> None:
 
 
 def _prompt_vault_passphrase() -> None:
-    """If an encrypted vault file exists but no passphrase is set, prompt once and
-    put it in the env so Session's Vault.from_env() picks it up. No file → no-op,
-    so the dict/env backends still work without a passphrase."""
+    """If encrypted state exists (a vault file or any browser profile) but no
+    passphrase is set, prompt once and put it in the env so `Vault.from_env()` and
+    `ProfileStore.from_env()` pick it up. No such state → no-op, so the dict/env
+    backends still work without a passphrase."""
     if os.environ.get("PYHARNESS_VAULT_PASSPHRASE"):
         return
-    path = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
-    if path.exists():
+    vault_file = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
+    profiles_dir = Path(os.environ.get(PROFILES_DIR_ENV, _PROFILES_DEFAULT_DIR))
+    has_profiles = profiles_dir.exists() and any(profiles_dir.glob("*.enc"))
+    if vault_file.exists() or has_profiles:
         os.environ["PYHARNESS_VAULT_PASSPHRASE"] = getpass.getpass("vault passphrase: ")
 
 
