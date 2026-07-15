@@ -32,6 +32,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.server.seen_versions.append(self.headers.get("MCP-Protocol-Version"))
         msg = json.loads(body)
         method, msg_id = msg.get("method"), msg.get("id")
         if msg_id is None:  # notification (e.g. notifications/initialized)
@@ -56,22 +57,34 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def http_url():
+def http_server():
     server = HTTPServer(("127.0.0.1", 0), _Handler)
+    server.seen_versions = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    host, port = server.server_address
-    yield f"http://{host}:{port}/mcp"
+    yield server
     server.shutdown()
 
 
-def test_http_transport_round_trip(http_url):
+@pytest.fixture
+def http_url(http_server):
+    host, port = http_server.server_address
+    return f"http://{host}:{port}/mcp"
+
+
+def test_http_transport_round_trip(http_url, http_server):
+    from pyharness.tools.mcp.transport import PROTOCOL_VERSION
+
     client = MCPClient.http(http_url)
     try:
         assert {t["name"] for t in client.list_tools()} == {"ping"}
         assert client.call_tool("ping", {}) == "pong"
     finally:
         client.close()
+    # We advertise the current version, then echo whatever the server
+    # negotiated down to on every subsequent request.
+    assert http_server.seen_versions[0] == PROTOCOL_VERSION
+    assert set(http_server.seen_versions[1:]) == {"2024-11-05"}
 
 
 def test_registry_add_remote_server(http_url):

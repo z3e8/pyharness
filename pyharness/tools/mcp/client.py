@@ -29,8 +29,10 @@ class MCPClient:
         self._initialize()
 
     @classmethod
-    def stdio(cls, command: str, args: tuple[str, ...] = (), *, env=None, cwd=None) -> "MCPClient":
-        return cls(StdioTransport(command, args, env=env, cwd=cwd))
+    def stdio(
+        cls, command: str, args: tuple[str, ...] = (), *, env=None, cwd=None, timeout: float = 30.0
+    ) -> "MCPClient":
+        return cls(StdioTransport(command, args, env=env, cwd=cwd, timeout=timeout))
 
     @classmethod
     def http(cls, url: str, *, headers=None, timeout: float = 30.0) -> "MCPClient":
@@ -56,7 +58,7 @@ class MCPClient:
         self._transport.close()
 
     def _initialize(self) -> None:
-        self._request(
+        result = self._request(
             "initialize",
             {
                 "protocolVersion": PROTOCOL_VERSION,
@@ -64,6 +66,11 @@ class MCPClient:
                 "clientInfo": {"name": "pyharness", "version": "0.1"},
             },
         )
+        # Adopt whatever version the server negotiated down to; the HTTP
+        # transport echoes it in the MCP-Protocol-Version header from here on.
+        negotiated = result.get("protocolVersion")
+        if negotiated:
+            self._transport.protocol_version = negotiated
         self._transport.notify(
             {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
         )
@@ -94,7 +101,7 @@ def connect(
     if url:
         return MCPClient.http(url, headers=headers, timeout=timeout)
     if command:
-        return MCPClient.stdio(command, tuple(args), env=env, cwd=cwd)
+        return MCPClient.stdio(command, tuple(args), env=env, cwd=cwd, timeout=timeout)
     raise ValueError("specify command (local stdio) or url (remote http)")
 
 

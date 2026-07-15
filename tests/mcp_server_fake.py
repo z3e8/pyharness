@@ -97,8 +97,17 @@ def main():
             result = {"tools": TOOLS}
         elif method == "tools/call":
             params = msg["params"]
+            if params.get("arguments", {}).get("message") == "__ping_first__":
+                # Emit a server-initiated ping whose id collides with the
+                # pending request, so tests can prove the client matches
+                # responses (result/error, no method) rather than bare ids.
+                ping = {"jsonrpc": "2.0", "id": msg_id, "method": "ping", "params": {}}
+                sys.stdout.write(json.dumps(ping) + "\n")
+                sys.stdout.flush()
             text = _call(params["name"], params.get("arguments", {}))
             result = {"content": [{"type": "text", "text": text}]}
+        elif method is None:
+            continue  # a response to a server-initiated request (e.g. our ping)
         else:
             result = {}
         sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": result}) + "\n")

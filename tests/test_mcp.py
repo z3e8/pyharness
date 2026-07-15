@@ -103,6 +103,38 @@ def test_registry_search_wildcard_lists_tools():
     assert "# widget" in listing
 
 
+def test_stdio_request_times_out_instead_of_hanging():
+    from pyharness.tools.mcp.transport import MCPError, StdioTransport
+
+    transport = StdioTransport(
+        sys.executable, ("-c", "import time; time.sleep(30)"), timeout=0.5
+    )
+    try:
+        with pytest.raises(MCPError, match="did not respond"):
+            transport.request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    finally:
+        transport.close()
+
+
+def test_stdio_failure_includes_stderr_tail():
+    from pyharness.tools.mcp.transport import MCPError, StdioTransport
+
+    code = "import sys; print('boom: bad credentials', file=sys.stderr)"
+    transport = StdioTransport(sys.executable, ("-c", code), timeout=5)
+    try:
+        with pytest.raises(MCPError, match="boom: bad credentials"):
+            transport.request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    finally:
+        transport.close()
+
+
+def test_server_ping_request_is_not_mistaken_for_a_reply(client):
+    """The fake emits a server-initiated ping whose id collides with the
+    pending request; the client must skip it (and answer it) and still return
+    the real response."""
+    assert client.call_tool("echo", {"message": "__ping_first__"}) == "__ping_first__"
+
+
 def test_remote_seal_yields_tool_spec():
     """Out-of-process, the wrapped module crosses the wire as a RemoteToolSpec
     (rebuilt child-side as a proxy that routes back through tools.invoke)."""
