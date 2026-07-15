@@ -32,8 +32,9 @@ pyharness-profiles rm linkedin
 
 **Or the agent creates it.** The agent opens a plain browser, logs in with
 `fill_secret`, passes TOTP 2FA itself with `fill_totp` if the site's seed is in
-the vault ([store one](use-the-vault.md#totp-seeds-2fa) as `<site>_totp`; other
-2FA you relay through the conversation), then calls `save_profile` — which
+the vault ([store one](use-the-vault.md#totp-seeds-2fa) as `<site>_totp`;
+emailed codes it can read via the `inbox` tool, anything else you relay through
+the conversation), then calls `save_profile` — which
 prompts for approval, since it writes a standing credential:
 
 ```python
