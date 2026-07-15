@@ -1595,3 +1595,43 @@ def test_look_not_covered_by_browser_grant(tmp_path):
         ns["look"]("sid")  # gated, not covered by the grant -> prompted (and denied here)
     assert prompts == ["browser.click", "browser.look"]
     assert cap.scope("look", ("sid",), {}) is None
+
+
+def test_cli_approve_offers_grant_when_scoped(monkeypatch, capsys):
+    from pyharness.broker import ApprovalOutcome, ApprovalRequest
+    from pyharness.cli import _approve
+    from pyharness.security import GrantScope
+
+    req = ApprovalRequest("browser.click", ActionCategory.OUTWARD, "click #x on http://h",
+                          ("sid",), {}, GrantScope("browser", "boards.greenhouse.com"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "a")
+    assert _approve(req) is ApprovalOutcome.GRANT
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert _approve(req) is ApprovalOutcome.ONCE
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+    assert _approve(req) is ApprovalOutcome.DENY
+    # The [a] label is harness-derived from the scope (class name + host).
+    out = capsys.readouterr().out
+    assert "boards.greenhouse.com" in out and "state-changing browser actions" in out
+
+
+def test_cli_approve_no_grant_for_irreversible_or_unscoped(monkeypatch):
+    from pyharness.broker import ApprovalOutcome, ApprovalRequest
+    from pyharness.cli import _approve
+    from pyharness.security import GrantScope
+
+    prompts = []
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return "a"  # even typing 'a', an unscoped/irreversible call can never grant
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    # Irreversible: no [a] offered; 'a' is not 'y' -> DENY.
+    irr = ApprovalRequest("http.request", ActionCategory.IRREVERSIBLE, "DELETE http://h",
+                          ("sid", "DELETE", "http://h"), {}, GrantScope("http", "h"))
+    assert _approve(irr) is ApprovalOutcome.DENY
+    # Unscoped (scope None): plain y/N.
+    uns = ApprovalRequest("files.write", ActionCategory.OUTWARD, "write x", ("x",), {}, None)
+    assert _approve(uns) is ApprovalOutcome.DENY
+    assert all("[y/a/N]" not in p for p in prompts)  # the grant prompt is never shown

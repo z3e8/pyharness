@@ -7,9 +7,10 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from .broker.dispatch import ApprovalRequest
+from .broker.dispatch import ApprovalOutcome, ApprovalRequest
 from .budget import Budget, BudgetExceeded
 from .core.session import Session
+from .security.policy import ActionCategory
 from .security.vault import _DEFAULT_FILE
 
 _COLORS = {"code": "\033[36m", "output": "\033[2m"}
@@ -69,10 +70,31 @@ def _resolve_root(argv: list[str], env: Mapping[str, str], now: str) -> Path:
     return Path(f".sessions/cli-{now}")
 
 
-def _approve(request: ApprovalRequest) -> bool:
+# Human-legible names for a grant's action class, rendered from the harness's own
+# structured scope — never from capability- or page-supplied text.
+_GRANT_CLASS_LABEL = {
+    "browser": "state-changing browser actions",
+    "http": "state-changing HTTP requests",
+}
+
+
+def _approve(request: ApprovalRequest) -> ApprovalOutcome:
     print(f"\n⚠ approval required [{request.category.value}]: {request.action}")
     print(f"  {request.summary}")
-    return input("  allow? [y/N] ").strip().lower() == "y"
+    # A grant is offered only when the harness marked the call grantable and it is
+    # not irreversible (those always re-ask).
+    grantable = request.scope is not None and request.category is not ActionCategory.IRREVERSIBLE
+    if not grantable:
+        note = "  (irreversible — always asks)\n" if request.category is ActionCategory.IRREVERSIBLE else ""
+        return ApprovalOutcome.ONCE if input(f"{note}  allow? [y/N] ").strip().lower() == "y" else ApprovalOutcome.DENY
+    label = _GRANT_CLASS_LABEL.get(request.scope.action_class, request.scope.action_class)
+    print(f"  [y] this once  [a] all {label} on {request.scope.target} this session  [N] no")
+    answer = input("  allow? [y/a/N] ").strip().lower()
+    if answer == "a":
+        return ApprovalOutcome.GRANT
+    if answer == "y":
+        return ApprovalOutcome.ONCE
+    return ApprovalOutcome.DENY
 
 
 def main() -> None:
