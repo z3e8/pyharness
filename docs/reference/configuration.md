@@ -53,7 +53,7 @@ environment, **not** committed to `.env` if sensitive.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `PYHARNESS_MCP_CONFIG` | `.mcp.json` | Path to the MCP server config the CLI mounts (see [Add a tool](../how-to/add-a-tool-or-skill.md)). |
+| `PYHARNESS_MCP_CONFIG` | `.mcp.json` | Path to the MCP server config the CLI mounts when present, `pyharness-mcp` edits, and `add_mcp_server(save=True)` writes (see [Add a tool](../how-to/add-a-tool-or-skill.md)). |
 
 ## The heavier Langfuse profile
 

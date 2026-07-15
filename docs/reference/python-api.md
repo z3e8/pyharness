@@ -16,7 +16,9 @@ Session(
     llm=None,                  # defaults to AnthropicLLM(budget=...)
     budget=None,               # Budget — defaults to unlimited
     policy=None,               # Policy — defaults to requiring approval for
-                               #   skills.save_skill and packages.install
+                               #   skills.save_skill, packages.install,
+                               #   tools.add_mcp_server, and non-read-only
+                               #   MCP tool calls
     vault=None,                # Vault — defaults to Vault.from_env()
     registry=None,             # Registry — Session registers the external
                                #   capability tools (web/http/browser/packages),
@@ -24,7 +26,9 @@ Session(
     approver=None,             # Callable[[ApprovalRequest], bool]
     on_event=None,             # Callable[[kind, text], None] — stream events
     out_of_process=False,      # run agent code in a sandboxed child process
-    mcp_config=None,           # str | Path | dict — MCP servers to mount
+    mcp_config=None,           # str | Path | dict — MCP servers to mount; a
+                               #   path is kept (even if absent) as the target
+                               #   for add_mcp_server(save=True)
     skills_dir=None,           # defaults to ~/.pyharness/skills
 )
 ```

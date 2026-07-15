@@ -118,6 +118,12 @@ Find a tool, inspect it, then load and call it.
 | `search_tools(query="", include_all=False) -> str` | ranked **headers** (name, summary, source/category); search by what you need (e.g. `"web"`), `include_all=True` or `"*"` lists the whole catalog |
 | `describe_tool(name) -> str` | that tool's functions (signatures + docstrings); for a learned skill, also its instructions |
 | `use_tool(name) -> module` | load it, then call its functions on the returned module |
+| `add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, save=False) -> str` | mount an MCP server (local `command` or remote `url`) as a tool named `name`; **requires approval**. Credentials go as `"secret:NAME"` vault refs. `save=True` persists it to the session's MCP config for later sessions (refuses cleartext env/header values) |
+
+MCP tool calls made through a loaded module are broker-gated per call: reads
+declared `readOnlyHint` flow, anything else prompts (grantable per server), and
+a declared `destructiveHint` always re-asks — see
+[the approval policy](../explanation/security-and-audit.md).
 
 ## Skills
 

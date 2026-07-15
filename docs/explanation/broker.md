@@ -51,6 +51,14 @@ Capabilities reach the agent by one of two surfacings, both broker-proxied:
   MCP server or a learned skill. Gating is identical either way — the difference
   is only whether the capability is handed to the agent or discovered by it.
 
+Tool modules that are *not* broker proxies already — MCP wrappers, installed
+modules, learned skills — gate through a single funnel action, `tools.invoke`:
+`use_tool` returns them as broker-gated proxies in-process, and the
+out-of-process child reaches them the same way via its `RemoteToolSpec` proxy.
+Modules built by `as_tool_module` are marked and passed through untouched, so
+nothing gates twice. MCP calls get per-call policy from the server's declared
+annotations — see [Security & audit](security-and-audit.md).
+
 ## Why a single seam
 
 Putting policy, audit, and budget in one place — rather than scattering checks
@@ -66,7 +74,10 @@ across every I/O site — means:
 ## In-process vs out-of-process
 
 - **In-process** (default for the library): the broker's proxies run directly in
-  the host namespace. Simple; the agent's code shares the host process.
+  the host namespace. Simple; the agent's code shares the host process. Gating
+  here buys consistency (the same prompts and audit trail as the child), not a
+  hard boundary — in-process agent code could import pyharness and reach the raw
+  registry; real enforcement is the out-of-process mode.
 - **Out-of-process** (`out_of_process=True`, used by the CLI): agent code runs in
   a restricted **child process** (`pyharness/broker/remote/`). The child holds
   the persistent namespace and proxy stubs; the parent keeps the broker, vault,

@@ -1,6 +1,6 @@
 # CLI
 
-Two console scripts are installed by the package (`pyproject.toml`).
+Three console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
@@ -17,7 +17,8 @@ pyharness [SESSION_DIR]
 - Runs **out-of-process** with the OS sandbox on, and a **$5.00** budget limit
   per session.
 - Mounts MCP servers from `.mcp.json` (override path with `PYHARNESS_MCP_CONFIG`)
-  when the file exists.
+  when the file exists; the path is kept either way so the agent's
+  `add_mcp_server(..., save=True)` can create it.
 - If an encrypted vault file exists and no passphrase is set, prompts for it once.
 - Actions that require approval print `⚠ approval required [category]: action`
   and a one-line summary of the effect (method + url + body fields, or a browser
@@ -48,6 +49,27 @@ The file is `~/.pyharness/secrets.enc` (override with `PYHARNESS_VAULT_FILE`),
 sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted). Use the same passphrase
 when you run `pyharness` so the session can open it. See
 [Use the secrets vault](../how-to/use-the-vault.md).
+
+## `pyharness-mcp`
+
+Manage the MCP server config the session mounts (`pyharness/cli_mcp.py`).
+
+```bash
+pyharness-mcp add NAME --command CMD [--arg=A]...   # local server
+pyharness-mcp add NAME --url URL                    # remote server
+pyharness-mcp list
+pyharness-mcp rm NAME
+```
+
+- Edits `.mcp.json` in the current directory (override with
+  `PYHARNESS_MCP_CONFIG`); adding never contacts the server (mounting is lazy).
+- `--env K=V` / `--header K=V` values must be `secret:NAME` vault refs — a
+  cleartext credential is refused. `--summary` / `--keyword` / `--category` set
+  the discovery metadata `search_tools` ranks on.
+- Use the `--arg=-y` form for argument values that start with a dash.
+
+See [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md) for the
+config shape and the in-session alternative (`add_mcp_server`).
 
 ## Make targets
 

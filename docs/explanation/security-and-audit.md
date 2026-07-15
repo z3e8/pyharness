@@ -29,6 +29,31 @@ its arguments: `Policy(approve_if=[predicate])` runs each predicate over
 action (`http.request`) is gated on a *value* (the HTTP method) rather than
 needing a separate action name per method.
 
+**MCP tool calls** gate the same way. Every call on a loaded tool module routes
+through one action, `tools.invoke`, and a default predicate
+(`broker/capabilities/tools.py:unvetted_mcp_call`) forces approval when the
+target is an MCP server tool — unless the server's descriptor declares
+`readOnlyHint`. An explicit `destructiveHint` classes the call IRREVERSIBLE
+(always re-asks, never grantable); everything else, including un-annotated
+tools, is OUTWARD and grantable per server (below). Two caveats are deliberate:
+
+- Annotations are *server-supplied* hints. Trusting them is acceptable because
+  installing the server is itself human-gated (`tools.add_mcp_server` requires
+  approval; the config file is human-edited) and the per-call prompt guards
+  against agent mistakes, not server malice.
+- The MCP spec reads an *absent* `destructiveHint` as destructive. Taking that
+  literally would class most tools IRREVERSIBLE and remove the
+  one-grant-per-server flow, so pyharness prompts (grantable) instead of
+  always-re-asking for the un-annotated case.
+
+Deciding policy never connects a server: an MCP target that is not yet resolved
+fails closed (prompts). Per-server rules are predicates over `tools.invoke`'s
+arguments (`args[0]` is the server, `args[1]` the function), the same pattern as
+the HTTP-method gate. Mounting a server at runtime (`tools.add_mcp_server`) is
+itself in the default `require_approval` set — it installs code, like
+`packages.install` — and refuses a name already in the registry, so a server
+can't shadow `http`/`web` and launder its approval summaries.
+
 ### What the human is shown — preview and taxonomy
 
 An approver is not handed raw arguments to squint at. The broker builds an
@@ -81,8 +106,10 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
 - **The scope is harness-derived**, never agent- or page-supplied. A capability's
   optional `scope(op, args, kwargs) -> GrantScope | None` hook (mirroring
   `preview()`) yields the key from the structured call: the host from the request
-  `url` or from Playwright's own `page.url`. The `[a]` label is rendered from a
-  fixed class-name map plus that host — no page text reaches it.
+  `url` or from Playwright's own `page.url`, or — for MCP calls — the server's
+  registry name (`("mcp", "github")`), so one grant covers that server's
+  non-destructive tools for the session. The `[a]` label is rendered from a
+  fixed class-name map plus that target — no page text reaches it.
 - **IRREVERSIBLE is never covered and never mints.** A `DELETE` re-prompts every
   time, even on a host you granted POSTs to; the ledger is consulted only for
   non-IRREVERSIBLE calls. `fill_secret` (credential release) and the secret-gated

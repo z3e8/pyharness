@@ -60,21 +60,44 @@ code.
 
 ## Mount an MCP server
 
-Declare servers in `.mcp.json` at the repo root (or point `PYHARNESS_MCP_CONFIG`
-elsewhere); the CLI mounts them when the file exists:
+Three ways in, same result — one lazily-connected tool module per server:
 
-```json
-{
-  "mcpServers": {
-    "weather": { "command": "pnpm", "args": ["dlx", "@aiagentkarl/weather-mcp-server"] }
-  }
-}
-```
+1. **Config file.** Declare servers in `.mcp.json` at the repo root (or point
+   `PYHARNESS_MCP_CONFIG` elsewhere); the CLI mounts them when the file exists:
 
-Local servers use `command`/`args`; remote ones use `url`. Each server's tools are
-wrapped as one tool module named after the server, connected **lazily** on first
-`describe`/`use` — so a slow or down server never delays startup or browsing.
-In code, pass `Session(mcp_config=...)` (a path or a dict).
+   ```json
+   {
+     "mcpServers": {
+       "weather": {
+         "command": "pnpm", "args": ["dlx", "@aiagentkarl/weather-mcp-server"],
+         "summary": "Weather lookups.", "keywords": ["forecast"], "category": "data"
+       }
+     }
+   }
+   ```
+
+   Local servers use `command`/`args`; remote ones use `url` (+ `headers`).
+   Optional `summary`/`keywords`/`category`/`featured` feed `search_tools`
+   ranking — worth setting, since a lazy server is otherwise findable only by
+   its name. `timeout` (seconds) bounds each request to that server.
+2. **`pyharness-mcp add/list/rm`** edits the same file from the shell — see
+   [CLI](../reference/cli.md).
+3. **`add_mcp_server(...)` in-session** (approval-gated): the agent mounts a
+   server mid-session; `save=True` persists it to the config file for later
+   sessions. See [Builtins](../reference/builtins.md).
+
+Each server's tools are wrapped as one tool module named after the server,
+connected **lazily** on first `describe`/`use` — so a slow or down server never
+delays startup or browsing. In code, pass `Session(mcp_config=...)` (a path or
+a dict; a path is remembered even before the file exists so `save=True` can
+create it).
+
+Credential values in `env`/`headers` should be vault refs (`"secret:NAME"`) —
+resolved parent-side, never visible to the agent, and the only form the save
+paths will write to disk. Calls on MCP tools are broker-gated per the server's
+declared annotations (read-only flows; anything else prompts, grantable per
+server; destructive always re-asks) — see
+[Security & audit](../explanation/security-and-audit.md).
 
 ## Install a package
 
