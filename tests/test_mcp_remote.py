@@ -119,6 +119,32 @@ def test_config_mounts_local_and_resolves_secrets():
         registry.close()
 
 
+def test_config_forwards_discovery_metadata():
+    """keywords/category/featured declared in the config reach the registry, so
+    a lazily-mounted (never-connected) server is findable by what it does."""
+    registry = Registry()
+    config = {
+        "mcpServers": {
+            "tracker": {
+                "command": "/no/such/binary-xyz",
+                "summary": "Issue tracker.",
+                "keywords": ["issues", "bugs"],
+                "category": "vcs",
+                "featured": True,
+            }
+        }
+    }
+    mount_config(registry, config)
+    info = registry._tools["tracker"]
+    assert info.kind == "mcp"
+    assert info.keywords == ("issues", "bugs")
+    assert info.category == "vcs"
+    assert info.featured
+    # A keyword query ranks the server without connecting it.
+    assert "# tracker" in registry.search("bugs")
+    assert info.module is None
+
+
 def test_config_secret_without_vault_errors():
     registry = Registry()
     config = {"mcpServers": {"demo": {"command": "x", "env": {"K": "secret:missing"}}}}

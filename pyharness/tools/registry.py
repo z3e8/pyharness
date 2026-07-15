@@ -16,6 +16,7 @@ class ToolInfo:
     summary: str
     module: ModuleType | None = None  # None until a lazy tool is resolved
     source: str = "core"  # core | installed | learned
+    kind: str = "module"  # module | mcp — lets gating spot an MCP target without resolving it
     loader: Callable[[], ModuleType] | None = None  # set for lazy (e.g. MCP) tools
     error: str | None = None  # last failure, if a lazy load could not connect
     keywords: tuple[str, ...] = ()  # synonyms/aliases, so intent words still match
@@ -56,6 +57,7 @@ class Registry:
         keywords: tuple[str, ...] = (),
         category: str | None = None,
         featured: bool = False,
+        kind: str = "module",
     ) -> str:
         """Add a tool module to the registry. Built-ins, locally installed
         modules, and MCP-wrapped servers all enter the same index — distinguished
@@ -71,6 +73,7 @@ class Registry:
             summary,
             module,
             source,
+            kind=kind,
             keywords=tuple(keywords) or tuple(getattr(module, "__keywords__", ())),
             category=category or getattr(module, "__category__", None),
             featured=featured or bool(getattr(module, "__featured__", False)),
@@ -104,7 +107,7 @@ class Registry:
         )
         self._mcp_clients.append(module._mcp_client)
         return self.register(
-            module, source="installed", name=name,
+            module, source="installed", name=name, kind="mcp",
             keywords=keywords, category=category, featured=featured,
         )
 
@@ -118,13 +121,14 @@ class Registry:
         keywords: tuple[str, ...] = (),
         category: str | None = None,
         featured: bool = False,
+        kind: str = "module",
     ) -> str:
         """Register a tool whose module is built on first use, not now. The
         `loader` is called the first time the tool is *used or described* (never
         by `search`), so a server that is slow or down can neither delay nor abort
         registration, and merely browsing the catalog never connects it."""
         self._tools[name] = ToolInfo(
-            name, summary, source=source, loader=loader,
+            name, summary, source=source, loader=loader, kind=kind,
             keywords=tuple(keywords), category=category, featured=featured,
         )
         return name

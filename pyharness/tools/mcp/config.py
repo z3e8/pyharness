@@ -50,13 +50,22 @@ def mount_config(registry, config: dict | str | Path, *, vault=None, lazy: bool 
     for name, spec in servers.items():
         env = _resolve_secrets(spec.get("env"), vault)
         headers = _resolve_secrets(spec.get("headers"), vault)
+        # Discovery metadata declared alongside the server, forwarded to the
+        # registry so a lazily-mounted server is findable by more than its name.
+        meta = dict(
+            keywords=tuple(spec.get("keywords", ())),
+            category=spec.get("category"),
+            featured=bool(spec.get("featured", False)),
+        )
         if lazy:
             names.append(
                 registry.register_lazy(
                     name,
                     _loader(name, spec, env, headers),
                     source="installed",
+                    kind="mcp",
                     summary=spec.get("summary") or f"MCP server {name!r} (not yet connected)",
+                    **meta,
                 )
             )
         else:
@@ -70,6 +79,8 @@ def mount_config(registry, config: dict | str | Path, *, vault=None, lazy: bool 
                     headers=headers,
                     cwd=spec.get("cwd"),
                     summary=spec.get("summary"),
+                    timeout=spec.get("timeout", 30.0),
+                    **meta,
                 )
             )
     return names
