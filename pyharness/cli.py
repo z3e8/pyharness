@@ -75,6 +75,7 @@ def _resolve_root(argv: list[str], env: Mapping[str, str], now: str) -> Path:
 _GRANT_CLASS_LABEL = {
     "browser": "state-changing browser actions",
     "http": "state-changing HTTP requests",
+    "mcp": "non-destructive MCP tool calls",
 }
 
 

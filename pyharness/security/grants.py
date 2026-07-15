@@ -13,8 +13,9 @@ class GrantScope:
     equality on both fields; there are no wildcards, so a scope can only ever be
     minted from, and matched against, a concrete real host."""
 
-    action_class: str  # capability-defined constant, e.g. "http" | "browser"
-    target: str  # normalized lowercase hostname, e.g. "boards.greenhouse.com"
+    action_class: str  # capability-defined constant, e.g. "http" | "browser" | "mcp"
+    target: str  # concrete target: a normalized lowercase hostname (http/browser)
+    # or an MCP server's registry name ("mcp") — always harness-derived
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,7 @@ from ..broker.capabilities import (
 )
 from ..broker.capabilities.browser import MUTATING_ACTIONS as MUTATING_BROWSER_ACTIONS
 from ..broker.capabilities.http import MUTATING_METHODS
+from ..broker.capabilities.tools import unvetted_mcp_call
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
@@ -96,7 +97,13 @@ class Session:
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
             },
-            approve_if=[_is_mutating_http, _look_after_injected_secret],
+            approve_if=[
+                _is_mutating_http,
+                _look_after_injected_secret,
+                # MCP tool calls prompt unless the server marks them read-only;
+                # the registry is read at decision time (it's built below).
+                unvetted_mcp_call(lambda: self.registry),
+            ],
         )
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
@@ -141,7 +148,7 @@ class Session:
             SearchCapability(self.workspace),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
-            ToolsCapability(self.registry),
+            ToolsCapability(self.registry, broker=self.broker),
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
             HistoryCapability(self.audit),

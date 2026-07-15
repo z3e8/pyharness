@@ -128,6 +128,7 @@ class Broker:
         `register(cap, core=False)`."""
         module = ModuleType(cap)
         module.__doc__ = summary
+        module._broker_gated = True  # so tools.use_tool doesn't gate it twice
         for (c, op), func in self._ops.items():
             if c != cap:
                 continue

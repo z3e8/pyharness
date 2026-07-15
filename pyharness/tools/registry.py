@@ -255,6 +255,11 @@ class Registry:
             lines.append(f"    {fname}{inspect.signature(func)}  # {first}".rstrip())
         return "\n".join(lines)
 
+    def info(self, name: str) -> ToolInfo | None:
+        """The registry entry for one tool, without resolving it — for callers
+        (e.g. policy) that must inspect a tool with no connection side effect."""
+        return self._tools.get(name)
+
     def use(self, name: str) -> ModuleType:
         if name not in self._tools:
             raise KeyError(f"tool {name!r} not found; try search_tools()")
