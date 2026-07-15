@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
 from typing import Callable
+
+# Strip C0 control characters (keeping tab and newline) from agent-authored notify
+# text before it is rendered. Left unfiltered, an ESC (\x1b) lets the agent emit
+# ANSI cursor/color sequences that repaint the terminal — clearing the screen or
+# coloring text to mimic the harness's own `⚠ approval required` prompt. The one
+# inbound channel (the approval prompt) is still the only thing that accepts input,
+# but the display must not be forgeable.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 _LEVELS = ("info", "attention", "done")
 # Desktop notifications carry a fixed title; the agent's text goes only in the
@@ -58,7 +67,7 @@ class NotifyCapability:
         Returns "delivered"."""
         if level not in _LEVELS:
             raise ValueError(f"level must be one of {_LEVELS}, got {level!r}")
-        message = str(message)
+        message = _CONTROL_RE.sub("", str(message))
         self.on_event("notify", message, level=level)
         if self.desktop is not None:
             try:
