@@ -134,7 +134,18 @@ class AnthropicLLM:
         max_tokens: int | None = None,
         on_token: "Callable[[str], None] | None" = None,
     ) -> Completion:
-        model = TIERS.get(tier, tier)
+        # A tier names a cost/capability band, never a raw model id. Resolving an
+        # unknown tier to the literal string (the old `TIERS.get(tier, tier)`) let
+        # agent-controlled code run an arbitrary, unpriced model: it would execute
+        # against the operator's account while `PRICING.get(model, (0.0, 0.0))`
+        # billed it at $0, so `Budget.check()` never tripped — an accounting bypass
+        # and unbounded real spend. Fail closed on an unknown tier instead.
+        model = TIERS.get(tier)
+        if model is None:
+            raise ValueError(
+                f"unknown tier {tier!r}; choose one of {sorted(TIERS)} "
+                "(a tier names a cost/capability band, not a model id)"
+            )
         kwargs: dict = {
             "model": model,
             "max_tokens": max_tokens or TIER_MAX_TOKENS.get(tier, self._max_tokens),
