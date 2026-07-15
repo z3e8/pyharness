@@ -28,6 +28,7 @@ browser = ["playwright>=1.61"]
 [project.scripts]
 pyharness = "pyharness.cli:main"
 pyharness-vault = "pyharness.cli_vault:main"
+pyharness-index = "pyharness.cli_index:main"
 
 [build-system]
 requires = ["hatchling"]
