@@ -156,6 +156,11 @@ Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.
+- Your context is managed for you. Each cell's result ends with a one-line
+  `[context: N tokens · step i/max · spent $…]` status — use it to pace
+  yourself. Outputs of older cells are elided from your view
+  (`[output elided: …]`); the kernel still holds every variable, so re-print
+  what you need instead of relying on scrollback.
 - You run under a bounded step count and a spend budget. Be economical; for long
   work, checkpoint state to the workspace as you go so it survives a stop.
 - Fail fast and honestly. When a surface structurally resists — the same call
@@ -218,12 +223,16 @@ class Agent:
         on_event: Callable[[str, str], None] | None = None,
         media=None,
         preamble_extra: str = "",
+        keep_outputs: int = 8,
     ):
         self.llm = llm
         self.kernel = kernel
         self.budget = budget
         self.tier = tier
         self.max_steps = max_steps
+        # How many recent cells keep their full output in context; older ones are
+        # elided (see _elide_old_outputs). <= 0 disables elision entirely.
+        self.keep_outputs = keep_outputs
         self.workspace_root = workspace_root
         # Session-computed ambient context (recent sessions, skill trust) appended
         # after render_context — world-state, so it belongs in the preamble.
@@ -252,8 +261,9 @@ class Agent:
         system = f"{SYSTEM_PROMPT}\n\n{render_context(self.workspace_root)}"
         if self.preamble_extra:
             system = f"{system}\n\n{self.preamble_extra}"
-        for _ in range(self.max_steps):
+        for step in range(1, self.max_steps + 1):
             self.budget.check()
+            _elide_old_outputs(messages, self.keep_outputs)
 
             t0 = time.time()
             cost_before = self.budget.spent_usd
@@ -300,6 +310,11 @@ class Agent:
             if completion.text:
                 self.on_event("note", completion.text)
 
+            # One status line per cell, so context pressure and spend are facts
+            # the model sees rather than guesses. Built from the completion that
+            # emitted this cell (one call stale, the freshest number we have);
+            # appended to the tool_result only — the display/trace output stays raw.
+            meter = self._context_meter(usage, step)
             results = []
             for call in completion.tool_calls:
                 code = call.input.get("code", "")
@@ -307,17 +322,89 @@ class Agent:
                 with telemetry.code_cell_span(code):
                     output = self.kernel.run(code)
                 self.on_event("output", output)
+                metered = f"{output}\n{meter}" if meter else output
                 # A cell may have staged images (browser.look). With none, the
                 # tool_result content stays a plain string — unchanged for every
                 # text-only cell; with images it becomes a text block + image blocks.
                 images = self.media.drain() if self.media is not None else []
-                content = output if not images else [{"type": "text", "text": output}, *images]
+                content = metered if not images else [{"type": "text", "text": metered}, *images]
                 results.append(
                     {"type": "tool_result", "tool_use_id": call.id, "content": content}
                 )
             messages.append({"role": "user", "content": results})
 
         return "(stopped: reached max_steps)"
+
+    def _context_meter(self, usage, step: int) -> str:
+        """The status line appended to each cell result. Empty when the client
+        reports no usage (stub LLMs); the real client always does."""
+        if usage is None:
+            return ""
+        spent = f"${self.budget.spent_usd:.2f}"
+        if self.budget.limit_usd is not None:
+            spent += f" of ${self.budget.limit_usd:.2f}"
+        return (
+            f"[context: {usage.context_tokens:,} tokens · "
+            f"step {step}/{self.max_steps} · spent {spent}]"
+        )
+
+
+# Elision leaves small outputs whole — they are often load-bearing facts (a
+# count, an id, a path) whose re-derivation would cost the agent a step.
+_ELIDE_KEEP_CHARS = 500
+_ELIDE_MARKER = "[output elided:"
+
+
+def _elide_old_outputs(messages: list[dict], keep_recent: int) -> None:
+    """Replace the content of tool_results older than the `keep_recent` most
+    recent cells with a short stub, in place. Safe here in a way it isn't in
+    most harnesses: the kernel is persistent, so any elided output is one
+    `print()` away — the variables that produced it still exist. The full text
+    stays in trace.jsonl. `keep_recent <= 0` disables elision.
+
+    Mutating an old message invalidates the prompt cache from that point, so
+    per step the model re-reads roughly the last `keep_recent` cells uncached —
+    the standard context-editing tradeoff, dwarfed by the growth it prevents."""
+    if keep_recent <= 0:
+        return
+    tool_msgs = [
+        m
+        for m in messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+    ]
+    for msg in tool_msgs[:-keep_recent]:
+        for block in msg["content"]:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                block["content"] = _elided(block.get("content"))
+
+
+def _elided(content):
+    """The stub for one tool_result's content — or the content unchanged when it
+    is small (and image-free) or already a stub."""
+    if isinstance(content, str):
+        if len(content) <= _ELIDE_KEEP_CHARS or content.startswith(_ELIDE_MARKER):
+            return content
+        return (
+            f"{_ELIDE_MARKER} {len(content)} chars; kernel variables persist — "
+            "re-print what you need]"
+        )
+    if isinstance(content, list):
+        images = sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image")
+        chars = sum(
+            len(b.get("text", ""))
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+        if not images and chars <= _ELIDE_KEEP_CHARS:
+            return content
+        extra = f" + {images} image(s)" if images else ""
+        return (
+            f"{_ELIDE_MARKER} {chars} chars{extra}; kernel variables persist — "
+            "re-print what you need]"
+        )
+    return content
 
 
 def _elide_image_data(obj):

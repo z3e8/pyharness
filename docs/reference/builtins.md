@@ -14,6 +14,15 @@ is configured, a few ambient lines of the agent's own past: recent sessions
 (name, task, outcome, cost), skill trust states, and established lessons — so
 the model starts oriented in its history instead of having to remember to look.
 
+The harness also manages the agent's context for it. Each cell's result ends
+with a one-line meter — `[context: N tokens · step i/max · spent $…]` — so
+context pressure and spend are facts the model sees, and outputs of cells older
+than the most recent few (`PYHARNESS_KEEP_OUTPUTS`, default 8; see
+[Configuration](configuration.md)) are elided to a short
+`[output elided: …]` stub. Elision is safe here in a way it isn't in most
+harnesses: the kernel is persistent, so any elided output is one `print()`
+away, and the full text remains in `trace.jsonl`.
+
 ## Files & shell
 
 | Signature | Returns |

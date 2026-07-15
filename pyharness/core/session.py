@@ -101,6 +101,7 @@ class Session:
         mcp_config: str | Path | dict | None = None,
         skills_dir: str | Path | None = None,
         index_db: str | Path | None = None,
+        keep_outputs: int = 8,
     ):
         telemetry.setup_telemetry()
         self.id = uuid4().hex
@@ -285,6 +286,7 @@ class Session:
             on_event=on_event_traced,
             media=self.media,
             preamble_extra=self._render_history_preamble(),
+            keep_outputs=keep_outputs,
         )
         self.messages: list[dict] = []
         self._closed = False

@@ -128,6 +128,9 @@ def main() -> None:
         # if present, but keeps the path so add_mcp_server(save=True) can create it.
         mcp_config=mcp_config,
         index_db=os.environ.get("PYHARNESS_INDEX_DB", "~/.pyharness/index.db"),
+        # How many recent cells keep full output in the agent's context; older
+        # outputs are elided (kernel variables persist). <= 0 disables elision.
+        keep_outputs=int(os.environ.get("PYHARNESS_KEEP_OUTPUTS", "8")),
     )
 
     print("pyharness — type a task, or Ctrl-D to exit.")

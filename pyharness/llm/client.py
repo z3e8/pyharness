@@ -55,9 +55,16 @@ def _supports_adaptive_thinking(model: str) -> bool:
 @dataclass(frozen=True)
 class Usage:
     model: str
-    input_tokens: int
+    input_tokens: int  # uncached prompt tokens only, per the API's accounting
     output_tokens: int
     cost_usd: float
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    @property
+    def context_tokens(self) -> int:
+        """The full prompt size the model consumed — cached and uncached."""
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
     @classmethod
     def from_response(cls, usage: object, model: str) -> "Usage":
@@ -72,7 +79,7 @@ class Usage:
             + cache_read * 0.1 * in_rate
             + out_tok * out_rate
         )
-        return cls(model, in_tok, out_tok, cost)
+        return cls(model, in_tok, out_tok, cost, cache_read, cache_create)
 
 
 @dataclass(frozen=True)
