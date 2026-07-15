@@ -43,6 +43,25 @@ TOOLS = [
             "required": ["name"],
         },
     },
+    {
+        "name": "read-status",
+        "description": "A read-only tool with a dash-named parameter.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"dry-run": {"type": "boolean"}},
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "drop_table",
+        "description": "A destructive tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"table": {"type": "string"}},
+            "required": ["table"],
+        },
+        "annotations": {"destructiveHint": True},
+    },
 ]
 
 
@@ -54,6 +73,12 @@ def _call(name, args):
         return str(args["a"] + args["b"])
     if name == "getenv":
         return os.environ.get(args["name"], "")
+    if name == "read-status":
+        # Echo back the argument keys so tests can assert the client sent the
+        # server's own property names (e.g. "dry-run", not "dry_run").
+        return json.dumps(sorted(args))
+    if name == "drop_table":
+        return f"dropped {args['table']}"
     raise ValueError(f"unknown tool {name}")
 
 

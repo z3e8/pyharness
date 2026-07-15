@@ -10,6 +10,8 @@ from pyharness.broker.remote.protocol import RemoteToolSpec
 from pyharness.tools.mcp import MCPClient, wrap_mcp_server
 
 FAKE = Path(__file__).parent / "mcp_server_fake.py"
+FAKE_TOOLS = {"echo", "add", "getenv", "read-status", "drop_table"}
+FAKE_FUNCS = {"echo", "add", "getenv", "read_status", "drop_table"}
 
 
 @pytest.fixture
@@ -21,7 +23,7 @@ def client():
 
 def test_lists_and_calls_tools(client):
     names = {t["name"] for t in client.list_tools()}
-    assert names == {"echo", "add", "getenv"}
+    assert names == FAKE_TOOLS
     assert client.call_tool("echo", {"message": "hi"}) == "hi"
     assert client.call_tool("echo", {"message": "hi", "shout": True}) == "HI"
     assert client.call_tool("add", {"a": 2, "b": 3}) == "5"
@@ -39,6 +41,42 @@ def test_generated_signatures_reflect_schema():
         assert module.add(a=4, b=5) == "9"
     finally:
         module._mcp_client.close()
+
+
+def test_dash_named_params_and_tool_names():
+    """A '-' in a tool or param name coerces to a Python identifier, but the
+    call must send the server's original property names."""
+    module = wrap_mcp_server("demo", sys.executable, (str(FAKE),))
+    try:
+        assert list(inspect.signature(module.read_status).parameters) == ["dry_run"]
+        assert module.read_status(dry_run=True) == '["dry-run"]'
+        assert module.read_status() == "[]"  # unset optional stays omitted
+        # The unset-marker default renders readably in describe_tool output,
+        # not as <object object at 0x...>.
+        sig = str(inspect.signature(module.read_status))
+        assert "dry_run: bool = UNSET" in sig
+    finally:
+        module._mcp_client.close()
+
+
+def test_module_carries_mcp_tool_metadata():
+    module = wrap_mcp_server("demo", sys.executable, (str(FAKE),))
+    try:
+        meta = module._mcp_tools
+        assert meta["read_status"]["name"] == "read-status"
+        assert meta["read_status"]["annotations"] == {"readOnlyHint": True}
+        assert meta["drop_table"]["annotations"] == {"destructiveHint": True}
+        assert meta["echo"]["annotations"] == {}
+    finally:
+        module._mcp_client.close()
+
+
+def test_colliding_coerced_names_are_disambiguated():
+    from pyharness.tools.mcp.module import _unique
+
+    assert _unique("run_it", {"run_it"}) == "run_it_2"
+    assert _unique("run_it", {"run_it", "run_it_2"}) == "run_it_3"
+    assert _unique("fresh", {"run_it"}) == "fresh"
 
 
 def test_registry_discovery_and_use():
@@ -73,6 +111,6 @@ def test_remote_seal_yields_tool_spec():
         spec = _seal_for_wire(module)
         assert isinstance(spec, RemoteToolSpec)
         assert spec.name == "demo"
-        assert set(spec.functions) == {"echo", "add", "getenv"}
+        assert set(spec.functions) == FAKE_FUNCS
     finally:
         module._mcp_client.close()
