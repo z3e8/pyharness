@@ -159,9 +159,24 @@ class Broker:
 
     def call_op(self, op: str, *args, **kwargs):
         """Dispatch by operation name alone — the address the child sends over
-        IPC. Resolves to the owning capability, then runs the full `call` path."""
-        cap = next(c for (c, o) in self._ops if o == op)
-        return self.call(cap, op, *args, **kwargs)
+        IPC. Resolves to the owning capability, then runs the full `call` path.
+
+        The child only ever addresses ops this way that it holds as bare-name
+        proxies — the `core` capabilities' ops (`namespace()`/`op_names()`), plus
+        the hidden `tools.invoke` funnel every RemoteToolSpec routes through.
+        Non-core capabilities (web/http/browser/inbox/packages) are reached only
+        via `invoke`, never by their own op name. So resolution is restricted to
+        `core` capabilities: this disambiguates op-name collisions between a core
+        builtin and a non-core op (`files.read` vs `inbox.read`, `search.search`
+        vs `inbox.search`) instead of relying on registration order, and an
+        ambiguous or unknown name is an explicit error rather than a silent
+        arbitrary pick that could route a bare call to the wrong capability."""
+        caps = [c for (c, o) in self._ops if o == op and c in self._core]
+        if not caps:
+            raise KeyError(f"unknown operation {op!r}")
+        if len(caps) > 1:
+            raise KeyError(f"operation {op!r} is ambiguous across capabilities {sorted(caps)}")
+        return self.call(caps[0], op, *args, **kwargs)
 
     def _approval_request(self, cap: str, op: str, action: str, args, kwargs) -> ApprovalRequest:
         """Describe a gated call for the human. A capability that owns gated ops
