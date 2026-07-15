@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 # scrypt KDF parameters (interactive-login class; ~tens of ms to derive).
@@ -38,7 +39,7 @@ class EncryptedFile:
         )
         return Fernet(base64.urlsafe_b64encode(key))
 
-    def load(self) -> dict[str, str]:
+    def load(self) -> dict:
         if not self.path.exists():
             return {}
         envelope = json.loads(self.path.read_text())
@@ -46,7 +47,7 @@ class EncryptedFile:
         plaintext = self._fernet(salt).decrypt(envelope["ciphertext"].encode())
         return json.loads(plaintext)
 
-    def save(self, secrets: dict[str, str]) -> None:
+    def save(self, secrets: dict) -> None:
         salt = os.urandom(16)
         ciphertext = self._fernet(salt).encrypt(json.dumps(secrets).encode())
         envelope = {
@@ -58,9 +59,22 @@ class EncryptedFile:
             "p": _SCRYPT_P,
             "ciphertext": ciphertext.decode(),
         }
+        # Write to a sibling temp file created 0o600, then atomically replace: a
+        # crash mid-write leaves the previous file intact, and the plaintext-key
+        # material is never briefly world-readable under a permissive umask.
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(envelope, indent=2))
-        os.chmod(self.path, 0o600)
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=self.path.name, suffix=".tmp")
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(envelope, indent=2))
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
 
     def names(self) -> list[str]:
         return sorted(self.load())

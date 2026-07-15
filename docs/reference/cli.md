@@ -52,6 +52,23 @@ sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted). Use the same passphras
 when you run `pyharness` so the session can open it. See
 [Use the secrets vault](../how-to/use-the-vault.md).
 
+## `pyharness-profiles`
+
+Manage encrypted browser login profiles (`pyharness/cli_profiles.py`).
+
+```bash
+pyharness-profiles list                 # names + saved-at + cookie count + domains — never values
+pyharness-profiles rm NAME
+pyharness-profiles login NAME [URL]     # headed browser; log in, press Enter to capture + encrypt
+```
+
+`login` opens a real browser window so you can log in yourself (2FA and all), then
+saves the session state. Files live under `~/.pyharness/profiles/` (override
+`PYHARNESS_PROFILES_DIR`), sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted)
+— the same passphrase as the vault. `login` needs the `pyharness[browser]` extra.
+When profiles exist, `pyharness` prompts for the passphrase at startup so a session
+can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
+
 ## Make targets
 
 Day-to-day you drive these through `make` (see [Configuration](configuration.md)

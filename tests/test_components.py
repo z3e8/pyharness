@@ -1202,6 +1202,272 @@ def test_browser_look_gated_only_after_secret_injected(tmp_path):
     assert cap.has_injected_secrets("sid") is True
 
 
+# --- Site profiles: persistent web identity (G3, Direction #5) ---------------
+# Cookie material is credential-grade, so these prove the two invariants that
+# matter: the cleartext storage_state never lands on disk unencrypted, and agent
+# code only ever sees a name/counts, never the cookies. No chromium — a fake
+# driver stands in for the storage_state round-trip.
+
+_SENTINEL_STATE = {
+    "cookies": [{"name": "sid", "value": "TOP-SECRET-COOKIE", "domain": "linkedin.com", "path": "/"}],
+    "origins": [{"origin": "https://linkedin.com", "localStorage": []}],
+}
+
+
+class _FakeProfileContext:
+    """A browser context that yields a canned storage_state on save."""
+
+    def __init__(self, state):
+        self._state = state
+        self.storage_state_calls: list = []
+
+    def new_page(self):
+        return _FakePage()
+
+    def storage_state(self, indexed_db=None):
+        self.storage_state_calls.append(indexed_db)
+        return self._state
+
+    def close(self):
+        pass
+
+
+class _FakeProfileBrowser:
+    def __init__(self, save_state):
+        self._save_state = save_state
+        self.opened_with = "UNSET"  # records new_context(storage_state=...)
+
+    def new_context(self, storage_state=None):
+        self.opened_with = storage_state
+        # After a restore, the context reports back the state it was opened with
+        # (an empty session reports the canned save_state).
+        return _FakeProfileContext(storage_state or self._save_state)
+
+    def close(self):
+        pass
+
+
+def _fake_driver(save_state=None):
+    browser = _FakeProfileBrowser(save_state or {"cookies": [], "origins": []})
+    return SimpleNamespace(chromium=SimpleNamespace(launch=lambda headless=True: browser)), browser
+
+
+def _store(tmp_path):
+    from pyharness.security.profiles import ProfileStore
+
+    return ProfileStore(tmp_path / "profiles", "test-pass")
+
+
+def test_profile_store_round_trip_and_wrong_passphrase(tmp_path):
+    from pyharness.security.profiles import ProfileStore
+
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    assert store.load("linkedin") == _SENTINEL_STATE
+    assert store.names() == ["linkedin"]
+    assert store.exists("linkedin") and not store.exists("google")
+    assert oct((tmp_path / "profiles" / "linkedin.enc").stat().st_mode)[-3:] == "600"
+
+    with pytest.raises(Exception):  # noqa: PT011 - Fernet InvalidToken, any auth failure
+        ProfileStore(tmp_path / "profiles", "wrong-pass").load("linkedin")
+
+    store.delete("linkedin")
+    assert store.names() == []
+
+
+def test_profile_store_rejects_bad_names(tmp_path):
+    store = _store(tmp_path)
+    for bad in ("../escape", "a/b", "", "A B", "has.dot"):
+        with pytest.raises(ValueError):
+            store.save(bad, _SENTINEL_STATE)
+        with pytest.raises(ValueError):
+            store.load(bad)
+
+
+def test_profile_cleartext_never_on_disk(tmp_path):
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    for path in (tmp_path / "profiles").rglob("*"):
+        if path.is_file():
+            assert b"TOP-SECRET-COOKIE" not in path.read_bytes()
+
+
+def test_profile_store_from_env_fails_closed_without_passphrase(tmp_path, monkeypatch):
+    from pyharness.security.profiles import ProfileStore
+
+    monkeypatch.delenv("PYHARNESS_VAULT_PASSPHRASE", raising=False)
+    assert ProfileStore.from_env() is None
+
+
+def test_open_browser_with_profile_restores_state(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    driver, browser = _fake_driver()
+    cap._pw = driver
+
+    sid = cap.open_browser(profile="linkedin")
+    assert browser.opened_with == _SENTINEL_STATE  # restored into new_context
+    assert cap._sessions[sid].profile == "linkedin"
+    assert isinstance(sid, str) and len(sid) == 32  # a bare session id, no cookies
+
+
+def test_open_browser_plain_does_not_touch_profiles(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    cap = BrowserCapability(Workspace(tmp_path), profiles=None)  # no store configured
+    driver, browser = _fake_driver()
+    cap._pw = driver
+
+    sid = cap.open_browser()  # plain open works with no passphrase
+    assert cap._sessions[sid].profile is None
+    assert browser.opened_with is None
+
+
+def test_open_browser_profile_fails_closed(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    cap = BrowserCapability(Workspace(tmp_path), profiles=None)
+    cap._pw, _ = _fake_driver()
+    with pytest.raises(RuntimeError, match="PYHARNESS_VAULT_PASSPHRASE"):
+        cap.open_browser(profile="linkedin")
+
+    cap2 = BrowserCapability(Workspace(tmp_path), profiles=_store(tmp_path))
+    cap2._pw, _ = _fake_driver()
+    with pytest.raises(KeyError):  # unknown profile
+        cap2.open_browser(profile="nope")
+
+
+def _profile_session(cap, profile="linkedin", state=_SENTINEL_STATE):
+    """Inject a session whose context reports `state` on save, tagged `profile`."""
+    from pyharness.broker.capabilities.browser import _BrowserSession
+    from pyharness.security.sink import SecretSink
+
+    ctx = _FakeProfileContext(state)
+    cap._sessions["sid"] = _BrowserSession(
+        browser=_FakeClient(), context=ctx, page=_FakePage(), sink=SecretSink(None), profile=profile
+    )
+    return ctx
+
+
+def test_save_profile_returns_counts_never_values(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    ctx = _profile_session(cap, profile=None)  # not yet a named profile
+
+    result = cap.save_profile("sid", "linkedin")
+    assert result == {"profile": "linkedin", "cookies": 1, "origins": 1}
+    assert "TOP-SECRET-COOKIE" not in repr(result)
+    assert True in ctx.storage_state_calls  # indexed_db=True passed on save
+    assert store.load("linkedin") == _SENTINEL_STATE
+    assert cap._sessions["sid"].profile == "linkedin"  # now refreshes on close
+
+
+def test_list_profiles_returns_names_only(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    assert cap.list_profiles() == ["linkedin"]
+    assert BrowserCapability(Workspace(tmp_path), profiles=None).list_profiles() == []
+
+
+def test_close_refreshes_profile_and_audits(tmp_path):
+    import json
+
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    store.save("linkedin", {"cookies": [], "origins": []})  # stale
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store, audit=audit)
+    _profile_session(cap, profile="linkedin")  # context now holds fresh _SENTINEL_STATE
+
+    cap.close_browser("sid")
+    assert store.load("linkedin") == _SENTINEL_STATE  # rotated state persisted
+    entries = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    events = [e for e in entries if e.get("event") == "profile_saved"]
+    assert events and events[0]["profile"] == "linkedin" and events[0]["trigger"] == "close"
+    from pyharness.audit import verify_chain
+
+    assert verify_chain(tmp_path / "audit.jsonl")[0]  # the close-time event stays in the hash chain
+
+
+def test_close_all_only_refreshes_profile_sessions(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    _profile_session(cap, profile=None)  # a plain session
+
+    cap.close_all()
+    assert store.names() == []  # plain session saved nothing
+
+
+def test_profile_ops_gating(tmp_path):
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS, BrowserCapability
+    from pyharness.core.session import _opens_with_profile
+
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    prompted = []
+
+    def approver(request):
+        prompted.append(request.action)
+        return True
+
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    cap._pw, _ = _fake_driver()
+    policy = Policy(require_approval={"browser.save_profile"}, approve_if=[_opens_with_profile])
+    broker = _broker(tmp_path, policy=policy, approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+
+    ns["open_browser"]()  # plain open: free
+    ns["list_profiles"]()  # names only: free
+    assert prompted == []
+
+    ns["open_browser"](profile="linkedin")  # restores an identity: gated
+    _profile_session(cap)
+    ns["save_profile"]("sid", "linkedin")  # persists a credential: gated
+    assert prompted == ["browser.open_browser", "browser.save_profile"]
+
+    # Neither op is grant-coverable: scope() must yield None for both.
+    assert "browser.open_browser" not in MUTATING_ACTIONS
+    assert cap.scope("open_browser", (), {"profile": "linkedin"}) is None
+    assert cap.scope("save_profile", ("sid", "linkedin"), {}) is None
+
+
+def test_open_browser_profile_preview_names_profile_and_domains(tmp_path):
+    from pyharness.broker.capabilities.browser import BrowserCapability
+
+    store = _store(tmp_path)
+    store.save("linkedin", _SENTINEL_STATE)
+    cap = BrowserCapability(Workspace(tmp_path), profiles=store)
+    cat, summary = cap.preview("open_browser", (), {"profile": "linkedin"})
+    assert cat is ActionCategory.OUTWARD
+    assert "linkedin" in summary and "linkedin.com" in summary
+    # A missing profile must not make the preview raise.
+    _, summary2 = cap.preview("open_browser", (), {"profile": "ghost"})
+    assert "ghost" in summary2
+
+
+def test_encrypted_file_save_is_atomic_and_0600(tmp_path):
+    from pyharness.security.vault import EncryptedFile
+
+    path = tmp_path / "sub" / "secrets.enc"
+    ef = EncryptedFile(path, "pw")
+    ef.save({"a": "b"})
+    assert ef.load() == {"a": "b"}
+    assert oct(path.stat().st_mode)[-3:] == "600"
+    assert list((tmp_path / "sub").glob("*.tmp")) == []  # no stray temp file
+
+
 # --- Approval preview & taxonomy (C5) ----------------------------------------
 
 

@@ -42,6 +42,7 @@ environment, **not** committed to `.env` if sensitive.
 | `PYHARNESS_VAULT_PASSPHRASE` | prompted | Passphrase for the encrypted secrets file. |
 | `PYHARNESS_VAULT_FILE` | `~/.pyharness/secrets.enc` | Path to the encrypted file. |
 | `PYHARNESS_SECRET_<NAME>` | — | An env-backed secret the agent can reference as `<name>` (lowercased). |
+| `PYHARNESS_PROFILES_DIR` | `~/.pyharness/profiles` | Directory holding encrypted browser login profiles (`<name>.enc`), sealed with `PYHARNESS_VAULT_PASSPHRASE`. See [site profiles](../how-to/site-profiles.md). |
 
 ## Web search
 
