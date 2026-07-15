@@ -3,7 +3,8 @@
 The public surface exported from `pyharness` (`pyharness/__init__.py`):
 `Session`, `Agent`, `Kernel`, `Workspace`, `Budget`, `BudgetExceeded`, `Policy`,
 `Decision`, `ActionCategory`, `ApprovalOutcome`, `GrantLedger`, `GrantScope`,
-`Vault`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`, `ToolCall`.
+`Vault`, `ProfileStore`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`,
+`ToolCall`.
 
 Most use only `Session` and `Budget`.
 
@@ -16,10 +17,12 @@ Session(
     llm=None,                  # defaults to AnthropicLLM(budget=...)
     budget=None,               # Budget — defaults to unlimited
     policy=None,               # Policy — defaults to requiring approval for
-                               #   skills.save_skill, packages.install,
-                               #   tools.add_mcp_server, and non-read-only
-                               #   MCP tool calls
+                               #   skills.save_skill, skills.edit_skill,
+                               #   packages.install, tools.add_mcp_server,
+                               #   and non-read-only MCP tool calls
     vault=None,                # Vault — defaults to Vault.from_env()
+    profiles=None,             # ProfileStore — encrypted browser login profiles;
+                               #   defaults to ProfileStore.from_env() (None w/o passphrase)
     registry=None,             # Registry — Session registers the external
                                #   capability tools (web/http/browser/packages),
                                #   MCP servers, and learned skills into it
@@ -30,13 +33,21 @@ Session(
                                #   path is kept (even if absent) as the target
                                #   for add_mcp_server(save=True)
     skills_dir=None,           # defaults to ~/.pyharness/skills
+    index_db=None,             # str | Path — the session index (stats/
+                               #   inspect_session builtins + history preamble).
+                               #   None leaves them dataless; the CLI passes
+                               #   ~/.pyharness/index.db
 )
 ```
 
 - **`run(task: str) -> str`** — run one task to completion and return the final
   text answer. History persists across calls on the same `Session`.
-- **`close()`** — tear down the child process (if out-of-process) and any MCP
-  connections.
+- **`reflect() -> str | None`** — the post-session reflection pass (see
+  [observability](../how-to/observability.md#post-session-reflection)). The CLI
+  calls it at exit; library users opt in explicitly. Never raises.
+- **`close()`** — write the `session_end` trace line and fold the session into
+  the index (when configured), then tear down the child process (if
+  out-of-process) and any MCP connections.
 
 ```python
 from pyharness import Session, Budget
@@ -105,3 +116,18 @@ Vault.from_env()               # dict + env, plus encrypted file when configured
 `names()` lists available secret names; `get(name)` resolves a value **in the
 parent only** — it is never placed in the agent's kernel. See
 [Use the secrets vault](../how-to/use-the-vault.md).
+
+## `ProfileStore`
+
+```python
+ProfileStore(root, passphrase)
+ProfileStore.from_env()          # None when PYHARNESS_VAULT_PASSPHRASE is unset (fail closed)
+```
+
+Named, encrypted browser `storage_state` blobs (persistent web identity), sealed
+with the same scrypt+Fernet envelope as the vault. `names()` / `exists(name)` /
+`info(name)` expose metadata only; `load(name)` returns the storage_state dict
+**in the parent only** (the browser capability restores it into a context — it is
+never placed in the agent's kernel). `save(name, state)` and `delete(name)` manage
+the store. See
+[Keep the agent logged in](../how-to/site-profiles.md).

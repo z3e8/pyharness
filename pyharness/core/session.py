@@ -13,6 +13,8 @@ from ..broker.capabilities import (
     HistoryCapability,
     HttpSessionCapability,
     LLMCapability,
+    NotifyCapability,
+    ObservabilityCapability,
     PackagesCapability,
     SearchCapability,
     SecretsCapability,
@@ -29,6 +31,7 @@ from ..broker.remote import RemoteKernel
 from ..budget import Budget
 from ..llm.client import PROVIDER_SECRET_ENV, AnthropicLLM
 from ..security.policy import Policy
+from ..security.profiles import ProfileStore
 from ..security.vault import PASSPHRASE_ENV, Vault
 from ..tools.registry import Registry
 from ..trace import TraceLog
@@ -51,6 +54,16 @@ def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
     return bool(method) and method.upper() in MUTATING_METHODS
 
 
+def _opens_with_profile(action: str, args: tuple, kwargs: dict) -> bool:
+    """Force approval when a browser opens with a saved login profile — it acts as
+    that identity, and this is the one human checkpoint before free navigation
+    transmits the restored cookies to the site. A plain `open_browser()` stays
+    free. The profile is the first positional arg or the `profile=` keyword."""
+    if action != "browser.open_browser":
+        return False
+    return bool(kwargs.get("profile") or (args[0] if args else None))
+
+
 class Session:
     """One conversation between the user and the agent. Owns the five things that
     must stay consistent: history, kernel, policy + budget, audit log, and the
@@ -64,12 +77,14 @@ class Session:
         budget: Budget | None = None,
         policy: Policy | None = None,
         vault: Vault | None = None,
+        profiles: ProfileStore | None = None,
         registry: Registry | None = None,
         approver: Approver | None = None,
         on_event: Callable[[str, str], None] | None = None,
         out_of_process: bool = False,
         mcp_config: str | Path | dict | None = None,
         skills_dir: str | Path | None = None,
+        index_db: str | Path | None = None,
     ):
         telemetry.setup_telemetry()
         self.id = uuid4().hex
@@ -78,6 +93,17 @@ class Session:
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
+
+        # One event sink shared by the agent loop and any capability that emits
+        # events (notify): everything lands in trace.jsonl, then the caller's
+        # on_event (the CLI renderer) sees it live.
+        def on_event_traced(kind: str, text: str, **extra) -> None:
+            # llm_token fires once per streaming chunk — too frequent for trace
+            if kind != "llm_token":
+                self.trace.record(kind, text, **extra)
+            if on_event is not None:
+                on_event(kind, text)
+
         # Saving a skill (agent-authored code that auto-loads later) and
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
@@ -93,20 +119,28 @@ class Session:
         self.policy = policy or Policy(
             require_approval={
                 "skills.save_skill",
+                "skills.edit_skill",
                 "packages.install",
                 "tools.add_mcp_server",  # mounting a server installs code
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
+                # Persisting a login writes a standing credential — sign off once.
+                "browser.save_profile",
             },
             approve_if=[
                 _is_mutating_http,
                 _look_after_injected_secret,
+                _opens_with_profile,
                 # MCP tool calls prompt unless the server marks them read-only;
                 # the registry is read at decision time (it's built below).
                 unvetted_mcp_call(lambda: self.registry),
             ],
         )
         self.vault = vault or Vault.from_env()
+        # Encrypted, named browser login profiles (persistent web identity). None
+        # when no vault passphrase is set — opening a profile then fails closed
+        # rather than falling back to plaintext.
+        self.profiles = profiles or ProfileStore.from_env()
         self.registry = registry or Registry()
         # A path is remembered even if the file doesn't exist yet, so
         # tools.add_mcp_server(save=True) has somewhere to write; a dict config
@@ -127,6 +161,15 @@ class Session:
 
         self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
         load_skills(self.registry, self.skills_dir)
+        # Lessons (distilled cross-session facts) live beside the skills root.
+        self.lessons_path = self.skills_dir.parent / "lessons.json"
+
+        # The session index (direction 5) — a derived SQLite view over past
+        # sessions' JSONL, feeding the `stats`/`inspect_session` builtins and the
+        # preamble. None (the default) leaves those dataless; the CLI passes the
+        # global DB. Refresh is fail-open: the index is a cache, never a blocker.
+        self.index_db = Path(index_db).expanduser() if index_db else None
+        self._refresh_index()
 
         # Variables agent-controlled code must never see: env-backed secrets
         # (the vault's prefix), the file-vault passphrase, and the provider API
@@ -143,7 +186,9 @@ class Session:
         # One outbox shared by the browser (fills it via look()) and the agent
         # loop (drains it into image content blocks after each cell).
         self.media = MediaOutbox()
-        self.browser = BrowserCapability(self.workspace, vault=self.vault, media=self.media)
+        self.browser = BrowserCapability(
+            self.workspace, vault=self.vault, media=self.media, profiles=self.profiles, audit=self.audit
+        )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
@@ -163,8 +208,12 @@ class Session:
                 mcp_config_path=self.mcp_config_path,
             ),
             SecretsCapability(self.vault),
-            SkillsCapability(self.registry, self.skills_dir),
+            # Skill authorship/outcomes land in the trace (not the display stream)
+            # so the session index can attribute skill uses to sessions.
+            SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record),
             HistoryCapability(self.audit),
+            ObservabilityCapability(self.index_db, self.llm),
+            NotifyCapability(on_event=on_event_traced),
         ):
             self.broker.register(capability)
 
@@ -182,8 +231,8 @@ class Session:
              "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
              "web", ("http", "request", "post", "put", "session", "api", "cookie", "upload", "rest")),
             (self.browser,
-             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page.",
-             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form")),
+             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page. Named login profiles persist across sessions (open_browser(profile=...) / save_profile).",
+             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form", "profile", "login", "cookie", "persistent", "identity")),
             (PackagesCapability(self.session_venv),
              "Install Python packages into the session for later import.",
              "packages", ("install", "pip", "package", "dependency", "library", "import")),
@@ -211,13 +260,6 @@ class Session:
             else Kernel(self.broker.namespace())
         )
 
-        def on_event_traced(kind: str, text: str, **extra) -> None:
-            # llm_token fires once per streaming chunk — too frequent for trace
-            if kind != "llm_token":
-                self.trace.record(kind, text, **extra)
-            if on_event is not None:
-                on_event(kind, text)
-
         self.agent = Agent(
             self.llm,
             self.kernel,
@@ -225,8 +267,87 @@ class Session:
             workspace_root=self.workspace.dir,
             on_event=on_event_traced,
             media=self.media,
+            preamble_extra=self._render_history_preamble(),
         )
         self.messages: list[dict] = []
+        self._closed = False
+        self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
+
+    def _refresh_index(self) -> None:
+        """Bring the session index up to date (all remembered roots plus this
+        session's parent dir). Fail-open — a broken index never blocks a session."""
+        if self.index_db is None:
+            return
+        try:
+            from ..index import update_index
+
+            update_index(
+                self.index_db, [self.workspace.root.parent], skills_dir=self.skills_dir
+            )
+        except Exception:  # noqa: BLE001 — the index is a cache, never a blocker
+            import logging
+
+            logging.getLogger("pyharness.index").debug(
+                "index refresh failed", exc_info=True
+            )
+
+    def _render_history_preamble(self) -> str:
+        """A few ambient lines from the index — recent sessions and skill trust —
+        appended to the system preamble so the agent starts oriented in its own
+        past instead of having to remember to look. Empty without an index."""
+        sessions: list = []
+        skills: list = []
+        if self.index_db is not None and self.index_db.exists():
+            try:
+                from ..index import query
+
+                sessions = query(
+                    self.index_db,
+                    "SELECT name, task, outcome, cost_usd FROM sessions "
+                    "ORDER BY started DESC LIMIT 5",
+                )
+                skills = query(
+                    self.index_db,
+                    "SELECT name, verified, uses, worked, failed FROM skills "
+                    "ORDER BY last_used DESC LIMIT 10",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        lines: list[str] = []
+        if sessions:
+            lines.append("## Recent sessions (query more with stats())")
+            for s in sessions:
+                task = (s["task"] or "")[:70]
+                lines.append(
+                    f"- {s['name']}: {task!r} — {s['outcome']}, ${s['cost_usd'] or 0:.2f}"
+                )
+        if skills:
+            lines.append("## Skills (trust from real runs; details via describe_tool)")
+            for s in skills:
+                state = "verified" if s["verified"] else "unverified"
+                lines.append(
+                    f"- {s['name']}: {state}, {s['worked']}/{s['uses']} runs worked"
+                )
+        try:
+            from ..lessons import established
+
+            lessons = established(self.lessons_path)
+        except Exception:  # noqa: BLE001
+            lessons = []
+        if lessons:
+            lines.append("## Lessons (facts observed across sessions)")
+            lines += [f"- {e['text']}" for e in lessons[-10:]]
+        return "\n".join(lines)
+
+    def reflect(self) -> str | None:
+        """Run the post-session reflection pass (see reflect.py): a separate
+        cheap-model read of this session's trace that may propose one durable
+        improvement — a new skill, a delta edit, a lesson, or nothing. Skill
+        writes go through the broker (same approval gate as the agent's own).
+        Returns a one-line summary, or None. Never raises."""
+        from ..reflect import reflect as run_reflection
+
+        return run_reflection(self)
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)
@@ -252,6 +373,16 @@ class Session:
     def close(self) -> None:
         """Tear down session resources (the child process, if out-of-process,
         and any MCP server connections)."""
+        if not self._closed:
+            self._closed = True
+            self.trace.record(
+                "session_end",
+                session_id=self.id,
+                spent_usd=self.budget.spent_usd,
+                calls=self.budget.calls,
+                by_model=self.budget.by_model,
+            )
+            self._refresh_index()  # fold this session into the index for the next one
         if hasattr(self.kernel, "close"):
             self.kernel.close()
         self.http.close_all()

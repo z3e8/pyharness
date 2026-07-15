@@ -1,6 +1,6 @@
 # CLI
 
-Three console scripts are installed by the package (`pyproject.toml`).
+Five console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
@@ -29,11 +29,19 @@ pyharness [SESSION_DIR]
   (e.g. HTTP `DELETE`) and credential steps (`fill_secret`, secret-gated `look`)
   never offer `a`. See
   [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
+- Agent notifications (`notify(...)`) print standalone as `[agent note] …` —
+  agent-authored text, rendered distinctly from approval prompts and never
+  asking for input — and are mirrored best-effort as a desktop notification.
 - A turn that fails mid-stream is retried once, then aborted without crashing the
   REPL. `Ctrl-C` aborts the in-flight turn (e.g. a slow web search) and drops back
   to the prompt with history intact; `Ctrl-D` exits.
 
 Each turn prints the streamed reply and a `[spent $… over N calls]` line.
+
+On exit, the session is folded into the [session index](../how-to/observability.md#the-session-index)
+and the [reflection pass](../how-to/observability.md#post-session-reflection)
+runs (a skill proposal still asks for approval; `PYHARNESS_REFLECT=false` skips
+the pass).
 
 ## `pyharness-vault`
 
@@ -70,6 +78,38 @@ pyharness-mcp rm NAME
 
 See [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md) for the
 config shape and the in-session alternative (`add_mcp_server`).
+
+## `pyharness-index`
+
+Maintain and query the [session index](../how-to/observability.md#the-session-index)
+(`pyharness/cli_index.py`).
+
+```bash
+pyharness-index                    # update: scan ./.sessions + all remembered roots
+pyharness-index --rebuild          # drop everything and re-derive from JSONL
+pyharness-index --sql "SELECT..."  # read-only query, rows printed as JSON
+pyharness-index --schema           # tables/views reference
+```
+
+The DB is `~/.pyharness/index.db` (override with `PYHARNESS_INDEX_DB`); running
+the agent keeps it fresh automatically, so this CLI is for ad-hoc queries and
+rebuilds.
+## `pyharness-profiles`
+
+Manage encrypted browser login profiles (`pyharness/cli_profiles.py`).
+
+```bash
+pyharness-profiles list                 # names + saved-at + cookie count + domains — never values
+pyharness-profiles rm NAME
+pyharness-profiles login NAME [URL]     # headed browser; log in, press Enter to capture + encrypt
+```
+
+`login` opens a real browser window so you can log in yourself (2FA and all), then
+saves the session state. Files live under `~/.pyharness/profiles/` (override
+`PYHARNESS_PROFILES_DIR`), sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted)
+— the same passphrase as the vault. `login` needs the `pyharness[browser]` extra.
+When profiles exist, `pyharness` prompts for the passphrase at startup so a session
+can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
 
 ## Make targets
 

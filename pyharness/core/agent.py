@@ -66,24 +66,49 @@ import them. This is the complete list; nothing else is callable by bare name.
         # `name`; needs human approval. Credentials go as "secret:NAME" vault
         # refs, never cleartext. save=True persists it for later sessions.
   Skills — package a repeatable procedure so you and later sessions can reuse it:
-    save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+    save_skill(name, description, instructions, files=None, keywords=(), category=None, check=None) -> str
         # instructions = markdown the how-to; files = {"helper.py": source, ...}
         # optional bundled modules. Persists to disk and registers as a learned
         # tool — find it with search_tools, read it with describe_tool, load its
         # code with use_tool. Save a skill once a procedure is worth repeating.
-        # To revise a skill, save_skill with the SAME name overwrites it — fold
-        # what you learned (a changed selector, a gotcha) into its instructions.
+        # check = one line saying how a run confirms it worked (an assertion, a
+        # re-fetch, an expected state) — give every skill one, and run it before
+        # recording an outcome.
+    edit_skill(name, edits, reason="") -> str
+        # revise a skill with targeted deltas: edits = [{"old": <exact text
+        # occurring once in its instructions>, "new": <replacement>}, ...].
+        # Prefer this over re-saving the whole procedure — surgical fixes keep
+        # the detail you aren't changing. The revision is unverified until it
+        # runs. (save_skill with the same name still fully replaces a skill.)
     record_skill_use(name, outcome, note="") -> str
         # after actually running a skill, log how it went: outcome "worked" or
-        # "failed", plus a short note (a changed selector, why it broke). The
-        # first "worked" marks the skill verified; the log lets you and later
-        # sessions see how it last behaved and catch a breaking change.
+        # "failed", plus a short note (a changed selector, why it broke). Run the
+        # skill's check first — outcomes should rest on evidence. The first
+        # "worked" marks the skill verified; the log lets you and later sessions
+        # see how it last behaved and catch a breaking change.
   Reflect on your own work — the observe half of do → observe → revise:
     history(limit=20, action=None) -> list[dict]
         # your own recent actions, oldest last: what you sent, where, whether it
         # was allowed and whether it succeeded. action filters by prefix ("http",
         # "browser.click"). Use it to confirm an effect landed, or to see why an
         # action was refused, before deciding what to do next.
+    stats(sql=None, limit=200) -> list[dict] | str
+        # read-only SQL over your session index: every PAST session, LLM call,
+        # capability call, error, and skill use, plus views (skill_stats,
+        # skill_run_costs, error_taxonomy, session_costs). Call with no sql for
+        # the schema. Use it for aggregate questions — how reliable is a skill,
+        # what keeps failing, what did similar tasks cost.
+    inspect_session(session, question) -> str
+        # ask one targeted question about one past session ("why did the
+        # greenhouse skill fail?"); a cheap worker reads that transcript and
+        # returns the answer. session = a name from stats() or the preamble.
+  Reaching the human:
+    notify(message, level="info") -> str
+        # a one-way note shown to the user immediately (and, best-effort, as a
+        # desktop notification). level: "info" a checkpoint worth knowing;
+        # "attention" blocked / needs a human soon; "done" long work finished.
+        # Use sparingly — checkpoints and attention-worthy events, never
+        # narration; your plain-text reply remains the answer channel.
 
 TOOLS — everything external. Anything not in the builtins list above is a tool:
 web access, a browser, HTTP sessions, package installation, MCP servers, and
@@ -95,9 +120,12 @@ call its functions on the returned module. Each call is gated
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element
                             #   refs/click/fill by ref/look — a screenshot you
-                            #   see/read). Reads are free;
+                            #   see/read; open_browser(profile=...) restores a saved
+                            #   login and save_profile persists one — both need
+                            #   approval). Reads are free;
                             #   state-changing calls need human approval. Prefer the
                             #   http path over the browser for sensitive credentials.
+                            #   list_profiles() shows saved logins to reuse.
   search_tools("install")   # packages -> install a PyPI lib into the session, then import it
 
 A learned skill (tagged `learned`) is a tool that ships with a runbook —
@@ -177,6 +205,7 @@ class Agent:
         workspace_root: str | Path | None = None,
         on_event: Callable[[str, str], None] | None = None,
         media=None,
+        preamble_extra: str = "",
     ):
         self.llm = llm
         self.kernel = kernel
@@ -184,6 +213,9 @@ class Agent:
         self.tier = tier
         self.max_steps = max_steps
         self.workspace_root = workspace_root
+        # Session-computed ambient context (recent sessions, skill trust) appended
+        # after render_context — world-state, so it belongs in the preamble.
+        self.preamble_extra = preamble_extra
         self.on_event = on_event or (lambda kind, text, **kw: None)
         # Parent-side outbox a cell's capabilities fill with images (browser.look);
         # drained after each kernel.run into the tool_result's content blocks.
@@ -206,6 +238,8 @@ class Agent:
 
     def _run_loop(self, messages: list[dict]) -> str:
         system = f"{SYSTEM_PROMPT}\n\n{render_context(self.workspace_root)}"
+        if self.preamble_extra:
+            system = f"{system}\n\n{self.preamble_extra}"
         for _ in range(self.max_steps):
             self.budget.check()
 
@@ -228,6 +262,7 @@ class Agent:
                 self.on_event("error", f"LLM call failed: {exc}")
                 raise
 
+            usage = completion.usage
             self.on_event(
                 "llm_call",
                 completion.text or "",
@@ -238,6 +273,8 @@ class Agent:
                 tool_calls=[{"name": tc.name, "input": tc.input} for tc in completion.tool_calls],
                 cost_usd=round(self.budget.spent_usd - cost_before, 6),
                 latency_s=round(time.time() - t0, 3),
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
             )
 
             messages.append({"role": "assistant", "content": completion.content})

@@ -25,6 +25,7 @@ class ToolInfo:
     instructions: str | None = None  # a learned skill's procedure, shown by describe()
     verified: bool = True  # a learned skill starts False, earning trust on a real run
     uses: tuple[dict, ...] = ()  # a learned skill's recent-use log (bounded, oldest first)
+    check: str | None = None  # a learned skill's own success test ("how do I know it worked")
 
 
 class Registry:
@@ -144,6 +145,7 @@ class Registry:
         category: str | None = None,
         verified: bool = False,
         uses: tuple[dict, ...] = (),
+        check: str | None = None,
     ) -> str:
         """Register a learned skill — markdown instructions plus an optional
         bundled module built on first use (`source="learned"`). It is a tool
@@ -158,7 +160,7 @@ class Registry:
         self._tools[name] = ToolInfo(
             name, description, source="learned", loader=loader,
             instructions=instructions, keywords=tuple(keywords),
-            category=category, verified=verified, uses=tuple(uses),
+            category=category, verified=verified, uses=tuple(uses), check=check,
         )
         return name
 
@@ -325,6 +327,8 @@ def _skill_trust_block(info: ToolInfo) -> str:
             "steps below as a hypothesis: check them before relying on them."
         )
     lines = [head]
+    if info.check:
+        lines.append(f"check (run this to confirm it worked): {info.check}")
     if info.uses:
         lines.append("recent uses (oldest first):")
         for entry in info.uses[-3:]:

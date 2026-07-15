@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ...security.policy import ActionCategory
 from ...tools.registry import Registry
-from ...tools.skills import record_use, register_skill_dir, write_skill
+from ...tools.skills import edit_skill_md, record_use, register_skill_dir, write_skill
 
 
 class SkillsCapability:
@@ -18,21 +18,32 @@ class SkillsCapability:
 
     name = "skills"
 
-    def __init__(self, registry: Registry, skills_dir: str | Path):
+    def __init__(self, registry: Registry, skills_dir: str | Path, on_event=None):
         self.registry = registry
         self.skills_dir = Path(skills_dir)
+        # Optional hook the session wires to its trace log, so skill authorship
+        # and outcomes land in the session record (the index reads them there).
+        self._on_event = on_event or (lambda kind, text="", **extra: None)
 
     def exports(self) -> dict:
-        return {"save_skill": self.save_skill, "record_skill_use": self.record_skill_use}
+        return {
+            "save_skill": self.save_skill,
+            "edit_skill": self.edit_skill,
+            "record_skill_use": self.record_skill_use,
+        }
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """Both ops only write under the skills root, so they are LOCAL. Saving a
-        skill's gate is a supply-chain sign-off (that code auto-loads in later
-        sessions); recording a use writes only metadata, so it isn't gated."""
+        """All ops only write under the skills root, so they are LOCAL. Saving or
+        editing a skill gates on a supply-chain sign-off (that content auto-loads
+        in later sessions); recording a use writes only metadata, so it isn't
+        gated."""
         name = kwargs.get("name") or (args[0] if args else "?")
         if op == "record_skill_use":
             outcome = kwargs.get("outcome") or (args[1] if len(args) >= 2 else "?")
             return ActionCategory.LOCAL, f"record use of skill {name!r}: {outcome}"
+        if op == "edit_skill":
+            edits = kwargs.get("edits") or (args[1] if len(args) >= 2 else [])
+            return ActionCategory.LOCAL, f"apply {len(edits)} edit(s) to skill {name!r}"
         return ActionCategory.LOCAL, f"save skill {name!r} to {self.skills_dir}"
 
     def save_skill(
@@ -43,19 +54,38 @@ class SkillsCapability:
         files: dict[str, str] | None = None,
         keywords: tuple[str, ...] = (),
         category: str | None = None,
+        check: str | None = None,
     ) -> str:
         """Save a reusable skill = markdown `instructions` plus optional bundled
         .py modules (`files` maps filename -> source). It reloads in later
-        sessions and is usable now via search_tools(name)/use_tool(name)."""
+        sessions and is usable now via search_tools(name)/use_tool(name).
+        `check` is the skill's success test — one line saying how a run confirms
+        it worked (an assertion, a re-fetch, an expected state) — so
+        record_skill_use rests on evidence, not impression."""
         skill_dir = write_skill(
             self.skills_dir, name, description, instructions,
-            files=files, keywords=tuple(keywords), category=category,
+            files=files, keywords=tuple(keywords), category=category, check=check,
         )
         register_skill_dir(self.registry, skill_dir)
+        self._on_event("skill_saved", name, skill=name)
         n = len(files or {})
         return (
             f"saved skill {name!r} ({n} bundled file{'s' * (n != 1)}) to {skill_dir} — "
             "unverified until you run it and record_skill_use(name, 'worked')."
+        )
+
+    def edit_skill(self, name: str, edits: list, reason: str = "") -> str:
+        """Revise a skill's instructions with targeted delta edits — each edit is
+        {"old": <exact text appearing once>, "new": <replacement>} — instead of
+        re-saving the whole procedure (a full rewrite is how accumulated detail
+        gets lost). Frontmatter and bundled files are untouched. The revised
+        skill is unproven again: verified clears until a real run works."""
+        skill_dir = edit_skill_md(self.skills_dir, name, edits)
+        register_skill_dir(self.registry, skill_dir)
+        self._on_event("skill_edited", name, skill=name, edits=len(edits), reason=reason)
+        return (
+            f"applied {len(edits)} edit(s) to skill {name!r} — unverified until a "
+            "run works and you record_skill_use(name, 'worked')."
         )
 
     def record_skill_use(self, name: str, outcome: str, note: str = "") -> str:
@@ -69,5 +99,6 @@ class SkillsCapability:
             raise KeyError(f"no learned skill {name!r} to record against")
         data = record_use(skill_dir, outcome, note)
         self.registry.set_skill_usage(name, data["verified"], tuple(data["uses"]))
+        self._on_event("skill_use", name, skill=name, outcome=outcome, note=note)
         state = "verified" if data["verified"] else "unverified"
         return f"recorded {outcome!r} for skill {name!r} (now {state})"

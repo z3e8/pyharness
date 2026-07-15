@@ -3,7 +3,7 @@ from .broker import ApprovalOutcome
 from .budget import Budget, BudgetExceeded
 from .core import Agent, Kernel, Session, Workspace
 from .llm import AnthropicLLM, Completion, ToolCall
-from .security import ActionCategory, Decision, GrantLedger, GrantScope, Policy, Vault
+from .security import ActionCategory, Decision, GrantLedger, GrantScope, Policy, ProfileStore, Vault
 from .tools import Registry
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "GrantScope",
     "Kernel",
     "Policy",
+    "ProfileStore",
     "Registry",
     "Session",
     "ToolCall",

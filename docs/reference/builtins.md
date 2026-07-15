@@ -8,8 +8,11 @@ to the session workspace.
 This is the authoritative contract the orchestrator is given (see
 `SYSTEM_PROMPT` in `pyharness/core/agent.py`). Each turn a small dynamic
 **session block** is appended to that static prompt — the current date/time and
-zone, the platform, and the workspace path — so the model has the world-state it
-would otherwise burn turns discovering (`render_context` in the same module).
+zone, the platform, and the workspace path (`render_context` in the same
+module), plus, when a [session index](../how-to/observability.md#the-session-index)
+is configured, a few ambient lines of the agent's own past: recent sessions
+(name, task, outcome, cost), skill trust states, and established lessons — so
+the model starts oriented in its history instead of having to remember to look.
 
 ## Files & shell
 
@@ -44,7 +47,7 @@ and `packages` categories — find them with `search_tools("web")` /
 |------|----------------|------------|
 | `web` | `web` | `search_results` (a raw ranked list to fan out over — each item `{title, url, snippet, published_date, author, score}`; backed by Exa, needs `EXA_API_KEY`, its per-query cost is not metered) + `fetch` (one-shot GET returning a readable page map — HTML reduced to clean markdown content plus `## FORMS` (each form's action/method and every field) and `## LINKS` (navigable links, resolved to absolute URLs) so the agent can see what to click and fill; non-HTML verbatim; static HTML only, JS-rendered affordances need `browser`. A thin wrapper over `http.request`; `save="path"` or a binary body writes to the workspace and returns a note pointing at the file, still carrying the FORMS/LINKS map) |
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, title, links, forms, text, path, bytes, preview, saved}` — `title`/`links`/`forms` are the parsed affordances, populated for HTML and riding inline even when the body spills to disk), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
-| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
+| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` (pass `profile="name"` to restore a saved login — needs approval, see below) / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `save_profile` (persist this browser's login as an encrypted profile — needs approval) / `list_profiles` (names only, free) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
 `describe_tool(name)` is the live source for each tool's exact signatures — the
@@ -79,6 +82,12 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
   `goto` invalidates them (re-snapshot on the new page), and an unknown or stale
   ref is rejected immediately with a clear message rather than after a locator
   timeout. Its body follows the same whole-or-on-disk rule as `read_text`.
+- **Stay logged in across sessions — named profiles.** `list_profiles()` shows
+  saved logins; `open_browser(profile="x")` opens already authenticated (skipping
+  login + 2FA), and after logging in fresh, `save_profile(session_id, "x")` persists
+  it. Cookies are encrypted at rest and never returned to agent code; opening or
+  saving a profile needs approval. See
+  [Keep the agent logged in](../how-to/site-profiles.md).
 - **Prefer the `http` path over `browser` for sensitive credentials** — the
   browser DOM is agent-readable, so it is lower-assurance.
 - Live handles (the `httpx.Client`, the Playwright page) stay parent-side, keyed
@@ -130,7 +139,8 @@ a declared `destructiveHint` always re-asks — see
 Package a repeatable procedure so this and later sessions can reuse it.
 
 ```python
-save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+save_skill(name, description, instructions, files=None, keywords=(), category=None, check=None) -> str
+edit_skill(name, edits, reason="") -> str
 record_skill_use(name, outcome, note="") -> str
 ```
 
@@ -138,8 +148,14 @@ record_skill_use(name, outcome, note="") -> str
 optional bundled modules. Persists to disk and registers as a learned tool. See
 [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md).
 
-> Saving a skill requires human approval by default (it writes code that
-> auto-loads in later sessions) — see [the approval policy](../explanation/security-and-audit.md).
+> Saving or editing a skill requires human approval by default (it writes
+> content that auto-loads in later sessions) — see
+> [the approval policy](../explanation/security-and-audit.md).
+
+**Every skill should carry a `check`** — one line saying how a run confirms the
+skill worked (an assertion, a re-fetch, an expected state). It is stored in the
+SKILL.md frontmatter and shown by `describe_tool` above the instructions, so
+`record_skill_use` outcomes rest on evidence, not the runner's impression.
 
 **Trust is earned, not asserted.** A newly saved or revised skill is
 **unverified** — it has never run successfully, so its steps are a hypothesis.
@@ -151,10 +167,13 @@ session sees how it last behaved. `search_tools` tags an `unverified` or
 above the instructions. Recording a use writes only metadata, so it is *not*
 gated for approval.
 
-**Revising a skill** needs no separate builtin: `save_skill` with the same name
-overwrites the prior version (stale bundled `.py` are dropped) and resets it to
-unverified while keeping the use log, so the agent folds what it learned into the
-instructions, re-saves, and re-earns trust on the next real run.
+**Revising a skill: prefer `edit_skill`.** `edits` is a list of
+`{"old": <exact text occurring once in the instructions>, "new": <replacement>}`
+deltas — surgical fixes that keep every detail not being corrected (a wholesale
+regeneration is how accumulated procedure knowledge gets destroyed). Frontmatter
+and bundled files are untouched; the revision resets to unverified while keeping
+the use log. `save_skill` with the same name still fully replaces a skill (stale
+bundled `.py` are dropped) when a rewrite is genuinely intended.
 
 ## Reflection
 
@@ -163,12 +182,46 @@ Read your own action record — the observe half of `do → observe → revise`.
 | Signature | Returns |
 |-----------|---------|
 | `history(limit=20, action=None) -> list[dict]` | your recent actions, oldest last: `{ts, action, decision?, ok?, args?, error?}`. `action` filters by prefix (`"http"`, `"browser.click"`) |
+| `stats(sql=None, limit=200) -> list[dict] \| str` | read-only SQL over the [session index](../how-to/observability.md#the-session-index) — every *past* session, LLM call, capability call, error, and skill use, plus aggregate views. No `sql` → the schema reference |
+| `inspect_session(session, question) -> str` | a targeted answer about one past session: a cheap-model worker reads that session's full transcript and returns the answer. `session` is a name from `stats()` or the preamble |
 
-The audit log lives at the session root, outside the workspace the file builtins
-are confined to, so `history()` is the only way agent code reaches it. It records
-*side effects* — every capability call, its decision (allow/approve/deny),
-whether it succeeded, and a secret-safe summary of what was sent — so you can
-confirm an effect landed (`request` returned 200), see why an action was refused,
-and revise from what actually happened. Your own cells and notes are already in
-context, so only the audit is surfaced. See
-[Security & audit](../explanation/security-and-audit.md).
+`history()` is this session's action record: the audit log lives at the session
+root, outside the workspace the file builtins are confined to, so this is the
+only way agent code reaches it. It records *side effects* — every capability
+call, its decision (allow/approve/deny), whether it succeeded, and a secret-safe
+summary of what was sent — so you can confirm an effect landed (`request`
+returned 200), see why an action was refused, and revise from what actually
+happened. Your own cells and notes are already in context, so only the audit is
+surfaced. See [Security & audit](../explanation/security-and-audit.md).
+
+`stats()`/`inspect_session()` are the cross-session half — **query the past,
+don't carry it**: aggregate questions ("how reliable is this skill", "what keeps
+failing on this host", "what did similar tasks cost") go to SQL; a targeted
+question about one run goes to a disposable worker so the transcript never
+enters the orchestrator's context. Both are dataless unless the session was
+given an index (`Session(index_db=...)`; the CLI wires it by default) — see
+[Observability](../how-to/observability.md). `stats` SQL runs on a read-only
+connection that cannot `ATTACH` other files; `inspect_session`'s worker call is
+metered against the session budget like any delegation.
+
+## Reaching the human
+
+| Signature | Returns |
+|-----------|---------|
+| `notify(message, level="info")` | `"delivered"` — a one-way note to the user |
+
+The agent's one **outbound** channel to the human, for use from inside a running
+cell: a checkpoint worth knowing (`"info"`), blocked / needs a human soon
+(`"attention"`), or long work finished (`"done"`). The message is shown live in
+the CLI under a fixed `[agent note]` prefix, recorded in the trace and the
+hash-chained audit, and mirrored best-effort as a desktop notification (macOS
+`osascript` / Linux `notify-send`; silently skipped where unavailable, with the
+agent's text only ever in the body under a fixed title).
+
+Strictly output-only: a notification carries no interactivity — nothing to
+click, confirm, or reply to — and is rendered unmistakably as agent-authored
+text, so it can never pass as an approval prompt. The approval prompt remains
+the only channel that accepts human input (see
+[Security & audit](../explanation/security-and-audit.md#the-channel-model)).
+The prompt teaches restraint: checkpoints and attention-worthy events, never
+narration — the plain-text reply remains the answer channel.
