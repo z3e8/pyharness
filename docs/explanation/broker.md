@@ -17,7 +17,11 @@ policy check  →  audit  →  budget (metered actions)  →  execute
   as `"<capability>.<operation>"` (e.g. `files.write`, `shell.bash`). On
   require-approval the broker builds an `ApprovalRequest` — a severity category
   plus a secret-safe summary, drawn from the owning capability's `preview` hook —
-  and hands it to the human `approver`.
+  and hands it to the human `approver`. First it checks the `GrantLedger`: a live
+  scoped grant matching the call's `(action-class, host)` auto-approves it (logged
+  with `grant_id`) without prompting; the human can mint such a grant by answering
+  the prompt. IRREVERSIBLE actions are never grant-covered. See
+  [scoped grants](security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 - **Audit** appends the call to a tamper-evident log.
 - **Budget** is checked before *metered* actions (`llm`, `agents`, `web`) so
   agent-initiated spend fails fast at the limit.

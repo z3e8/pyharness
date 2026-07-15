@@ -2,8 +2,8 @@
 
 The public surface exported from `pyharness` (`pyharness/__init__.py`):
 `Session`, `Agent`, `Kernel`, `Workspace`, `Budget`, `BudgetExceeded`, `Policy`,
-`Decision`, `ActionCategory`, `Vault`, `Registry`, `AuditLog`, `AnthropicLLM`,
-`Completion`, `ToolCall`.
+`Decision`, `ActionCategory`, `ApprovalOutcome`, `GrantLedger`, `GrantScope`,
+`Vault`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`, `ToolCall`.
 
 Most use only `Session` and `Budget`.
 
@@ -79,6 +79,17 @@ handed to an `approver` and recorded in the audit log: `LOCAL` (stays in the
 workspace), `OUTWARD` (sends off-box or acts on a remote), `IRREVERSIBLE` (a
 remote effect known to be unrecoverable). See
 [Security & audit](../explanation/security-and-audit.md).
+
+## `ApprovalOutcome` and scoped grants
+
+An `approver` may return an `ApprovalOutcome` (`DENY` / `ONCE` / `GRANT`) instead
+of a bare `bool` (`True` normalizes to `ONCE`, falsy to `DENY`). `GRANT` allows
+the call *and* mints a scoped grant for `request.scope` (a `GrantScope` of
+`action_class` + `target` host, or `None` when the call is not grantable). The
+`Broker` owns a `GrantLedger`; a live grant matching a later call auto-approves it
+without prompting. IRREVERSIBLE calls are never grantable. Pass a
+`Broker(..., grants=GrantLedger())` to share or inspect the ledger. See
+[scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 
 ## `Vault`
 

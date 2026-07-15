@@ -21,7 +21,13 @@ pyharness [SESSION_DIR]
 - If an encrypted vault file exists and no passphrase is set, prompts for it once.
 - Actions that require approval print `⚠ approval required [category]: action`
   and a one-line summary of the effect (method + url + body fields, or a browser
-  action with the page it lands on), then ask `allow? [y/N]`.
+  action with the page it lands on), then ask `allow? [y/N]`. When the action is
+  grantable (state-changing on a known host, and not irreversible), it instead
+  asks `allow? [y/a/N]` — `a` mints a session grant so all state-changing actions
+  of that class on that host flow without re-prompting. IRREVERSIBLE actions
+  (e.g. HTTP `DELETE`) and credential steps (`fill_secret`, secret-gated `look`)
+  never offer `a`. See
+  [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 - A turn that fails mid-stream is retried once, then aborted without crashing the
   REPL. `Ctrl-C` aborts the in-flight turn (e.g. a slow web search) and drops back
   to the prompt with history intact; `Ctrl-D` exits.

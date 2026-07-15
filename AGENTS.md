@@ -41,7 +41,7 @@ load-bearing seams are.
 |------|-----------------|
 | `pyharness/core/` | `session.py`, `agent.py`, `kernel.py`, `workspace.py`, `media.py` (image blocks back to the model) — the orchestration loop and persistent kernel |
 | `pyharness/broker/` | `dispatch.py` — the single choke point every side effect routes through (policy → audit → budget → execute) |
-| `pyharness/security/` | `policy.py`, `vault.py` — action policy + the encrypted secrets vault |
+| `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py` — action policy + the encrypted secrets vault |
 | `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
 | `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `cli.py`, `cli_vault.py` |

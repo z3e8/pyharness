@@ -52,10 +52,57 @@ A capability that owns gated ops supplies `preview(op, args, kwargs) ->
 (category, summary)`, so the arg-shape knowledge stays with the capability;
 anything else falls back to a conservative `OUTWARD` classification. The CLI
 approver prints `⚠ approval required [category]: action` then the summary, and
-asks `allow? [y/N]`.
+asks `allow? [y/N]` (or `[y/a/N]` when a grant is on offer — see below).
 
 > The `ApprovalRequest` is built from the **structured** call, never an
 > agent-supplied display string — so what a human sees is exactly what executes.
+
+### Scoped grants — approve a domain, not every click
+
+A 20-field job application is ~21 separate approvals if every `click`/`fill`/POST
+prompts on its own. A **grant** lets a human approve a *class of action on a host*
+once, so matching calls flow without re-prompting — while the risky ones still
+always ask.
+
+At a grantable prompt the CLI offers a third choice:
+
+```
+⚠ approval required [outward]: browser.click
+  click [ref=e12] 'button "Submit application"' on https://boards.greenhouse.com/acme
+  [y] this once  [a] all state-changing browser actions on boards.greenhouse.com this session  [N] no
+  allow? [y/a/N]
+```
+
+Answering `a` mints a grant for `(action-class, host)` — here `("browser",
+"boards.greenhouse.com")`. The `GrantLedger` lives on the `Broker` and is checked
+on the APPROVE path *before* the human is asked; a live matching grant
+auto-approves the call. The mechanics and the invariants that keep it safe:
+
+- **The scope is harness-derived**, never agent- or page-supplied. A capability's
+  optional `scope(op, args, kwargs) -> GrantScope | None` hook (mirroring
+  `preview()`) yields the key from the structured call: the host from the request
+  `url` or from Playwright's own `page.url`. The `[a]` label is rendered from a
+  fixed class-name map plus that host — no page text reaches it.
+- **IRREVERSIBLE is never covered and never mints.** A `DELETE` re-prompts every
+  time, even on a host you granted POSTs to; the ledger is consulted only for
+  non-IRREVERSIBLE calls. `fill_secret` (credential release) and the secret-gated
+  `look` are likewise excluded — their `scope()` returns `None`, so they always
+  ask.
+- **Exact match, no wildcards.** A grant on `boards.greenhouse.com` does not cover
+  `api.greenhouse.com`; there is no "all hosts" or "all actions" scope. If the
+  page navigates to another host, subsequent actions match the new host and
+  re-prompt.
+- **Grants never widen policy.** They short-circuit only the *prompt*, never the
+  decision — a `DENY` still denies, and `approve_if` predicates still run.
+- **Audited in the hash chain.** Issuance rides the approving call's entry
+  (`grant: {id, action_class, target, expires_at}`); each covered call records
+  `grant_id`; revocation records `{event: "grant_revoked", grant_id}`. The agent
+  sees all of this via `history()`.
+- **Session-lifetime, in-memory.** The ledger dies with the `Session`; nothing
+  persists across sessions, so "for this session" is literally true. Standing
+  policy has its own home — construct a `Session(policy=…)` without the gate.
+  (`GrantLedger.add` takes an optional `ttl_s`; the CLI mints session-lifetime
+  grants only. Plan-scoped grants are deferred to the recursive-`spawn` work.)
 
 ## Vault — secrets the agent can name but never read
 
