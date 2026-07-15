@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 from importlib import import_module
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
@@ -19,6 +21,11 @@ __all__ = ["HttpSessionCapability", "MUTATING_METHODS", "html_to_text"]
 # approval (see session.py / _is_mutating_http); reads (GET/HEAD/OPTIONS) stay
 # free. Kept here so the capability and the policy predicate share one list.
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# Mutating methods a scoped grant may cover. DELETE is excluded: it is classed
+# IRREVERSIBLE (see preview()) and must re-prompt every time, so it never yields a
+# grant scope.
+_GRANTABLE_METHODS = MUTATING_METHODS - {"DELETE"}
 
 
 def _apply_secret_auth(headers: dict, params: dict, *, secret: str, style: str, name, user) -> None:
@@ -87,6 +94,20 @@ class HttpSessionCapability:
             summary += f" (body: {', '.join(map(str, body))})"
         category = ActionCategory.IRREVERSIBLE if method == "DELETE" else ActionCategory.OUTWARD
         return category, summary
+
+    def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
+        """The grant key for a gated request: action-class "http" plus the target
+        host, parsed from the same method/url args `preview()` uses. Only mutating
+        methods that are not DELETE are grantable; DELETE (IRREVERSIBLE) and any
+        url without a parseable host yield None (not grantable → always prompts)."""
+        if op != "request":
+            return None
+        method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
+        if method not in _GRANTABLE_METHODS:
+            return None
+        url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
+        host = urlsplit(url).hostname if url else None
+        return GrantScope("http", host.lower()) if host else None
 
     def open_session(self) -> str:
         """Open a persistent session and return its id. Reuse the id across cells

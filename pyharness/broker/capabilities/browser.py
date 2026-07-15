@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from importlib import import_module
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
 from ...security.vault import Vault
@@ -129,6 +131,24 @@ class BrowserCapability:
             target = f"{target} file={path!r}".strip()
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
         return ActionCategory.OUTWARD, " ".join(f"{op} {target}{where}".split())
+
+    def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
+        """The grant key for a gated page action: action-class "browser" plus the
+        host of the live page. The host comes from Playwright's own `page.url`
+        (harness state a page cannot forge), not from page text. `fill_secret` is
+        deliberately excluded even though it mutates: releasing a credential into a
+        page deserves its own look every time, so it always prompts. No session or
+        no parseable host → None (not grantable → always prompts).
+
+        `op` arrives bare (e.g. "click") while `MUTATING_ACTIONS` holds dotted
+        names ("browser.click"), so the membership test re-dots it."""
+        if f"browser.{op}" not in MUTATING_ACTIONS or op == "fill_secret":
+            return None
+        session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+        if session is None:
+            return None
+        host = urlsplit(session.page.url).hostname
+        return GrantScope("browser", host.lower()) if host else None
 
     @staticmethod
     def _ref_line(session: _BrowserSession, ref: str) -> str | None:

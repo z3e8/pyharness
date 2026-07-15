@@ -1455,3 +1455,143 @@ def test_scope_none_falls_back_to_per_call(tmp_path):
     entries = [json.loads(line) for line in
                (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
     assert all("grant" not in e for e in entries)
+
+
+def test_http_and_browser_scope_extraction(tmp_path):
+    from pyharness.security import GrantScope
+
+    http = HttpSessionCapability(Workspace(tmp_path))
+    # Host parsed from positional or keyword args, lowercased; only non-DELETE
+    # mutating methods are grantable.
+    assert http.scope("request", ("sid", "POST", "http://API.Example.com/x"), {}) == \
+        GrantScope("http", "api.example.com")
+    assert http.scope("request", (), {"method": "PUT", "url": "https://h.com/y"}) == \
+        GrantScope("http", "h.com")
+    assert http.scope("request", ("sid", "DELETE", "http://h.com"), {}) is None  # irreversible
+    assert http.scope("request", ("sid", "GET", "http://h.com"), {}) is None  # read
+    assert http.scope("request", ("sid", "POST", "not a url"), {}) is None  # unparseable
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path))  # fake page url is http://start
+    assert cap.scope("click", ("sid",), {}) == GrantScope("browser", "start")
+    assert cap.scope("fill_secret", ("sid",), {}) is None  # credentials always prompt
+    assert cap.scope("goto", ("sid",), {}) is None  # navigation is not a mutation
+    assert cap.scope("click", ("nope",), {}) is None  # no such session
+
+
+def test_grant_covers_repeat_browser_actions(tmp_path):
+    from pyharness.audit import verify_chain
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompts = []
+
+    def approver(request):
+        prompts.append(request.action)
+        return ApprovalOutcome.GRANT
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["click"]("sid", "#a")  # prompts once, mints a browser grant for host "start"
+    ns["fill"]("sid", "#b", "x")  # covered by the grant — no prompt
+    assert prompts == ["browser.click"]
+
+    import json
+
+    entries = [json.loads(line) for line in
+               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    assert sum("grant" in e for e in entries) == 1  # one mint
+    assert sum(bool(e.get("grant_id")) for e in entries) == 1  # one covered call
+    ok, _ = verify_chain(tmp_path / "audit.jsonl")
+    assert ok  # the mint/coverage entries keep the hash chain intact
+
+
+def test_grant_scoped_to_host(tmp_path):
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    seen = []
+
+    def approver(request):
+        seen.append(request.scope.target if request.scope else None)
+        return ApprovalOutcome.GRANT
+
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["click"]("sid", "#a")  # host "start"
+    page.url = "http://other.example.com/x"  # the page navigated elsewhere
+    ns["fill"]("sid", "#b", "y")  # different host -> the grant does not cover it
+    assert seen == ["start", "other.example.com"]
+
+
+def test_delete_never_covered_by_grant(tmp_path, fake_httpx):
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.core.session import _is_mutating_http
+
+    prompts = []
+
+    def approver(request):
+        prompts.append((request.args[1], request.scope))
+        return ApprovalOutcome.GRANT
+
+    broker = _broker(tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver)
+    broker.register(HttpSessionCapability(Workspace(tmp_path)))
+    ns = broker.namespace()
+    ns["request"](None, "POST", "http://api.x.com/a")  # mints an http grant for api.x.com
+    ns["request"](None, "POST", "http://api.x.com/b")  # covered — no prompt
+    ns["request"](None, "DELETE", "http://api.x.com/c")  # irreversible — prompts despite the grant
+    assert [p[0] for p in prompts] == ["POST", "DELETE"]
+    assert prompts[1][1] is None  # DELETE has no grantable scope
+
+    import json
+
+    entries = [json.loads(line) for line in
+               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    assert sum("grant" in e for e in entries) == 1  # only the POST minted; the DELETE's GRANT minted nothing
+
+
+def test_fill_secret_not_covered_by_browser_grant(tmp_path):
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompts = []
+
+    def approver(request):
+        prompts.append(request.action)
+        return ApprovalOutcome.GRANT
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["click"]("sid", "#a")  # mints a browser grant
+    ns["fill_secret"]("sid", "#pw", "pw")  # credential release still prompts
+    assert prompts == ["browser.click", "browser.fill_secret"]
+
+
+def test_look_not_covered_by_browser_grant(tmp_path):
+    # A browser-class grant must not silence the secret-gated look() — pixels can
+    # carry a credential into model context, so look always prompts.
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompts = []
+
+    def approver(request):
+        prompts.append(request.action)
+        return ApprovalOutcome.DENY if request.action == "browser.look" else ApprovalOutcome.GRANT
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    pol = Policy(require_approval=set(MUTATING_ACTIONS),
+                 approve_if=[lambda a, ar, kw: a == "browser.look"])
+    broker = _broker(tmp_path, policy=pol, approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["click"]("sid", "#a")  # mints a browser grant
+    with pytest.raises(PermissionDenied):
+        ns["look"]("sid")  # gated, not covered by the grant -> prompted (and denied here)
+    assert prompts == ["browser.click", "browser.look"]
+    assert cap.scope("look", ("sid",), {}) is None
