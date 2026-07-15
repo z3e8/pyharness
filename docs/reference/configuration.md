@@ -59,6 +59,21 @@ environment, **not** committed to `.env` if sensitive.
 |----------|---------|--------|
 | `EXA_API_KEY` | — | Exa API key for `web.search_results` (the raw ranked-list search). `web.fetch` doesn't need it. Held parent-side and scrubbed from the child sandbox like the LLM keys; never reaches agent code. |
 
+## Email inbox
+
+The read-only `inbox` tool (see [builtins → tools](builtins.md#reaching-the-outside-world-is-not-a-builtin)).
+Connection details are plain config; the password (an app password for
+Gmail/Fastmail/iCloud/Outlook) is **not** an env var — store it as the vault
+secret named `imap` (`pyharness-vault set imap`), resolved parent-side and
+never visible to agent code. Point the account at a dedicated agent address,
+not a personal inbox.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_IMAP_HOST` | — | IMAP server hostname. Unset, the tool fails with a pointer here. |
+| `PYHARNESS_IMAP_PORT` | `993` | IMAP-over-TLS port. |
+| `PYHARNESS_IMAP_USER` | — | Account login (usually the address itself). |
+
 ## MCP
 
 | Variable | Default | Effect |

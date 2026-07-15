@@ -39,15 +39,16 @@ package index, MCP servers, learned skills — is a **tool**, not a builtin. Non
 are in scope by default; the agent discovers and loads them the same way
 (`search_tools` → `describe_tool` → `use_tool`), and every call is gated exactly
 as a builtin's is. The line: builtins are the agent's own body; tools are what it
-reaches out to. The first-party external tools ship registered under the `web`
-and `packages` categories — find them with `search_tools("web")` /
-`search_tools("install")`:
+reaches out to. The first-party external tools ship registered under the `web`,
+`email`, and `packages` categories — find them with `search_tools("web")` /
+`search_tools("email")` / `search_tools("install")`:
 
 | Tool | `search_tools` | What it is |
 |------|----------------|------------|
 | `web` | `web` | `search_results` (a raw ranked list to fan out over — each item `{title, url, snippet, published_date, author, score}`; backed by Exa, needs `EXA_API_KEY`, its per-query cost is not metered) + `fetch` (one-shot GET returning a readable page map — HTML reduced to clean markdown content plus `## FORMS` (each form's action/method and every field) and `## LINKS` (navigable links, resolved to absolute URLs) so the agent can see what to click and fill; non-HTML verbatim; static HTML only, JS-rendered affordances need `browser`. A thin wrapper over `http.request`; `save="path"` or a binary body writes to the workspace and returns a note pointing at the file, still carrying the FORMS/LINKS map) |
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, title, links, forms, text, path, bytes, preview, saved}` — `title`/`links`/`forms` are the parsed affordances, populated for HTML and riding inline even when the body spills to disk), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
 | `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` (pass `profile="name"` to restore a saved login — needs approval, see below) / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `save_profile` (persist this browser's login as an encrypted profile — needs approval) / `list_profiles` (names only, free) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
+| `inbox` | `email` | Read-only email over IMAP, one account: `list` (newest-first metadata rows `{id, from, to, subject, date, seen, has_attachments}` — never bodies) / `search` (server-side; `query`/`from_`/`subject`/`since` AND together, same metadata rows) / `read` (one message: headers, the clean text body, a `links` list collecting HTML anchors and bare URLs — a verification/magic link is a first-class value to hand to `web.fetch` or the browser — and attachments written to `inbox/<folder>/<id>/` in the workspace, never inline). Structurally mutation-free: no send/delete/flag/move op exists, fetches are `BODY.PEEK` on a read-only folder, so the mailbox (including unread flags) is left untouched. Config: `PYHARNESS_IMAP_HOST`/`PORT`/`USER` + the vault secret `imap` (see [configuration](configuration.md#email-inbox)) |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
 `describe_tool(name)` is the live source for each tool's exact signatures — the

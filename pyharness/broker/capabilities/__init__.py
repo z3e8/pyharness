@@ -3,6 +3,7 @@ from .browser import BrowserCapability
 from .files import FilesCapability
 from .history import HistoryCapability
 from .http import HttpSessionCapability
+from .inbox import InboxCapability
 from .llm import LLMCapability
 from .notify import NotifyCapability
 from .obs import ObservabilityCapability
@@ -20,6 +21,7 @@ __all__ = [
     "FilesCapability",
     "HistoryCapability",
     "HttpSessionCapability",
+    "InboxCapability",
     "LLMCapability",
     "NotifyCapability",
     "ObservabilityCapability",

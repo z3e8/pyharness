@@ -31,7 +31,8 @@ print(session.run("Write fib.py, run it, and confirm the output."))
 The agent reaches the world the way Python does — **builtins** always in scope
 are the agent's own body (called by bare name: `read`, `bash`, `llm`, `agent`,
 `search_tools`, …); **tools** are everything it reaches out to — web access, a
-browser, HTTP APIs, the package index, MCP servers, learned skills — none in
+browser, HTTP APIs, a read-only email inbox, the package index, MCP servers,
+learned skills — none in
 scope by default, each found with `search_tools()` and loaded with `use_tool()`.
 The [Builtins reference](docs/reference/builtins.md) lists the full set. Relative
 paths resolve inside the session workspace.

@@ -25,6 +25,15 @@ proposals too — reflection routes its skill writes through the same broker gat
 `select_option` / `press` / `upload`), since those act outward on the user's
 behalf; reads, navigation, `snapshot`, `scroll`, and `wait_for` stay free.
 
+Reads being free rests on a second rule: **what a read returns is untrusted
+input.** A web page, an MCP result, and an email body (`inbox.read` — anyone
+can send mail to the account) are attacker-controlled text; nothing in them can
+widen a grant, alter policy, or author an approval prompt, because grants and
+prompts are harness-built from the structured call (below) and mutations still
+gate on a human regardless of what the text asks for. The inbox narrows its
+half further by construction: it has no mutating op at all — no send, delete,
+flag, or move exists to be talked into.
+
 Most rules match on the action name alone, but a rule can also judge a call from
 its arguments: `Policy(approve_if=[predicate])` runs each predicate over
 `(action, args, kwargs)` and forces approval if any returns true. That is how one
