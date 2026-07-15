@@ -16,8 +16,10 @@ and returns one of three decisions:
 
 Rules match by prefix, so `"files"` gates every file operation and
 `"files.write"` gates just writes. The default policy requires approval for
-`skills.save_skill` and `packages.install` — both write code that would run in
-later sessions, so a human signs off at author time. It also gates
+`skills.save_skill`, `skills.edit_skill`, and `packages.install` — all write
+content that would load and run in later sessions, so a human signs off at
+author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
+proposals too — reflection routes its skill writes through the same broker gate). It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
 **state-changing browser actions** (`click` / `fill` / `fill_secret` /
 `select_option` / `press` / `upload`), since those act outward on the user's

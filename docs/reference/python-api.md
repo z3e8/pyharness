@@ -16,7 +16,8 @@ Session(
     llm=None,                  # defaults to AnthropicLLM(budget=...)
     budget=None,               # Budget — defaults to unlimited
     policy=None,               # Policy — defaults to requiring approval for
-                               #   skills.save_skill and packages.install
+                               #   skills.save_skill, skills.edit_skill, and
+                               #   packages.install
     vault=None,                # Vault — defaults to Vault.from_env()
     registry=None,             # Registry — Session registers the external
                                #   capability tools (web/http/browser/packages),
@@ -26,13 +27,21 @@ Session(
     out_of_process=False,      # run agent code in a sandboxed child process
     mcp_config=None,           # str | Path | dict — MCP servers to mount
     skills_dir=None,           # defaults to ~/.pyharness/skills
+    index_db=None,             # str | Path — the session index (stats/
+                               #   inspect_session builtins + history preamble).
+                               #   None leaves them dataless; the CLI passes
+                               #   ~/.pyharness/index.db
 )
 ```
 
 - **`run(task: str) -> str`** — run one task to completion and return the final
   text answer. History persists across calls on the same `Session`.
-- **`close()`** — tear down the child process (if out-of-process) and any MCP
-  connections.
+- **`reflect() -> str | None`** — the post-session reflection pass (see
+  [observability](../how-to/observability.md#post-session-reflection)). The CLI
+  calls it at exit; library users opt in explicitly. Never raises.
+- **`close()`** — write the `session_end` trace line and fold the session into
+  the index (when configured), then tear down the child process (if
+  out-of-process) and any MCP connections.
 
 ```python
 from pyharness import Session, Budget

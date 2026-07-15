@@ -8,8 +8,11 @@ to the session workspace.
 This is the authoritative contract the orchestrator is given (see
 `SYSTEM_PROMPT` in `pyharness/core/agent.py`). Each turn a small dynamic
 **session block** is appended to that static prompt — the current date/time and
-zone, the platform, and the workspace path — so the model has the world-state it
-would otherwise burn turns discovering (`render_context` in the same module).
+zone, the platform, and the workspace path (`render_context` in the same
+module), plus, when a [session index](../how-to/observability.md#the-session-index)
+is configured, a few ambient lines of the agent's own past: recent sessions
+(name, task, outcome, cost), skill trust states, and established lessons — so
+the model starts oriented in its history instead of having to remember to look.
 
 ## Files & shell
 
@@ -124,7 +127,8 @@ Find a tool, inspect it, then load and call it.
 Package a repeatable procedure so this and later sessions can reuse it.
 
 ```python
-save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+save_skill(name, description, instructions, files=None, keywords=(), category=None, check=None) -> str
+edit_skill(name, edits, reason="") -> str
 record_skill_use(name, outcome, note="") -> str
 ```
 
@@ -132,8 +136,14 @@ record_skill_use(name, outcome, note="") -> str
 optional bundled modules. Persists to disk and registers as a learned tool. See
 [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md).
 
-> Saving a skill requires human approval by default (it writes code that
-> auto-loads in later sessions) — see [the approval policy](../explanation/security-and-audit.md).
+> Saving or editing a skill requires human approval by default (it writes
+> content that auto-loads in later sessions) — see
+> [the approval policy](../explanation/security-and-audit.md).
+
+**Every skill should carry a `check`** — one line saying how a run confirms the
+skill worked (an assertion, a re-fetch, an expected state). It is stored in the
+SKILL.md frontmatter and shown by `describe_tool` above the instructions, so
+`record_skill_use` outcomes rest on evidence, not the runner's impression.
 
 **Trust is earned, not asserted.** A newly saved or revised skill is
 **unverified** — it has never run successfully, so its steps are a hypothesis.
@@ -145,10 +155,13 @@ session sees how it last behaved. `search_tools` tags an `unverified` or
 above the instructions. Recording a use writes only metadata, so it is *not*
 gated for approval.
 
-**Revising a skill** needs no separate builtin: `save_skill` with the same name
-overwrites the prior version (stale bundled `.py` are dropped) and resets it to
-unverified while keeping the use log, so the agent folds what it learned into the
-instructions, re-saves, and re-earns trust on the next real run.
+**Revising a skill: prefer `edit_skill`.** `edits` is a list of
+`{"old": <exact text occurring once in the instructions>, "new": <replacement>}`
+deltas — surgical fixes that keep every detail not being corrected (a wholesale
+regeneration is how accumulated procedure knowledge gets destroyed). Frontmatter
+and bundled files are untouched; the revision resets to unverified while keeping
+the use log. `save_skill` with the same name still fully replaces a skill (stale
+bundled `.py` are dropped) when a rewrite is genuinely intended.
 
 ## Reflection
 
@@ -157,12 +170,24 @@ Read your own action record — the observe half of `do → observe → revise`.
 | Signature | Returns |
 |-----------|---------|
 | `history(limit=20, action=None) -> list[dict]` | your recent actions, oldest last: `{ts, action, decision?, ok?, args?, error?}`. `action` filters by prefix (`"http"`, `"browser.click"`) |
+| `stats(sql=None, limit=200) -> list[dict] \| str` | read-only SQL over the [session index](../how-to/observability.md#the-session-index) — every *past* session, LLM call, capability call, error, and skill use, plus aggregate views. No `sql` → the schema reference |
+| `inspect_session(session, question) -> str` | a targeted answer about one past session: a cheap-model worker reads that session's full transcript and returns the answer. `session` is a name from `stats()` or the preamble |
 
-The audit log lives at the session root, outside the workspace the file builtins
-are confined to, so `history()` is the only way agent code reaches it. It records
-*side effects* — every capability call, its decision (allow/approve/deny),
-whether it succeeded, and a secret-safe summary of what was sent — so you can
-confirm an effect landed (`request` returned 200), see why an action was refused,
-and revise from what actually happened. Your own cells and notes are already in
-context, so only the audit is surfaced. See
-[Security & audit](../explanation/security-and-audit.md).
+`history()` is this session's action record: the audit log lives at the session
+root, outside the workspace the file builtins are confined to, so this is the
+only way agent code reaches it. It records *side effects* — every capability
+call, its decision (allow/approve/deny), whether it succeeded, and a secret-safe
+summary of what was sent — so you can confirm an effect landed (`request`
+returned 200), see why an action was refused, and revise from what actually
+happened. Your own cells and notes are already in context, so only the audit is
+surfaced. See [Security & audit](../explanation/security-and-audit.md).
+
+`stats()`/`inspect_session()` are the cross-session half — **query the past,
+don't carry it**: aggregate questions ("how reliable is this skill", "what keeps
+failing on this host", "what did similar tasks cost") go to SQL; a targeted
+question about one run goes to a disposable worker so the transcript never
+enters the orchestrator's context. Both are dataless unless the session was
+given an index (`Session(index_db=...)`; the CLI wires it by default) — see
+[Observability](../how-to/observability.md). `stats` SQL runs on a read-only
+connection that cannot `ATTACH` other files; `inspect_session`'s worker call is
+metered against the session budget like any delegation.

@@ -1,6 +1,6 @@
 # CLI
 
-Two console scripts are installed by the package (`pyproject.toml`).
+Three console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
@@ -34,6 +34,11 @@ pyharness [SESSION_DIR]
 
 Each turn prints the streamed reply and a `[spent $… over N calls]` line.
 
+On exit, the session is folded into the [session index](../how-to/observability.md#the-session-index)
+and the [reflection pass](../how-to/observability.md#post-session-reflection)
+runs (a skill proposal still asks for approval; `PYHARNESS_REFLECT=false` skips
+the pass).
+
 ## `pyharness-vault`
 
 Manage the encrypted secrets file (`pyharness/cli_vault.py`).
@@ -48,6 +53,22 @@ The file is `~/.pyharness/secrets.enc` (override with `PYHARNESS_VAULT_FILE`),
 sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted). Use the same passphrase
 when you run `pyharness` so the session can open it. See
 [Use the secrets vault](../how-to/use-the-vault.md).
+
+## `pyharness-index`
+
+Maintain and query the [session index](../how-to/observability.md#the-session-index)
+(`pyharness/cli_index.py`).
+
+```bash
+pyharness-index                    # update: scan ./.sessions + all remembered roots
+pyharness-index --rebuild          # drop everything and re-derive from JSONL
+pyharness-index --sql "SELECT..."  # read-only query, rows printed as JSON
+pyharness-index --schema           # tables/views reference
+```
+
+The DB is `~/.pyharness/index.db` (override with `PYHARNESS_INDEX_DB`); running
+the agent keeps it fresh automatically, so this CLI is for ad-hoc queries and
+rebuilds.
 
 ## Make targets
 

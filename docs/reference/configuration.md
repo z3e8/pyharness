@@ -32,6 +32,15 @@ Off unless enabled. See [Run with observability](../how-to/observability.md).
 
 Truthy values: `1`, `true`, `yes`, `on` (case-insensitive).
 
+## Session index & reflection
+
+See [the session index](../how-to/observability.md#the-session-index).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_INDEX_DB` | `~/.pyharness/index.db` | The derived SQLite session index the CLI wires into each session (the `stats`/`inspect_session` builtins and the history preamble). Delete-safe: rebuilt from the JSONL record. |
+| `PYHARNESS_REFLECT` | `true` | Run the post-session reflection pass on CLI exit. Set `false`/`0`/`no`/`off` to opt out. |
+
 ## Secrets vault
 
 See [Use the secrets vault](../how-to/use-the-vault.md). These are read from the

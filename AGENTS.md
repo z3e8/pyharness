@@ -44,7 +44,7 @@ load-bearing seams are.
 | `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py` — action policy + the encrypted secrets vault |
 | `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
-| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `cli.py`, `cli_vault.py` |
+| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass), `cli.py`, `cli_vault.py`, `cli_index.py` |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
 | `deploy/observability/` | docker-compose for Phoenix (default) and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
