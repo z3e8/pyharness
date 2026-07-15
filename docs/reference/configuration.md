@@ -34,7 +34,7 @@ Off unless enabled. See [Run with observability](../how-to/observability.md).
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `PYHARNESS_TELEMETRY_ENABLED` | `true` in template | Opt-in flag. Telemetry is also enabled if an OTLP endpoint is set. |
+| `PYHARNESS_TELEMETRY_ENABLED` | `false` | Opt-in flag for the OTel export (the live viewer needs none of this). Telemetry is also enabled if an OTLP endpoint is set. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | Collector endpoint (its presence alone enables telemetry). |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `true` | Plaintext gRPC (local only). Read verbatim by the OTel SDK — keep on its own line, no inline comment. |
 | `OTEL_SERVICE_NAME` | `pyharness` | `service.name` on emitted spans. |
@@ -50,7 +50,7 @@ See [the session index](../how-to/observability.md#the-session-index).
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `PYHARNESS_INDEX_DB` | `~/.pyharness/index.db` | The derived SQLite session index the CLI wires into each session (the `stats`/`inspect_session` builtins and the history preamble). Delete-safe: rebuilt from the JSONL record. |
-| `PYHARNESS_REFLECT` | `true` | Run the post-session reflection pass on CLI exit. Set `false`/`0`/`no`/`off` to opt out. |
+| `PYHARNESS_REFLECT` | `false` | Run the post-session reflection pass (an LLM reads the transcript at exit and may propose one skill edit or lesson) on CLI exit. Opt-in: set `true`/`1`/`yes`/`on`. |
 
 ## Secrets vault
 

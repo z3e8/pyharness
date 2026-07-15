@@ -39,16 +39,16 @@ install:
 	uv venv
 	uv pip install -e . pytest
 
-## dev: start observability (background) and run the agent (foreground) — the daily command
+## dev: run the agent with its built-in live viewer — the daily command
 .PHONY: dev
-dev: up run
+dev: run
 
 ## watch: live session viewer for a session started elsewhere (tails .sessions/, http://localhost:6061)
 .PHONY: watch
 watch:
 	uv run pyharness-watch
 
-## up: start the local Phoenix observability container and wait until ready
+## up: start the optional Phoenix OTel backend (then set PYHARNESS_TELEMETRY_ENABLED=true)
 .PHONY: up
 up: .env
 	$(COMPOSE) up -d

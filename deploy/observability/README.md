@@ -1,19 +1,20 @@
-# Local observability
+# Local observability (optional OTel backends)
 
-pyharness emits OpenTelemetry traces; this is where they land. Guide:
+pyharness can emit OpenTelemetry traces; this is where they land. The daily
+live view is the built-in `pyharness-watch` (no container) — this stack is the
+opt-in post-hoc layer. Guide:
 [`docs/how-to/observability.md`](../../docs/how-to/observability.md).
 
-## Default: Phoenix (one container)
+## Phoenix (one container)
 
 From the repo root:
 
 ```bash
-make setup     # creates .env (once); set ANTHROPIC_API_KEY in it
-make dev       # starts Phoenix + runs the agent
+make up        # starts Phoenix
+# set PYHARNESS_TELEMETRY_ENABLED=true in .env, then: make run
 ```
 
-`make dev` = `make up` (Phoenix in the background) + `make run` (the agent in the
-foreground). Open **http://localhost:6006** — each turn is a trace
+Open **http://localhost:6006** — each turn is a trace
 (`turn → llm call / code cell → capability call`) with per-call cost, tokens, and
 latency. [Phoenix](https://github.com/Arize-ai/phoenix) is OTLP-native and
 LLM-aware, so there's no collector and no database to run — just the one

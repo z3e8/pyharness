@@ -1,7 +1,7 @@
 # Local observability for pyharness — one container.
 #
 #   docker compose -f deploy/observability/docker-compose.yml up -d
-#   (or just `make up` / `make dev` from the repo root)
+#   (or just `make up` from the repo root)
 #
 # Phoenix is an OTLP-native, LLM/agent-aware trace UI. pyharness exports straight
 # to it — no collector, no databases. Each turn shows up as a trace

@@ -51,8 +51,8 @@ in one `.env`:
 
 ```bash
 make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .env
-make dev       # observability (Phoenix) + the agent, one command → http://localhost:6006
-make run       # just the agent (no observability)
+make run       # the agent + its live viewer → http://localhost:6061 (make dev is an alias)
+make watch     # live viewer alone, for a session started elsewhere
 make test      # tests (no API key)
 ```
 
@@ -65,4 +65,5 @@ ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 uv pip install pytest && uv run pytest -q               # tests (no API key)
 ```
 
-Observability is opt-in — see [Run with observability](docs/how-to/observability.md).
+The live viewer is on by default; the heavier OTel export (Phoenix/Langfuse) is
+opt-in — see [Run with observability](docs/how-to/observability.md).

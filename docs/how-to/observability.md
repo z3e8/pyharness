@@ -31,8 +31,13 @@ history replays on load).
 
 ## Optional: OTel export (Phoenix)
 
+For post-hoc trace exploration across sessions, pyharness can additionally
+export OpenTelemetry spans. Off by default — the live view above needs none of
+this.
+
 ```bash
-make dev        # = make up (Phoenix, background) + make run (the agent)
+make up         # start the Phoenix container
+# then set PYHARNESS_TELEMETRY_ENABLED=true in .env and: make run
 ```
 
 Open **http://localhost:6006**. Each turn is one trace:
@@ -64,7 +69,7 @@ deny), `approval_pending` before an approval prompt blocks on the human and
 or stuck — so a live view (or a `tail -f`) can always answer "what is it doing
 right now, and what is it waiting on".
 
-## What controls it
+## What controls the OTel export
 
 Telemetry is **opt-in** and **fail-open** (it can never break the agent). It's on
 when `PYHARNESS_TELEMETRY_ENABLED` is truthy *or* an OTLP endpoint is set. The
@@ -130,5 +135,7 @@ existing one, record a lesson, or (the default) nothing. Skill writes go
 through the normal approval prompt and land unverified; lessons only surface in
 the preamble once observed in two distinct sessions; reflection-driven skill
 changes are git-committed under the skills root so any bad self-edit is a
-revert. On by default — set `PYHARNESS_REFLECT=false` to opt out. Library users
-call `Session.reflect()` explicitly instead.
+revert. **Off by default** — set `PYHARNESS_REFLECT=true` to opt in; the
+deterministic record (skill journals, `record_skill_use`, the index views)
+carries the default self-improvement loop without an LLM in the loop. Library
+users call `Session.reflect()` explicitly instead.

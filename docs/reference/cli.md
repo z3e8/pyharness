@@ -133,6 +133,7 @@ can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
 ## Make targets
 
 Day-to-day you drive these through `make` (see [Configuration](configuration.md)
-and `make help`): `make run` wraps `pyharness`; `make dev` adds observability;
-`make verify-audit DIR=.sessions/<name>` checks a session's
-[audit chain](../explanation/security-and-audit.md).
+and `make help`): `make run` (and its alias `make dev`) wraps `pyharness`, live
+viewer included; `make watch` wraps `pyharness-watch`; `make up` starts the
+optional Phoenix OTel backend; `make verify-audit DIR=.sessions/<name>` checks
+a session's [audit chain](../explanation/security-and-audit.md).

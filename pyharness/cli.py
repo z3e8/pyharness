@@ -91,6 +91,12 @@ _GRANT_CLASS_LABEL = {
 }
 
 
+def _reflect_enabled(env: Mapping[str, str]) -> bool:
+    """Post-session reflection is opt-in: only an explicit truthy
+    PYHARNESS_REFLECT runs the LLM pass at exit."""
+    return env.get("PYHARNESS_REFLECT", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _approve(request: ApprovalRequest) -> ApprovalOutcome:
     print(f"\n⚠ approval required [{request.category.value}]: {request.action}")
     print(f"  {request.summary}")
@@ -183,8 +189,9 @@ def main() -> None:
     finally:
         # Post-session reflection (direction 5): a cheap separate pass over the
         # trace that may propose one improvement — skill writes still prompt for
-        # approval above. On by default; PYHARNESS_REFLECT=false opts out.
-        if os.environ.get("PYHARNESS_REFLECT", "true").strip().lower() not in ("0", "false", "no", "off"):
+        # approval above. Opt-in: the deterministic record (skill journals, the
+        # index) carries the default self-improvement loop.
+        if _reflect_enabled(os.environ):
             summary = session.reflect()
             if summary:
                 print(f"\n\033[2m[{summary}]{_RESET}")

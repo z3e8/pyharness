@@ -42,3 +42,20 @@ def test_resolve_root_uses_persistent_workspace_env():
 def test_resolve_root_defaults_to_timestamped_session():
     root = _resolve_root(["pyharness"], {}, "20260101-000000")
     assert root == Path(".sessions/cli-20260101-000000")
+
+
+def test_reflection_is_opt_in():
+    from pyharness.cli import _reflect_enabled
+
+    assert not _reflect_enabled({})  # off by default
+    assert not _reflect_enabled({"PYHARNESS_REFLECT": "false"})
+    assert not _reflect_enabled({"PYHARNESS_REFLECT": "nonsense"})
+    assert _reflect_enabled({"PYHARNESS_REFLECT": "true"})
+    assert _reflect_enabled({"PYHARNESS_REFLECT": " 1 "})
+
+
+def test_llm_start_is_suppressed(capsys):
+    from pyharness.cli import _trace
+
+    _trace("llm_start", "")
+    assert capsys.readouterr().out == ""

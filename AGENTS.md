@@ -23,9 +23,9 @@ package manager; there is no `pip`/`venv` step to run by hand.
 ```bash
 make setup     # create .env + install editable package + pytest (one-time)
 make test      # run the test suite — no API key needed. Use this to verify changes.
-make run       # interactive agent (needs ANTHROPIC_API_KEY in .env)
-make dev       # observability (Phoenix, :6006) + the agent, one command
-make down      # stop the Phoenix container
+make run       # interactive agent + live viewer :6061 (needs ANTHROPIC_API_KEY in .env)
+make watch     # live viewer alone (tails .sessions/) for a session started elsewhere
+make up        # optional Phoenix OTel backend (:6006); make down stops it
 ```
 
 Direct equivalents without make: `uv run pytest -q`, `uv run pyharness`. Config
@@ -44,9 +44,9 @@ load-bearing seams are.
 | `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py`, `profiles.py` (encrypted browser login profiles), `totp.py` (RFC 6238 codes from vault seeds), `sink.py` (per-context secret masking) — action policy + the encrypted secrets vault |
 | `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills; `mcp/` — MCP server client/config/transport |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
-| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `util.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass), `cli.py`, `cli_vault.py`, `cli_profiles.py`, `cli_index.py`, `cli_mcp.py` |
+| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py` (opt-in OTel export), `trace.py`, `watch.py` (live session viewer, `pyharness-watch`), `util.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass, opt-in), `cli.py`, `cli_vault.py`, `cli_profiles.py`, `cli_index.py`, `cli_mcp.py` |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
-| `deploy/observability/` | docker-compose for Phoenix (default) and Langfuse (heavier profile) |
+| `deploy/observability/` | docker-compose for the optional OTel backends: Phoenix, and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
 | `.claude/skills/docs/` | the `docs` skill: how to use and maintain the docs |
 
