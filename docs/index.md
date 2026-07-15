@@ -14,6 +14,7 @@ design and the details, in three sections — pick by what you're trying to do:
 - **[How-to guides](how-to/)** — task-oriented recipes for a specific goal.
   - [Add a tool or save a skill](how-to/add-a-tool-or-skill.md) ·
     [Use the secrets vault](how-to/use-the-vault.md) ·
+    [Keep the agent logged in](how-to/site-profiles.md) ·
     [Run with observability](how-to/observability.md)
 - **[Reference](reference/)** — precise lookup for the machinery.
   - [Builtins](reference/builtins.md) · [CLI](reference/cli.md) ·

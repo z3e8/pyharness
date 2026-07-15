@@ -139,6 +139,46 @@ passphrase-derived key (scrypt) and Fernet (authenticated AES); a wrong
 passphrase fails to decrypt rather than returning garbage. See
 [Use the secrets vault](../how-to/use-the-vault.md).
 
+## Site profiles — a login the agent can name but never read
+
+A browser context dies with the `Session`, so without persistence every task on
+an authenticated site pays login + 2FA again — a human in the loop every time.
+`pyharness/security/profiles.py:ProfileStore` fixes that by saving a page's
+`storage_state` (cookies + localStorage) under a name, sealed with the **same**
+scrypt+Fernet envelope as the vault (same `PYHARNESS_VAULT_PASSPHRASE`), one file
+per profile at `~/.pyharness/profiles/<name>.enc` (override
+`PYHARNESS_PROFILES_DIR`). Cookie material is credential-grade, so it lives under
+the same **use-but-don't-view** rule as secrets:
+
+- The cleartext `storage_state` is a dict that never leaves parent memory — it is
+  never written to disk unencrypted (Playwright round-trips it in-memory, no temp
+  file) and never returned to agent code. `open_browser(profile=...)`,
+  `save_profile`, and `list_profiles` hand back only a session id, counts, or
+  names. The profile *name* is the sole agent-supplied input and is regex-validated
+  in one place, so it can never become a path.
+- **No passphrase → fail closed.** With no `PYHARNESS_VAULT_PASSPHRASE`,
+  `ProfileStore.from_env()` returns `None` and opening or saving a profile raises;
+  there is no plaintext fallback.
+- **Two credential-moving ops always prompt** under the default policy and are
+  never grant-coverable: `open_browser(profile=...)` (category OUTWARD — it opens
+  the browser *as that identity*, and it is the last checkpoint before free `goto`
+  transmits the restored cookies) via an `approve_if` predicate, and `save_profile`
+  (writes a standing credential) via `require_approval`. `fill_secret` and the
+  secret-gated `look` are unaffected.
+- **Refresh on close is audited, not prompted.** A profile-opened session re-saves
+  its (rotated) state when it closes so the login survives; because close does not
+  flow through the broker, the capability records a `profile_saved` event straight
+  into the hash chain. Profile *deletion* is human-only (a CLI action, not an agent
+  builtin).
+
+The honest boundary: a profile session gives agent code the *powers* of the
+logged-in identity (a free `read_text` can read your inbox) but never the
+credential *bytes* — and the powers are exactly what the one open-approval signs
+off. Two accepted residuals, documented rather than hidden: auto-refresh persists
+*every* cookie the context accrued (so keep a profile session on its site), and a
+minority of sites store auth in `sessionStorage`, which `storage_state` does not
+capture.
+
 ## The out-of-process sandbox
 
 When the agent runs in a child process (`out_of_process=True`), two OS-level

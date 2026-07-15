@@ -44,7 +44,7 @@ and `packages` categories — find them with `search_tools("web")` /
 |------|----------------|------------|
 | `web` | `web` | `search_results` (a raw ranked list to fan out over — each item `{title, url, snippet, published_date, author, score}`; backed by Exa, needs `EXA_API_KEY`, its per-query cost is not metered) + `fetch` (one-shot GET returning a readable page map — HTML reduced to clean markdown content plus `## FORMS` (each form's action/method and every field) and `## LINKS` (navigable links, resolved to absolute URLs) so the agent can see what to click and fill; non-HTML verbatim; static HTML only, JS-rendered affordances need `browser`. A thin wrapper over `http.request`; `save="path"` or a binary body writes to the workspace and returns a note pointing at the file, still carrying the FORMS/LINKS map) |
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, title, links, forms, text, path, bytes, preview, saved}` — `title`/`links`/`forms` are the parsed affordances, populated for HTML and riding inline even when the body spills to disk), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
-| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
+| `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` (pass `profile="name"` to restore a saved login — needs approval, see below) / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `save_profile` (persist this browser's login as an encrypted profile — needs approval) / `list_profiles` (names only, free) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
 
 `describe_tool(name)` is the live source for each tool's exact signatures — the
@@ -79,6 +79,12 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
   `goto` invalidates them (re-snapshot on the new page), and an unknown or stale
   ref is rejected immediately with a clear message rather than after a locator
   timeout. Its body follows the same whole-or-on-disk rule as `read_text`.
+- **Stay logged in across sessions — named profiles.** `list_profiles()` shows
+  saved logins; `open_browser(profile="x")` opens already authenticated (skipping
+  login + 2FA), and after logging in fresh, `save_profile(session_id, "x")` persists
+  it. Cookies are encrypted at rest and never returned to agent code; opening or
+  saving a profile needs approval. See
+  [Keep the agent logged in](../how-to/site-profiles.md).
 - **Prefer the `http` path over `browser` for sensitive credentials** — the
   browser DOM is agent-readable, so it is lower-assurance.
 - Live handles (the `httpx.Client`, the Playwright page) stay parent-side, keyed
