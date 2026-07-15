@@ -133,6 +133,16 @@ def main() -> None:
         keep_outputs=int(os.environ.get("PYHARNESS_KEEP_OUTPUTS", "8")),
     )
 
+    # The live viewer: a local page tailing this session's trace.jsonl from a
+    # daemon thread (dies with the process). Fail-open — no port, no viewer,
+    # but always a session.
+    if os.environ.get("PYHARNESS_WATCH", "true").strip().lower() not in ("0", "false", "no", "off"):
+        from .watch import start_in_thread
+
+        url = start_in_thread(root, port=int(os.environ.get("PYHARNESS_WATCH_PORT", "6061")))
+        if url:
+            print(f"\033[2m[watch] live view → {url}{_RESET}")
+
     print("pyharness — type a task, or Ctrl-D to exit.")
     try:
         while True:

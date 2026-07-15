@@ -97,6 +97,22 @@ pyharness-index --schema           # tables/views reference
 The DB is `~/.pyharness/index.db` (override with `PYHARNESS_INDEX_DB`); running
 the agent keeps it fresh automatically, so this CLI is for ad-hoc queries and
 rebuilds.
+
+## `pyharness-watch`
+
+The [live session viewer](../how-to/observability.md#the-live-view-pyharness-watch)
+(`pyharness/watch.py`) — a local page tailing `trace.jsonl`.
+
+```bash
+pyharness-watch                     # tails .sessions/, follows the newest session
+pyharness-watch <session-dir>       # pin one session (a dir containing trace.jsonl)
+pyharness-watch --port 7000         # default 6061
+```
+
+The CLI embeds the same viewer automatically (`PYHARNESS_WATCH`, default on),
+so this standalone form is for watching a session started elsewhere or
+replaying a finished one.
+
 ## `pyharness-profiles`
 
 Manage encrypted browser login profiles (`pyharness/cli_profiles.py`).

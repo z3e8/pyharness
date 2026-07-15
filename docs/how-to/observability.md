@@ -1,10 +1,35 @@
 # Run with observability
 
-*Goal: see what the agent did — live in a UI (this page, first half), and as a
-queryable cross-session record the agent itself reads (the session index,
+*Goal: see what the agent is doing — live in a UI (this page, first half), and
+as a queryable cross-session record the agent itself reads (the session index,
 second half).*
 
-## Default: Phoenix (one container)
+## The live view: `pyharness-watch`
+
+The primary human view. A small local page (stdlib, no container) that tails
+the session's `trace.jsonl` and renders it **as it happens**: the current turn,
+each code cell and its output, in-flight actions with elapsed time, pending
+approvals (highlighted — the thing the session is waiting on), errors, and
+running spend. Because the JSONL record is written synchronously by the
+session, the view is real-time by construction.
+
+It starts automatically with the CLI (`make run` prints
+`[watch] live view → http://127.0.0.1:6061`; disable with
+`PYHARNESS_WATCH=false`, change the port with `PYHARNESS_WATCH_PORT`). To watch
+from another terminal or machine-local shell instead:
+
+```bash
+pyharness-watch                     # tails .sessions/, follows the newest session
+pyharness-watch .sessions/cli-...   # pin one session
+pyharness-watch --port 7000
+```
+
+Pointed at a directory of sessions it follows the most recently active one and
+switches automatically when a new session starts. It reads only the trace file,
+so it works on live sessions started elsewhere and on finished ones (the full
+history replays on load).
+
+## Optional: OTel export (Phoenix)
 
 ```bash
 make dev        # = make up (Phoenix, background) + make run (the agent)

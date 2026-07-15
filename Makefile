@@ -43,6 +43,11 @@ install:
 .PHONY: dev
 dev: up run
 
+## watch: live session viewer for a session started elsewhere (tails .sessions/, http://localhost:6061)
+.PHONY: watch
+watch:
+	uv run pyharness-watch
+
 ## up: start the local Phoenix observability container and wait until ready
 .PHONY: up
 up: .env

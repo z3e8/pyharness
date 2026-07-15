@@ -18,6 +18,16 @@ itself on startup.
 | `PYHARNESS_WORKSPACE` | a fresh `.sessions/cli-<timestamp>` | A stable session root reused across runs, so files dropped into `<root>/workspace/` (and files the agent creates there) survive between sessions. `~` expands; relative paths resolve from the repo. A path passed on the CLI (`uv run pyharness <path>`) overrides it. |
 | `PYHARNESS_KEEP_OUTPUTS` | `8` | How many recent cells keep their full output in the agent's context; older tool outputs are elided to a short stub (the kernel still holds every variable, and the full text stays in `trace.jsonl`). `0` or negative disables elision. |
 
+## Live viewer
+
+The [live session viewer](../how-to/observability.md#the-live-view-pyharness-watch)
+embedded in the CLI.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_WATCH` | `true` | Serve the live view for this session from the agent process (fail-open: a taken port falls back to an ephemeral one, and a failure to start never blocks the session). Set `false`/`0`/`no`/`off` to disable. |
+| `PYHARNESS_WATCH_PORT` | `6061` | Port for the viewer (binds 127.0.0.1 only). |
+
 ## Telemetry
 
 Off unless enabled. See [Run with observability](../how-to/observability.md).
