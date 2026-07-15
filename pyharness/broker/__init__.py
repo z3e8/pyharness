@@ -1,3 +1,3 @@
-from .dispatch import Broker, PermissionDenied
+from .dispatch import ApprovalOutcome, ApprovalRequest, Broker, PermissionDenied
 
-__all__ = ["Broker", "PermissionDenied"]
+__all__ = ["ApprovalOutcome", "ApprovalRequest", "Broker", "PermissionDenied"]

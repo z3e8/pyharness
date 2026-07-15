@@ -2,18 +2,40 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+from enum import Enum
 from types import ModuleType
 from typing import Callable
 
 from .. import telemetry
 from ..audit import AuditLog
 from ..budget import Budget
+from ..security.grants import GrantLedger, GrantScope
 from ..security.policy import ActionCategory, Decision, Policy
 from ..util import summarize_args
 
 
 class PermissionDenied(Exception):
     """Raised when policy denies a capability call, or approval is refused."""
+
+
+class ApprovalOutcome(Enum):
+    """A human's answer to an approval prompt.
+
+    `ONCE` allows this call only (today's "y"); `GRANT` allows it and mints a
+    scoped grant for `request.scope` so matching calls flow without re-prompting.
+    A bare `bool` from a simple approver is normalized: `True -> ONCE`, anything
+    falsy -> `DENY`. The broker — not the approver — is the authority on whether a
+    `GRANT` may mint (never for a non-grantable or IRREVERSIBLE call)."""
+
+    DENY = "deny"
+    ONCE = "once"
+    GRANT = "grant"
+
+
+def _normalize(result: "ApprovalOutcome | bool | None") -> "ApprovalOutcome":
+    if isinstance(result, ApprovalOutcome):
+        return result
+    return ApprovalOutcome.ONCE if result else ApprovalOutcome.DENY
 
 
 @dataclass(frozen=True)
@@ -24,20 +46,24 @@ class ApprovalRequest:
     display string — so what the approver shows is exactly what will execute.
     `category` is the harness's severity classification (see `ActionCategory`) and
     `summary` is a short, secret-safe, human-readable line describing the effect;
-    `args`/`kwargs` are kept so a custom approver can inspect further."""
+    `args`/`kwargs` are kept so a custom approver can inspect further. `scope` is
+    the harness-derived `(action-class, host)` a grant would cover, or `None` when
+    the call is not grantable — it is built from the structured call by the
+    capability's `scope()` hook, never from agent- or page-supplied text."""
 
     action: str
     category: ActionCategory
     summary: str
     args: tuple
     kwargs: dict
+    scope: GrantScope | None = None
 
 
-# An approver renders a confirmation from an `ApprovalRequest` and returns
-# True/False. It sees only the harness-built request (category + summary + the
-# structured args), never an agent-supplied display string, so what is shown is
-# exactly what executes.
-Approver = Callable[["ApprovalRequest"], bool]
+# An approver renders a confirmation from an `ApprovalRequest` and returns an
+# `ApprovalOutcome` (or a bare bool, normalized). It sees only the harness-built
+# request (category + summary + scope + the structured args), never an
+# agent-supplied display string, so what is shown is exactly what executes.
+Approver = Callable[["ApprovalRequest"], "ApprovalOutcome | bool"]
 
 
 class Broker:
@@ -56,12 +82,14 @@ class Broker:
         budget: Budget,
         *,
         approver: Approver | None = None,
+        grants: GrantLedger | None = None,
         metered: frozenset[str] = frozenset({"llm", "agents", "web"}),
     ):
         self.policy = policy
         self.audit = audit
         self.budget = budget
         self.approver = approver
+        self.grants = grants or GrantLedger()
         self.metered = metered
         self._ops: dict[tuple[str, str], Callable] = {}
         self._capabilities: dict[str, object] = {}
@@ -119,14 +147,19 @@ class Broker:
         """Describe a gated call for the human. A capability that owns gated ops
         provides `preview(op, args, kwargs) -> (category, summary)` so the
         arg-shape knowledge stays with the capability; anything else falls back to
-        a conservative OUTWARD classification and a rendered-args summary."""
-        preview = getattr(self._capabilities.get(cap), "preview", None)
+        a conservative OUTWARD classification and a rendered-args summary. An
+        optional `scope(op, args, kwargs) -> GrantScope | None` hook (same lookup)
+        yields the harness-derived grant key; absent or None means not grantable."""
+        capability = self._capabilities.get(cap)
+        preview = getattr(capability, "preview", None)
         if preview is not None:
             category, summary = preview(op, args, kwargs)
         else:
             category = ActionCategory.OUTWARD
             summary = f"{action}({summarize_args(args, kwargs)})"
-        return ApprovalRequest(action, category, summary, args, kwargs)
+        scope_hook = getattr(capability, "scope", None)
+        scope = scope_hook(op, args, kwargs) if scope_hook is not None else None
+        return ApprovalRequest(action, category, summary, args, kwargs, scope)
 
     def _proxy(self, cap: str, op: str) -> Callable:
         def proxy(*args, **kwargs):
@@ -146,16 +179,45 @@ class Broker:
                 raise PermissionDenied(f"policy denied {action}")
             if decision is Decision.APPROVE:
                 request = self._approval_request(cap, op, action, args, kwargs)
-                approved = bool(self.approver and self.approver(request))
-                self.audit.record(
-                    action=action,
-                    decision="approve",
-                    approved=approved,
-                    category=request.category.value,
+                # IRREVERSIBLE actions are never covered by, and never mint, a
+                # grant — they always re-prompt (see ActionCategory).
+                grantable = (
+                    request.scope is not None
+                    and request.category is not ActionCategory.IRREVERSIBLE
                 )
-                if not approved:
-                    telemetry.record_tool(span, action=action, decision="approve", ok=False)
-                    raise PermissionDenied(f"not approved: {action}")
+                grant = self.grants.find(request.scope) if grantable else None
+                if grant is not None:
+                    self.audit.record(
+                        action=action,
+                        decision="approve",
+                        approved=True,
+                        category=request.category.value,
+                        grant_id=grant.id,
+                    )
+                else:
+                    outcome = (
+                        _normalize(self.approver(request))
+                        if self.approver
+                        else ApprovalOutcome.DENY
+                    )
+                    fields: dict = dict(
+                        action=action,
+                        decision="approve",
+                        approved=outcome is not ApprovalOutcome.DENY,
+                        category=request.category.value,
+                    )
+                    if outcome is ApprovalOutcome.GRANT and grantable:
+                        minted = self.grants.add(request.scope)
+                        fields["grant"] = {
+                            "id": minted.id,
+                            "action_class": minted.scope.action_class,
+                            "target": minted.scope.target,
+                            "expires_at": minted.expires_at,
+                        }
+                    self.audit.record(**fields)
+                    if outcome is ApprovalOutcome.DENY:
+                        telemetry.record_tool(span, action=action, decision="approve", ok=False)
+                        raise PermissionDenied(f"not approved: {action}")
 
             if cap in self.metered:
                 self.budget.check()

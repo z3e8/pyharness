@@ -1391,3 +1391,67 @@ def test_exa_key_is_scrubbed_from_child():
     from pyharness.llm.client import PROVIDER_SECRET_ENV
 
     assert "EXA_API_KEY" in PROVIDER_SECRET_ENV
+
+
+# --- Scoped approval grants (G7, Direction #4) -------------------------------
+
+
+def test_grant_ledger_exact_match_and_expiry():
+    from pyharness.security import GrantLedger, GrantScope
+
+    ledger = GrantLedger()
+    scope = GrantScope("browser", "a.com")
+    g = ledger.add(scope)
+    assert ledger.find(scope) is g
+    # Exact-match only: different host, subdomain, or action-class never matches.
+    assert ledger.find(GrantScope("browser", "b.a.com")) is None
+    assert ledger.find(GrantScope("http", "a.com")) is None
+    # An already-expired grant is never returned (and gets pruned).
+    ledger.add(GrantScope("http", "x.com"), ttl_s=-1)
+    assert ledger.find(GrantScope("http", "x.com")) is None
+    assert ledger.active() == [g]
+    # Revoke removes it.
+    assert ledger.revoke(g.id) is g
+    assert ledger.find(scope) is None
+
+
+def test_bool_approver_still_normalizes(tmp_path):
+    # A simple approver returning a bare bool keeps working: True -> allow once,
+    # False -> deny. This is the regression guard for the contract change.
+    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
+                     approver=lambda r: True)
+    broker.register(FilesCapability(Workspace(tmp_path)))
+    broker.namespace()["write"]("a.txt", "x")  # allowed once
+    assert (Workspace(tmp_path).dir / "a.txt").read_text() == "x"
+
+    broker2 = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
+                      approver=lambda r: False)
+    broker2.register(FilesCapability(Workspace(tmp_path)))
+    with pytest.raises(PermissionDenied):
+        broker2.namespace()["write"]("b.txt", "y")
+
+
+def test_scope_none_falls_back_to_per_call(tmp_path):
+    from pyharness.broker import ApprovalOutcome
+
+    # files.write has no scope() hook -> request.scope is None -> not grantable.
+    # Even a GRANT outcome behaves as allow-once: the next call prompts again.
+    prompts = []
+
+    def approver(request):
+        prompts.append(request.action)
+        assert request.scope is None
+        return ApprovalOutcome.GRANT
+
+    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver)
+    broker.register(FilesCapability(Workspace(tmp_path)))
+    ns = broker.namespace()
+    ns["write"]("a.txt", "x")
+    ns["write"]("b.txt", "y")
+    assert prompts == ["files.write", "files.write"]  # prompted both times, nothing minted
+    # No grant was recorded in the audit chain.
+    import json
+
+    entries = [json.loads(line) for line in
+               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    assert all("grant" not in e for e in entries)
