@@ -49,8 +49,10 @@ the pass).
 Manage the encrypted secrets file (`pyharness/cli_vault.py`).
 
 ```bash
-pyharness-vault set NAME [VALUE]   # value prompted (hidden) if omitted
-pyharness-vault list               # names only — never values
+pyharness-vault set NAME [VALUE] [--host HOST ...]
+                                   # value prompted (hidden) if omitted; each
+                                   # --host binds injection to that host only
+pyharness-vault list               # names and host bindings — never values
 pyharness-vault rm NAME
 ```
 

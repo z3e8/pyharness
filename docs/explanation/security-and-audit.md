@@ -233,6 +233,18 @@ HTTP response `url` (a `"query"`-style secret can survive into the final url),
 `"query"` secret that comes back percent-encoded in the url (`p@ss` -> `p%40ss`)
 is still caught. A resolved secret never round-trips through agent-visible output.
 
+The sink is also where **host binding** is enforced. A vault entry can be bound
+to the host(s) it belongs to at config time (`pyharness-vault set github --host
+api.github.com`); every injection surface passes the concrete destination — the
+request URL's host, the browser page's host, the IMAP server — into
+`SecretSink.resolve`, which refuses a bound secret toward any other host before
+anything goes out. Sending a bound credential to the wrong host is thereby
+*impossible*, not merely visible in the approval prompt; the prompt remains the
+check for unbound secrets. Matching is exact per hostname, case-insensitive, no
+wildcards — the same shape as grant scopes. (A secret-carrying HTTP request
+never follows redirects, so the checked host is the only one the credential can
+reach.)
+
 The same rule covers values *derived* from a secret. A TOTP seed is a plain
 vault secret (by convention `<site>_totp`); `browser.fill_totp` resolves it
 parent-side, derives the current RFC 6238 code (`security/totp.py`, stdlib

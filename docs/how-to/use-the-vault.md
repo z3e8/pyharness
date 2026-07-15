@@ -22,7 +22,7 @@ Resolved in this order, first hit wins:
 ```bash
 pyharness-vault set github          # prompts for the value (hidden)
 pyharness-vault set github ghp_xxx  # or pass it inline
-pyharness-vault list                # names only — never values
+pyharness-vault list                # names and host bindings — never values
 pyharness-vault rm github
 ```
 
@@ -31,6 +31,28 @@ pyharness-vault rm github
 - Set the **same passphrase** in the environment when you run `pyharness` so the
   session can open the file. If a file exists and no passphrase is set, the CLI
   prompts once at startup.
+
+## Bind a secret to its host
+
+`--host` (repeatable) binds a secret to the only host(s) it may ever travel to:
+
+```bash
+pyharness-vault set github ghp_xxx --host api.github.com --host uploads.github.com
+```
+
+A bound secret aimed anywhere else — an HTTP request or `web.fetch` to another
+host, `browser.fill_secret`/`fill_totp` on a page whose host doesn't match —
+is refused structurally, before anything leaves the machine. The approval
+prompt then confirms a destination that is already known-good instead of being
+the last line of defense against a look-alike host. Matching is by exact
+hostname (case-insensitive, no wildcards — bind subdomains explicitly, same as
+[approval grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click)).
+
+Bind every credential you can. A secret set without `--host` stays unbound and
+works everywhere, with the approval prompt as its only destination check. Only
+file-vault entries carry bindings; env (`PYHARNESS_SECRET_*`) secrets are
+always unbound (in-memory `Vault(secrets=...)` entries may use the
+`{"value": ..., "hosts": [...]}` form directly).
 
 ## How the agent uses it
 

@@ -47,11 +47,30 @@ class SecretSink:
         masked the way text can."""
         return bool(self._masks)
 
-    def resolve(self, name: str) -> str:
+    def resolve(self, name: str, *, target_host: str | None = None) -> str:
         """Resolve a secret name to cleartext parent-side and record it for later
-        masking. Raises if no vault is configured to inject from."""
+        masking. Raises if no vault is configured to inject from.
+
+        `target_host` is the host the injected secret is about to travel to (the
+        request URL's host, the browser page's host, the IMAP server). A secret
+        bound to hosts at vault-config time (`pyharness-vault set NAME --host H`)
+        is refused toward any other host — structurally, before anything goes out
+        — so a look-alike destination is impossible, not merely visible in the
+        approval prompt. Unbound secrets keep the approval gate as their check."""
         if self._vault is None:
             raise RuntimeError("no vault configured for secret injection")
+        hosts = self._vault.hosts(name)
+        if hosts is not None:
+            if not target_host:
+                raise PermissionError(
+                    f"secret {name!r} is bound to host(s) {', '.join(hosts)} and "
+                    "cannot be injected into a context with no target host"
+                )
+            if target_host.lower() not in hosts:
+                raise PermissionError(
+                    f"secret {name!r} is bound to host(s) {', '.join(hosts)}; "
+                    f"refusing to send it to {target_host!r}"
+                )
         secret = self._vault.get(name)
         self._masks |= _mask_forms(secret)
         return secret

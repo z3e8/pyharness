@@ -18,6 +18,17 @@ DEFAULT_ENV_PREFIX = "PYHARNESS_SECRET_"
 PASSPHRASE_ENV = "PYHARNESS_VAULT_PASSPHRASE"
 
 
+def _entry(raw) -> tuple[str, tuple[str, ...] | None]:
+    """Unpack a stored entry. A bare string is an unbound secret (injectable
+    toward any host the human approves); a `{"value": ..., "hosts": [...]}` dict
+    binds the secret to those hosts. Hosts are normalized to lowercase; an empty
+    host list folds to unbound."""
+    if isinstance(raw, dict):
+        hosts = tuple(sorted({str(h).lower() for h in raw.get("hosts") or ()}))
+        return raw["value"], hosts or None
+    return raw, None
+
+
 class EncryptedFile:
     """A passphrase-encrypted JSON map of secret name -> cleartext value.
 
@@ -126,7 +137,9 @@ class Vault:
             self._file_cache = self._file.load() if self._file else {}
         return self._file_cache
 
-    def get(self, name: str) -> str:
+    def _lookup(self, name: str):
+        """The raw stored entry for `name` — a bare string, or a
+        `{"value", "hosts"}` dict for a host-bound secret (see `_entry`)."""
         if name in self._secrets:
             return self._secrets[name]
         env = os.environ.get(self._env_prefix + name.upper())
@@ -136,6 +149,15 @@ class Vault:
         if name in file_secrets:
             return file_secrets[name]
         raise KeyError(f"secret {name!r} not found")
+
+    def get(self, name: str) -> str:
+        return _entry(self._lookup(name))[0]
+
+    def hosts(self, name: str) -> tuple[str, ...] | None:
+        """The hosts `name` is bound to, or None for an unbound secret. A bound
+        secret may only be injected toward one of these hosts — the `SecretSink`
+        enforces it structurally, before any request leaves the parent."""
+        return _entry(self._lookup(name))[1]
 
     def names(self) -> list[str]:
         """Every secret name available to inject — never the values. Env-derived

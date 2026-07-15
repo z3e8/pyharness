@@ -183,6 +183,10 @@ class HttpSessionCapability:
         headers = dict(headers or {})
         params = dict(params or {})
         sink = SecretSink(self.vault)
+        # The host any injected secret travels to. A host-bound secret is refused
+        # toward any other host inside `resolve` — and a secret-carrying request
+        # never follows redirects (below), so the initial host is the only one.
+        target_host = urlsplit(url).hostname
         # A request that carries a credential must not follow redirects: httpx
         # strips only `Authorization` across origins, so a custom-header (`header`
         # style) or body-field (`secret_fields`) secret would be resent verbatim to
@@ -195,7 +199,7 @@ class HttpSessionCapability:
             _apply_secret_auth(
                 headers,
                 params,
-                secret=sink.resolve(auth),
+                secret=sink.resolve(auth, target_host=target_host),
                 style=auth_style,
                 name=auth_name,
                 user=auth_user,
@@ -206,7 +210,7 @@ class HttpSessionCapability:
             if not isinstance(body, dict):
                 raise ValueError("secret_fields requires a dict `json` or `data` body")
             for field, secret_name in secret_fields.items():
-                body[field] = sink.resolve(secret_name)
+                body[field] = sink.resolve(secret_name, target_host=target_host)
 
         built_files = None
         if files:

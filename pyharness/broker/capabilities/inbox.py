@@ -125,7 +125,7 @@ class InboxCapability:
             )
         port = int(os.environ.get(PORT_ENV, "993"))
         sink = SecretSink(self.vault)
-        password = sink.resolve(PASSWORD_SECRET)
+        password = sink.resolve(PASSWORD_SECRET, target_host=host)
         imap = imaplib.IMAP4_SSL(host, port, timeout=30)
         try:
             imap.login(user, password)

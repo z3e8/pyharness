@@ -413,7 +413,11 @@ class BrowserCapability:
         parent-side, typed into the page, and recorded so later reads mask it — it
         never reaches agent code."""
         session = self._session(session_id)
-        secret = session.sink.resolve(secret_name)
+        # A host-bound secret is refused unless the *current page's* host matches
+        # its binding — typing into a look-alike page fails before the keystroke.
+        secret = session.sink.resolve(
+            secret_name, target_host=urlsplit(session.page.url).hostname
+        )
         session.page.fill(self._target(session, selector, ref), secret)
         return self._state(session)
 
@@ -427,7 +431,9 @@ class BrowserCapability:
         neither the seed nor the code ever reaches agent code, and later reads
         mask the code."""
         session = self._session(session_id)
-        seed = session.sink.resolve(secret_name)
+        seed = session.sink.resolve(
+            secret_name, target_host=urlsplit(session.page.url).hostname
+        )
         code = totp_code(seed)
         session.sink.track(code)  # the page may echo the code back; mask it like the seed
         session.page.fill(self._target(session, selector, ref), code)
