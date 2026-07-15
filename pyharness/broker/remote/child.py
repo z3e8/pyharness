@@ -4,16 +4,15 @@ import io
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
+from ...security.env import reduce_environ
 from ...util import truncate
 from .protocol import RemoteToolSpec, send_json
-from .sandbox import apply_resource_limits, scrub_secret_env
+from .sandbox import apply_resource_limits
 
 
 def child_main(
     conn,
     op_names: list[str],
-    scrub_prefixes: tuple[str, ...] = (),
-    scrub_names: tuple[str, ...] = (),
     venv_site_packages: str | None = None,
     workdir: str | None = None,
 ) -> None:
@@ -24,11 +23,11 @@ def child_main(
     code. Every side effect is a proxy call that crosses the pipe to the parent;
     pure computation (loops, data wrangling, the agent's own variables) stays
     here, unseen by the orchestrator."""
-    # First, before any agent code can run: strip secret-bearing variables the
-    # child inherited from the parent's environment (env-backed secrets and the
-    # file-vault passphrase). The vault's contract is that cleartext never enters
-    # the child; spawn inheritance would otherwise leak it via os.environ.
-    scrub_secret_env(scrub_prefixes, scrub_names)
+    # First, before any agent code can run: shrink the environment the child
+    # inherited from the parent to the minimal allowlist (security/env.py). The
+    # vault's contract is that cleartext never enters the child, and default-deny
+    # also keeps every *unknown* secret a user put in .env out of os.environ.
+    reduce_environ()
     apply_resource_limits()
     if workdir:
         # The workspace is the agent's home: chdir into it so raw Python (open,

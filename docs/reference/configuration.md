@@ -63,6 +63,17 @@ non-`http(s)` schemes and link-local targets (the cloud-metadata range
 |----------|---------|--------|
 | `PYHARNESS_BLOCK_PRIVATE_NETWORK` | unset (off) | Also block loopback and private (RFC1918/ULA) ranges — a stricter posture that stops the agent reaching localhost/LAN services. Off by default so local dev works. Set `true`/`1`/`yes`/`on`. |
 
+## Subprocess environment
+
+Subprocesses reachable by agent code — the out-of-process child kernel,
+`shell.bash`, local (stdio) MCP servers — start from a minimal default-deny
+allowlist (PATH/HOME/locale/TLS-trust/proxy basics), not from the parent's full
+environment. See [the sandbox](../explanation/security-and-audit.md#the-out-of-process-sandbox).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_ENV_PASSTHROUGH` | unset | Comma-separated extra variable names to pass through to those subprocesses (e.g. `DATABASE_URL,PROJ_CONFIG`). Can never admit the harness's own secret-bearing variables (`PYHARNESS_SECRET_*`, the vault passphrase, provider API keys). |
+
 ## Web search
 
 | Variable | Default | Effect |

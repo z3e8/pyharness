@@ -106,5 +106,7 @@ second factor is a credential release, never covered by a domain grant. With a
 covering re-login, an expired session no longer needs a human in the loop
 beyond the approval prompt.
 
-> Out-of-process, secret-bearing env vars are scrubbed from the child before any
-> agent code runs, so even a shell-out can't read them.
+> Out-of-process, the child's environment is reduced to a minimal allowlist
+> before any agent code runs — secret-bearing vars (and everything else not on
+> the list) never reach it, so even a shell-out can't read them. See
+> [configuration](../reference/configuration.md#subprocess-environment).

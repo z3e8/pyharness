@@ -71,7 +71,7 @@ def _broker(tmp_path):
 
 # --- MCP stdio transport must not leak the parent's secrets ------------------
 
-def test_stdio_transport_scrubs_secret_env(monkeypatch):
+def test_stdio_transport_starts_from_minimal_env(monkeypatch):
     from pyharness.tools.mcp import transport as T
 
     captured: dict = {}
@@ -99,7 +99,7 @@ def test_stdio_transport_scrubs_secret_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-leak")
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "vault-pw")
     monkeypatch.setenv("PYHARNESS_SECRET_GITHUB", "gh-token")
-    monkeypatch.setenv("PATH_KEPT", "ok")
+    monkeypatch.setenv("UNRELATED_TOKEN", "t")  # unknown var: default-denied too
     monkeypatch.setattr(T.subprocess, "Popen", fake_popen)
 
     t = T.StdioTransport("dummy", (), env={"SERVER_OWN": "v"})
@@ -108,7 +108,8 @@ def test_stdio_transport_scrubs_secret_env(monkeypatch):
         assert "ANTHROPIC_API_KEY" not in env
         assert "PYHARNESS_VAULT_PASSPHRASE" not in env
         assert "PYHARNESS_SECRET_GITHUB" not in env
-        assert env["PATH_KEPT"] == "ok"  # non-secret env still passes through
+        assert "UNRELATED_TOKEN" not in env  # allowlist, not denylist
+        assert "PATH" in env  # the basics a server needs survive
         assert env["SERVER_OWN"] == "v"  # the server's own configured env survives
     finally:
         t.close()

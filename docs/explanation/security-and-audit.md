@@ -316,16 +316,21 @@ When the agent runs in a child process (`out_of_process=True`), two OS-level
 layers confine it (`pyharness/broker/remote/sandbox.py`), on top of the process
 boundary itself:
 
-- **Env scrubbing** — secret-bearing variables (`PYHARNESS_SECRET_*`, the vault
-  passphrase, and the provider API keys the parent uses to call the LLM — e.g.
-  `ANTHROPIC_API_KEY`) are deleted from the child's environment before any agent
-  code runs, and from any subprocess the child spawns. The child has no LLM client
-  of its own (completions route through the broker), so it needs none of them, and
-  even `printenv` can't read a key the parent legitimately holds. The same scrub
-  covers the two other subprocess-spawn paths that would otherwise inherit the
-  parent's environment wholesale: `shell.bash`, and a **local (stdio) MCP server**
-  — arbitrary third-party code, so it starts from a scrubbed environment with only
-  its own configured `env` (resolved `secret:` refs) layered back on.
+- **Minimal environment (default-deny)** — the child's environment is reduced to
+  a small allowlist (`security/env.py`: PATH/HOME/locale/TLS-trust/proxy basics)
+  before any agent code runs, and any subprocess the child spawns inherits the
+  reduced copy. Default-deny rather than a denylist: the harness's own secrets
+  (`PYHARNESS_SECRET_*`, the vault passphrase, the provider API keys — e.g.
+  `ANTHROPIC_API_KEY`) are gone, and so is anything *else* a user put in `.env` —
+  an `AWS_SECRET_ACCESS_KEY` or `DATABASE_URL` never has to be known about to be
+  kept out. The child has no LLM client of its own (completions route through the
+  broker), so it needs none of them, and even `printenv` reads nothing the parent
+  holds. The same minimal environment seeds the two other subprocess-spawn paths
+  that would otherwise inherit the parent's environment wholesale: `shell.bash`,
+  and a **local (stdio) MCP server** — arbitrary third-party code, so it gets the
+  allowlist with only its own configured `env` (resolved `secret:` refs) layered
+  back on. `PYHARNESS_ENV_PASSTHROUGH="FOO,BAR"` admits extra vars a workflow
+  genuinely needs; it can never resurrect the harness's own secret variables.
 - **macOS Seatbelt** (`sandbox-exec`) — enforces the perimeter, not a blanket
   lockdown. The guiding rule is **the workspace is the sandbox; the broker guards
   everything that leaves it.** Agent code reads and writes freely *inside* its

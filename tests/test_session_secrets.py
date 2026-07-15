@@ -19,17 +19,23 @@ def test_bash_hides_provider_key(tmp_path, monkeypatch):
         session.close()
 
 
-def test_child_env_hides_provider_key(tmp_path, monkeypatch):
-    # The out-of-process child strips the key before any agent code runs.
+def test_child_env_is_minimal_allowlist(tmp_path, monkeypatch):
+    # The out-of-process child reduces its environment to the allowlist before
+    # any agent code runs: provider keys AND unknown vars (default-deny) are
+    # gone; allowlisted basics survive; PYHARNESS_ENV_PASSTHROUGH admits extras.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-leak")
-    monkeypatch.setenv("PATH_KEPT", "ok")  # non-secret env still passes through
+    monkeypatch.setenv("CUSTOM_DB_URL", "postgres://secret")  # not on any denylist
+    monkeypatch.setenv("OPTED_IN", "ok")
+    monkeypatch.setenv("PYHARNESS_ENV_PASSTHROUGH", "OPTED_IN")
     session = Session(tmp_path, out_of_process=True)
     try:
         out = session.kernel.run(
             "import os\n"
             "print(os.environ.get('ANTHROPIC_API_KEY'))\n"
-            "print(os.environ.get('PATH_KEPT'))\n"
+            "print(os.environ.get('CUSTOM_DB_URL'))\n"
+            "print(os.environ.get('OPTED_IN'))\n"
+            "print('PATH' in os.environ)\n"
         )
-        assert out == "None\nok"
+        assert out == "None\nNone\nok\nTrue"
     finally:
         session.close()

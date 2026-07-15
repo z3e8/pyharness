@@ -9,7 +9,6 @@ from pathlib import Path
 from types import ModuleType
 
 from ...core.session_venv import SessionVenv
-from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
 from ...tools.registry import _public_functions
 from .child import child_main
 from .protocol import RemoteError, RemoteToolSpec, recv_json
@@ -35,14 +34,11 @@ class RemoteKernel:
         broker,
         *,
         sandbox: bool = True,
-        secret_env_prefixes: tuple[str, ...] = (DEFAULT_ENV_PREFIX,),
-        secret_env_names: tuple[str, ...] = (PASSPHRASE_ENV,),
         venv: SessionVenv | None = None,
         workspace=None,
     ):
         self.broker = broker
         self.sandbox = sandbox
-        self._secret_env = (secret_env_prefixes, secret_env_names)
         self._venv = venv
         self._workspace = workspace
         self._ctx = mp.get_context("spawn")
@@ -71,14 +67,11 @@ class RemoteKernel:
             venv_site = str(site) if site is not None else None
 
         parent_conn, child_conn = self._ctx.Pipe()
-        prefixes, names = self._secret_env
         proc = self._ctx.Process(
             target=child_main,
             args=(
                 child_conn,
                 self.broker.op_names(),
-                prefixes,
-                names,
                 venv_site,
                 str(workspace_dir) if workspace_dir is not None else None,
             ),

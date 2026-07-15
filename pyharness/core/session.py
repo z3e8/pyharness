@@ -30,10 +30,10 @@ from ..broker.capabilities.tools import unvetted_mcp_call
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
-from ..llm.client import PROVIDER_SECRET_ENV, AnthropicLLM
+from ..llm.client import AnthropicLLM
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
-from ..security.vault import PASSPHRASE_ENV, Vault
+from ..security.vault import Vault
 from ..tools.registry import Registry
 from ..trace import TraceLog
 from .agent import Agent
@@ -190,13 +190,6 @@ class Session:
         self.index_db = Path(index_db).expanduser() if index_db else None
         self._refresh_index()
 
-        # Variables agent-controlled code must never see: env-backed secrets
-        # (the vault's prefix), the file-vault passphrase, and the provider API
-        # keys the parent uses to call the LLM. Stripped from the child's
-        # environment and from any shell subprocess.
-        secret_prefixes = (self.vault.env_prefix,)
-        secret_names = (PASSPHRASE_ENV, *PROVIDER_SECRET_ENV)
-
         self.session_venv = SessionVenv()
         self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
@@ -212,11 +205,10 @@ class Session:
         # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
             FilesCapability(self.workspace),
-            ShellCapability(
-                self.workspace,
-                secret_env_prefixes=secret_prefixes,
-                secret_env_names=secret_names,
-            ),
+            # bash and the child kernel run on the minimal allowlist environment
+            # (security/env.py) — no secret, and no unknown .env var, is one
+            # `printenv` away from agent code.
+            ShellCapability(self.workspace),
             SearchCapability(self.workspace),
             LLMCapability(self.llm),
             AgentsCapability(self.llm, budget=self.budget),
@@ -273,8 +265,6 @@ class Session:
         self.kernel = (
             RemoteKernel(
                 self.broker,
-                secret_env_prefixes=secret_prefixes,
-                secret_env_names=secret_names,
                 venv=self.session_venv,
                 workspace=self.workspace,
             )

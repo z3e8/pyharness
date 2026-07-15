@@ -364,19 +364,21 @@ def test_non_transferable_argument_fails_cleanly(kernel_factory, tmp_path):
 
 def test_child_environment_has_no_secrets(kernel_factory, tmp_path, monkeypatch):
     # Env-backed secrets and the file-vault passphrase live in the parent's
-    # environment; the spawned child inherits it. The child must strip them
-    # before any cell runs, so the agent cannot read cleartext from os.environ.
+    # environment; the spawned child inherits it. The child reduces its copy to
+    # the minimal allowlist before any cell runs, so the agent cannot read
+    # cleartext — or any unknown .env var — from os.environ.
     monkeypatch.setenv("PYHARNESS_SECRET_TOKEN", "supersecret")
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "hunter2")
-    monkeypatch.setenv("PATH_KEPT", "ok")  # non-secret env survives
+    monkeypatch.setenv("NOT_LISTED", "dropped")  # default-deny: unknown vars go too
     kernel = kernel_factory(_broker(tmp_path))
     out = kernel.run(
         "import os\n"
         "print(os.environ.get('PYHARNESS_SECRET_TOKEN'))\n"
         "print(os.environ.get('PYHARNESS_VAULT_PASSPHRASE'))\n"
-        "print(os.environ.get('PATH_KEPT'))\n"
+        "print(os.environ.get('NOT_LISTED'))\n"
+        "print('HOME' in os.environ)\n"
     )
-    assert out == "None\nNone\nok"
+    assert out == "None\nNone\nNone\nTrue"
 
 
 def test_child_restarts_after_crash(kernel_factory, tmp_path):
