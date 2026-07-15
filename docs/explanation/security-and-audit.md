@@ -25,6 +25,23 @@ proposals too — reflection routes its skill writes through the same broker gat
 `fill_totp` / `select_option` / `press` / `upload`), since those act outward on the user's
 behalf; reads, navigation, `snapshot`, `scroll`, and `wait_for` stay free.
 
+Two argument-dependent gates guard the seams where a "free" read could still leak
+a secret:
+
+- **Any request that attaches a vault secret** (`http.request` or `web.fetch` with
+  `auth`/`secret_fields`) requires approval *regardless of HTTP method* — sending a
+  credential off-box is a credential-release action, so a `GET` (otherwise free)
+  can't quietly ship a named secret to an attacker host. The approval summary names
+  the secret (`auth=github via header`) so the human can catch a token headed for
+  the wrong destination, and it is grantable per host so repeated authenticated
+  reads to a vetted host don't re-prompt. A secret-carrying request also stops
+  following redirects, so a cross-origin `Location` can't resend a custom-header or
+  body credential to a host the prompt never showed.
+- **`browser.screenshot`** is gated exactly like `browser.look` once a secret has
+  been typed into the session — the PNG carries the credential's pixels (which text
+  redaction can't mask) and the agent can read the file straight back out of the
+  workspace.
+
 Reads being free rests on a second rule: **what a read returns is untrusted
 input.** A web page, an MCP result, and an email body (`inbox.read` — anyone
 can send mail to the account) are attacker-controlled text; nothing in them can
@@ -168,6 +185,32 @@ An agent-authored message can therefore *inform* a decision but never *be* the
 decision surface — "reply y to allow" written into a notification has nowhere
 to land.
 
+## Egress guard — no requests to the box's own network
+
+The broker runs in the *unsandboxed* parent, so every outbound request the agent
+asks for is made from a process that can reach the host's own network. A "free"
+GET to `http://169.254.169.254/…` (the cloud-metadata endpoint, link-local on
+every major cloud) would hand back the instance's IAM credentials; a GET to a
+`localhost` admin port or a Docker socket over HTTP reaches internal services. This
+is server-side request forgery (SSRF), and nothing in the policy layer above stops
+it on its own.
+
+`pyharness/security/egress.py:check_url` sits on the request path
+(`web.fetch` / `http.request` / `browser.goto`) and, before the request goes out:
+
+- refuses any non-`http(s)` scheme (no `file://`, `chrome://`, `gopher://`); and
+- resolves the host and blocks it when it maps to a **link-local** address
+  (`169.254.0.0/16`, `fe80::/10`) — the cloud-metadata range, never a legitimate
+  fetch target — so a hostname that resolves there (`metadata.google.internal`) is
+  caught, not just the bare IP.
+
+Loopback and RFC1918/ULA private ranges stay reachable by default (local dev, LAN
+services, and local MCP-over-http are normal); `PYHARNESS_BLOCK_PRIVATE_NETWORK=true`
+extends the block to them for a stricter posture. The guard is best-effort
+defense-in-depth: it resolves once here and the HTTP client resolves again at
+connect, so a deliberately racing resolver is not fully closed out — pinning the
+connection to the vetted IP is the durable fix and is not built in this version.
+
 ## Vault — secrets the agent can name but never read
 
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to
@@ -186,8 +229,9 @@ session, one HTTP request). It is the only place a name becomes cleartext, and i
 records every value it resolves so the capability can mask it (`***`) back out of
 anything the agent then reads — a browser `read_text` or `snapshot` tree, or an
 HTTP response `url` (a `"query"`-style secret can survive into the final url),
-`text`, or `headers`. A resolved secret never round-trips through agent-visible
-output.
+`text`, or `headers`. Masking covers the secret's URL-encoded spellings too, so a
+`"query"` secret that comes back percent-encoded in the url (`p@ss` -> `p%40ss`)
+is still caught. A resolved secret never round-trips through agent-visible output.
 
 The same rule covers values *derived* from a secret. A TOTP seed is a plain
 vault secret (by convention `<site>_totp`); `browser.fill_totp` resolves it
@@ -200,12 +244,13 @@ negotiable. This is what makes an unattended re-login on a 2FA site possible —
 the human approves the `fill_totp` action, not the code.
 
 Masking works on text; pixels it cannot reach. A secret typed into a page is
-visible in a screenshot, so `browser.look` (which puts a screenshot in the
-model's context) is gated by the default policy once a session has injected a
-secret — an argument-dependent `approve_if` predicate, the same mechanism that
-gates state-changing HTTP by method. `screenshot` only writes to disk, so a
-secret on-screen still lands in that file; keep credential entry on the `http`
-path where the value never renders.
+visible in a screenshot, so both `browser.look` (which puts a screenshot in the
+model's context) and `browser.screenshot` (which writes a PNG the agent can read
+back from the workspace) are gated by the default policy once a session has
+injected a secret — an argument-dependent `approve_if` predicate, the same
+mechanism that gates state-changing HTTP by method. Either way the value never
+renders on the masked `http` path, so that remains the safest place for credential
+entry.
 
 Resolution order, first hit wins: in-memory dict → environment
 (`PYHARNESS_SECRET_<NAME>`) → encrypted file. The file is sealed with a
@@ -264,7 +309,11 @@ boundary itself:
   `ANTHROPIC_API_KEY`) are deleted from the child's environment before any agent
   code runs, and from any subprocess the child spawns. The child has no LLM client
   of its own (completions route through the broker), so it needs none of them, and
-  even `printenv` can't read a key the parent legitimately holds.
+  even `printenv` can't read a key the parent legitimately holds. The same scrub
+  covers the two other subprocess-spawn paths that would otherwise inherit the
+  parent's environment wholesale: `shell.bash`, and a **local (stdio) MCP server**
+  — arbitrary third-party code, so it starts from a scrubbed environment with only
+  its own configured `env` (resolved `secret:` refs) layered back on.
 - **macOS Seatbelt** (`sandbox-exec`) — enforces the perimeter, not a blanket
   lockdown. The guiding rule is **the workspace is the sandbox; the broker guards
   everything that leaves it.** Agent code reads and writes freely *inside* its

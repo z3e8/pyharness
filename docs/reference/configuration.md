@@ -53,6 +53,16 @@ environment, **not** committed to `.env` if sensitive.
 | `PYHARNESS_SECRET_<NAME>` | — | An env-backed secret the agent can reference as `<name>` (lowercased). |
 | `PYHARNESS_PROFILES_DIR` | `~/.pyharness/profiles` | Directory holding encrypted browser login profiles (`<name>.enc`), sealed with `PYHARNESS_VAULT_PASSPHRASE`. See [site profiles](../how-to/site-profiles.md). |
 
+## Network egress
+
+Outbound requests (`web.fetch` / `http.request` / `browser.goto`) always refuse
+non-`http(s)` schemes and link-local targets (the cloud-metadata range
+`169.254.169.254`). See [the egress guard](../explanation/security-and-audit.md#egress-guard--no-requests-to-the-boxs-own-network).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_BLOCK_PRIVATE_NETWORK` | unset (off) | Also block loopback and private (RFC1918/ULA) ranges — a stricter posture that stops the agent reaching localhost/LAN services. Off by default so local dev works. Set `true`/`1`/`yes`/`on`. |
+
 ## Web search
 
 | Variable | Default | Effect |
