@@ -28,6 +28,9 @@ pyharness [SESSION_DIR]
   (e.g. HTTP `DELETE`) and credential steps (`fill_secret`, secret-gated `look`)
   never offer `a`. See
   [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
+- Agent notifications (`notify(...)`) print standalone as `[agent note] …` —
+  agent-authored text, rendered distinctly from approval prompts and never
+  asking for input — and are mirrored best-effort as a desktop notification.
 - A turn that fails mid-stream is retried once, then aborted without crashing the
   REPL. `Ctrl-C` aborts the in-flight turn (e.g. a slow web search) and drops back
   to the prompt with history intact; `Ctrl-D` exits.

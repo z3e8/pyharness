@@ -13,6 +13,7 @@ from ..broker.capabilities import (
     HistoryCapability,
     HttpSessionCapability,
     LLMCapability,
+    NotifyCapability,
     PackagesCapability,
     SearchCapability,
     SecretsCapability,
@@ -77,6 +78,17 @@ class Session:
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
+
+        # One event sink shared by the agent loop and any capability that emits
+        # events (notify): everything lands in trace.jsonl, then the caller's
+        # on_event (the CLI renderer) sees it live.
+        def on_event_traced(kind: str, text: str, **extra) -> None:
+            # llm_token fires once per streaming chunk — too frequent for trace
+            if kind != "llm_token":
+                self.trace.record(kind, text, **extra)
+            if on_event is not None:
+                on_event(kind, text)
+
         # Saving a skill (agent-authored code that auto-loads later) and
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
@@ -145,6 +157,7 @@ class Session:
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
             HistoryCapability(self.audit),
+            NotifyCapability(on_event=on_event_traced),
         ):
             self.broker.register(capability)
 
@@ -190,13 +203,6 @@ class Session:
             if out_of_process
             else Kernel(self.broker.namespace())
         )
-
-        def on_event_traced(kind: str, text: str, **extra) -> None:
-            # llm_token fires once per streaming chunk — too frequent for trace
-            if kind != "llm_token":
-                self.trace.record(kind, text, **extra)
-            if on_event is not None:
-                on_event(kind, text)
 
         self.agent = Agent(
             self.llm,

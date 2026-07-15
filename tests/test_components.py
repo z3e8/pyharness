@@ -1635,3 +1635,77 @@ def test_cli_approve_no_grant_for_irreversible_or_unscoped(monkeypatch):
     uns = ApprovalRequest("files.write", ActionCategory.OUTWARD, "write x", ("x",), {}, None)
     assert _approve(uns) is ApprovalOutcome.DENY
     assert all("[y/a/N]" not in p for p in prompts)  # the grant prompt is never shown
+
+
+# --- Notify (direction-8) ---
+
+
+def test_notify_emits_event_desktop_and_audits(tmp_path):
+    from pyharness.broker.capabilities import NotifyCapability
+
+    events, shown = [], []
+    broker = _broker(tmp_path)
+    broker.register(NotifyCapability(
+        on_event=lambda kind, text, **extra: events.append((kind, text, extra)),
+        desktop=shown.append,
+    ))
+    assert broker.namespace()["notify"]("checkpoint saved", level="attention") == "delivered"
+    assert events == [("notify", "checkpoint saved", {"level": "attention"})]
+    assert shown == ["checkpoint saved"]
+    entry = broker.audit.tail(1)[0]
+    assert entry["action"] == "notify.notify" and entry["ok"] is True
+
+
+def test_notify_rejects_unknown_level(tmp_path):
+    from pyharness.broker.capabilities import NotifyCapability
+
+    broker = _broker(tmp_path)
+    broker.register(NotifyCapability(desktop=None))
+    with pytest.raises(ValueError, match="level"):
+        broker.namespace()["notify"]("hi", level="urgent")
+    entry = broker.audit.tail(1)[0]
+    assert entry["action"] == "notify.notify" and entry["ok"] is False
+
+
+def test_notify_desktop_is_best_effort_and_capped(tmp_path):
+    from pyharness.broker.capabilities import NotifyCapability
+    from pyharness.broker.capabilities.notify import _BODY_LIMIT
+
+    def boom(message):
+        raise RuntimeError("no display")
+
+    # A failing display helper never breaks the agent's call...
+    assert NotifyCapability(desktop=boom).notify("still fine") == "delivered"
+    # ...and the desktop body is capped while the event keeps the full message.
+    events, shown = [], []
+    cap = NotifyCapability(
+        on_event=lambda kind, text, **extra: events.append(text), desktop=shown.append
+    )
+    cap.notify("x" * 1000)
+    assert len(shown[0]) == _BODY_LIMIT and len(events[0]) == 1000
+
+
+def test_notify_is_core_builtin_wired_to_session_events(tmp_path):
+    from pyharness.core.session import Session
+
+    events = []
+    session = Session(tmp_path, on_event=lambda kind, text: events.append((kind, text)))
+    try:
+        # No real desktop popups from the test suite.
+        session.broker._capabilities["notify"].desktop = None
+        assert "notify" in session.broker.op_names()
+        session.broker.call("notify", "notify", "hello from the agent")
+        assert ("notify", "hello from the agent") in events
+        trace = (session.workspace.root / "trace.jsonl").read_text()
+        assert "hello from the agent" in trace
+    finally:
+        session.close()
+
+
+def test_cli_renders_notify_distinct_from_approval(capsys):
+    from pyharness.cli import _trace
+
+    _trace("notify", "blocked on 2FA — need you")
+    out = capsys.readouterr().out
+    assert "[agent note] blocked on 2FA — need you" in out
+    assert "approval" not in out and "allow?" not in out

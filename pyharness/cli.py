@@ -40,6 +40,12 @@ def _trace(kind: str, text: str) -> None:
         # llm_call is the post-stream summary, note is preamble text emitted
         # before a tool call. Suppress to avoid double-rendering.
         return
+    if kind == "notify":
+        # Agent-authored note to the user. Rendered standalone under a fixed
+        # prefix, visually distinct from the ⚠ approval prompt, and it never
+        # takes input — so agent text cannot pass as a harness prompt.
+        print(f"\n\033[33m[agent note] {text}{_RESET}", flush=True)
+        return
     color = _COLORS.get(kind, "")
     label = {"code": "python", "output": "output"}.get(kind, kind)
     print(f"\n{color}┌─ {label} ─{_RESET}")
