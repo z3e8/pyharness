@@ -4,7 +4,13 @@ from pathlib import Path
 
 from ...security.policy import ActionCategory
 from ...tools.registry import Registry
-from ...tools.skills import edit_skill_md, record_use, register_skill_dir, write_skill
+from ...tools.skills import (
+    edit_skill_md,
+    record_use,
+    register_skill_dir,
+    validate_skill_name,
+    write_skill,
+)
 
 
 class SkillsCapability:
@@ -31,6 +37,20 @@ class SkillsCapability:
             "edit_skill": self.edit_skill,
             "record_skill_use": self.record_skill_use,
         }
+
+    def _guard_shadow(self, name: str) -> None:
+        """A skill may overwrite another *learned* skill (that is how re-save and
+        edit work), but must never take a name a core capability or an
+        installed/MCP tool already owns. Shadowing e.g. `http` would reroute every
+        call made under that trusted name through agent-authored code while the
+        approval summaries still read as the real capability's. Mirrors the same
+        guard `tools.add_mcp_server` applies to server names."""
+        existing = self.registry.info(name)
+        if existing is not None and existing.source != "learned":
+            raise ValueError(
+                f"cannot use skill name {name!r}: a {existing.source} tool already "
+                "owns it; pick a different name"
+            )
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
         """All ops only write under the skills root, so they are LOCAL. Saving or
@@ -62,6 +82,8 @@ class SkillsCapability:
         `check` is the skill's success test — one line saying how a run confirms
         it worked (an assertion, a re-fetch, an expected state) — so
         record_skill_use rests on evidence, not impression."""
+        validate_skill_name(name)
+        self._guard_shadow(name)
         skill_dir = write_skill(
             self.skills_dir, name, description, instructions,
             files=files, keywords=tuple(keywords), category=category, check=check,
@@ -80,6 +102,8 @@ class SkillsCapability:
         re-saving the whole procedure (a full rewrite is how accumulated detail
         gets lost). Frontmatter and bundled files are untouched. The revised
         skill is unproven again: verified clears until a real run works."""
+        validate_skill_name(name)
+        self._guard_shadow(name)
         skill_dir = edit_skill_md(self.skills_dir, name, edits)
         register_skill_dir(self.registry, skill_dir)
         self._on_event("skill_edited", name, skill=name, edits=len(edits), reason=reason)
@@ -94,6 +118,7 @@ class SkillsCapability:
         first 'worked' marks the skill verified; the log lets you and later
         sessions see how it last behaved and catch a breaking change. Do this
         after actually running the skill — trust is earned by a real run."""
+        validate_skill_name(name)
         skill_dir = self.skills_dir / name
         if not (skill_dir / "SKILL.md").exists():
             raise KeyError(f"no learned skill {name!r} to record against")
