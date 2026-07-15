@@ -88,6 +88,7 @@ class Completion:
     tool_calls: list[ToolCall]
     content: object  # raw provider content blocks, appended verbatim to history
     stop_reason: str | None = None
+    usage: Usage | None = None  # token/cost accounting for this call, when known
 
 
 class LLM(Protocol):
@@ -175,4 +176,4 @@ class AnthropicLLM:
                 tool_calls=[{"name": tc.name, "input": tc.input} for tc in tool_calls],
             )
 
-        return Completion(text, tool_calls, resp.content, resp.stop_reason)
+        return Completion(text, tool_calls, resp.content, resp.stop_reason, usage)

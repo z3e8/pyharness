@@ -143,7 +143,9 @@ class Session:
             AgentsCapability(self.llm),
             ToolsCapability(self.registry),
             SecretsCapability(self.vault),
-            SkillsCapability(self.registry, self.skills_dir),
+            # Skill authorship/outcomes land in the trace (not the display stream)
+            # so the session index can attribute skill uses to sessions.
+            SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record),
             HistoryCapability(self.audit),
         ):
             self.broker.register(capability)
@@ -207,6 +209,8 @@ class Session:
             media=self.media,
         )
         self.messages: list[dict] = []
+        self._closed = False
+        self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)
@@ -232,6 +236,15 @@ class Session:
     def close(self) -> None:
         """Tear down session resources (the child process, if out-of-process,
         and any MCP server connections)."""
+        if not self._closed:
+            self._closed = True
+            self.trace.record(
+                "session_end",
+                session_id=self.id,
+                spent_usd=self.budget.spent_usd,
+                calls=self.budget.calls,
+                by_model=self.budget.by_model,
+            )
         if hasattr(self.kernel, "close"):
             self.kernel.close()
         self.http.close_all()

@@ -224,6 +224,7 @@ class Agent:
                 self.on_event("error", f"LLM call failed: {exc}")
                 raise
 
+            usage = completion.usage
             self.on_event(
                 "llm_call",
                 completion.text or "",
@@ -234,6 +235,8 @@ class Agent:
                 tool_calls=[{"name": tc.name, "input": tc.input} for tc in completion.tool_calls],
                 cost_usd=round(self.budget.spent_usd - cost_before, 6),
                 latency_s=round(time.time() - t0, 3),
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
             )
 
             messages.append({"role": "assistant", "content": completion.content})

@@ -18,9 +18,12 @@ class SkillsCapability:
 
     name = "skills"
 
-    def __init__(self, registry: Registry, skills_dir: str | Path):
+    def __init__(self, registry: Registry, skills_dir: str | Path, on_event=None):
         self.registry = registry
         self.skills_dir = Path(skills_dir)
+        # Optional hook the session wires to its trace log, so skill authorship
+        # and outcomes land in the session record (the index reads them there).
+        self._on_event = on_event or (lambda kind, text="", **extra: None)
 
     def exports(self) -> dict:
         return {"save_skill": self.save_skill, "record_skill_use": self.record_skill_use}
@@ -52,6 +55,7 @@ class SkillsCapability:
             files=files, keywords=tuple(keywords), category=category,
         )
         register_skill_dir(self.registry, skill_dir)
+        self._on_event("skill_saved", name, skill=name)
         n = len(files or {})
         return (
             f"saved skill {name!r} ({n} bundled file{'s' * (n != 1)}) to {skill_dir} — "
@@ -69,5 +73,6 @@ class SkillsCapability:
             raise KeyError(f"no learned skill {name!r} to record against")
         data = record_use(skill_dir, outcome, note)
         self.registry.set_skill_usage(name, data["verified"], tuple(data["uses"]))
+        self._on_event("skill_use", name, skill=name, outcome=outcome, note=note)
         state = "verified" if data["verified"] else "unverified"
         return f"recorded {outcome!r} for skill {name!r} (now {state})"
