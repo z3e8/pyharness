@@ -13,6 +13,7 @@ from ..broker.capabilities import (
     HistoryCapability,
     HttpSessionCapability,
     LLMCapability,
+    NotifyCapability,
     ObservabilityCapability,
     PackagesCapability,
     SearchCapability,
@@ -29,6 +30,7 @@ from ..broker.remote import RemoteKernel
 from ..budget import Budget
 from ..llm.client import PROVIDER_SECRET_ENV, AnthropicLLM
 from ..security.policy import Policy
+from ..security.profiles import ProfileStore
 from ..security.vault import PASSPHRASE_ENV, Vault
 from ..tools.registry import Registry
 from ..trace import TraceLog
@@ -51,6 +53,16 @@ def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
     return bool(method) and method.upper() in MUTATING_METHODS
 
 
+def _opens_with_profile(action: str, args: tuple, kwargs: dict) -> bool:
+    """Force approval when a browser opens with a saved login profile — it acts as
+    that identity, and this is the one human checkpoint before free navigation
+    transmits the restored cookies to the site. A plain `open_browser()` stays
+    free. The profile is the first positional arg or the `profile=` keyword."""
+    if action != "browser.open_browser":
+        return False
+    return bool(kwargs.get("profile") or (args[0] if args else None))
+
+
 class Session:
     """One conversation between the user and the agent. Owns the five things that
     must stay consistent: history, kernel, policy + budget, audit log, and the
@@ -64,6 +76,7 @@ class Session:
         budget: Budget | None = None,
         policy: Policy | None = None,
         vault: Vault | None = None,
+        profiles: ProfileStore | None = None,
         registry: Registry | None = None,
         approver: Approver | None = None,
         on_event: Callable[[str, str], None] | None = None,
@@ -79,6 +92,17 @@ class Session:
         self.audit = AuditLog(self.workspace.root / "audit.jsonl")
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
+
+        # One event sink shared by the agent loop and any capability that emits
+        # events (notify): everything lands in trace.jsonl, then the caller's
+        # on_event (the CLI renderer) sees it live.
+        def on_event_traced(kind: str, text: str, **extra) -> None:
+            # llm_token fires once per streaming chunk — too frequent for trace
+            if kind != "llm_token":
+                self.trace.record(kind, text, **extra)
+            if on_event is not None:
+                on_event(kind, text)
+
         # Saving a skill (agent-authored code that auto-loads later) and
         # installing packages sign off at author time; any state-changing HTTP
         # request is gated per-call (reads stay free).
@@ -98,10 +122,16 @@ class Session:
                 "packages.install",
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
+                # Persisting a login writes a standing credential — sign off once.
+                "browser.save_profile",
             },
-            approve_if=[_is_mutating_http, _look_after_injected_secret],
+            approve_if=[_is_mutating_http, _look_after_injected_secret, _opens_with_profile],
         )
         self.vault = vault or Vault.from_env()
+        # Encrypted, named browser login profiles (persistent web identity). None
+        # when no vault passphrase is set — opening a profile then fails closed
+        # rather than falling back to plaintext.
+        self.profiles = profiles or ProfileStore.from_env()
         self.registry = registry or Registry()
         if mcp_config is not None:
             from ..tools.mcp import mount_config
@@ -140,7 +170,9 @@ class Session:
         # One outbox shared by the browser (fills it via look()) and the agent
         # loop (drains it into image content blocks after each cell).
         self.media = MediaOutbox()
-        self.browser = BrowserCapability(self.workspace, vault=self.vault, media=self.media)
+        self.browser = BrowserCapability(
+            self.workspace, vault=self.vault, media=self.media, profiles=self.profiles, audit=self.audit
+        )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope.
         for capability in (
@@ -160,6 +192,7 @@ class Session:
             SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record),
             HistoryCapability(self.audit),
             ObservabilityCapability(self.index_db, self.llm),
+            NotifyCapability(on_event=on_event_traced),
         ):
             self.broker.register(capability)
 
@@ -177,8 +210,8 @@ class Session:
              "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
              "web", ("http", "request", "post", "put", "session", "api", "cookie", "upload", "rest")),
             (self.browser,
-             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page.",
-             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form")),
+             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page. Named login profiles persist across sessions (open_browser(profile=...) / save_profile).",
+             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form", "profile", "login", "cookie", "persistent", "identity")),
             (PackagesCapability(self.session_venv),
              "Install Python packages into the session for later import.",
              "packages", ("install", "pip", "package", "dependency", "library", "import")),
@@ -205,13 +238,6 @@ class Session:
             if out_of_process
             else Kernel(self.broker.namespace())
         )
-
-        def on_event_traced(kind: str, text: str, **extra) -> None:
-            # llm_token fires once per streaming chunk — too frequent for trace
-            if kind != "llm_token":
-                self.trace.record(kind, text, **extra)
-            if on_event is not None:
-                on_event(kind, text)
 
         self.agent = Agent(
             self.llm,

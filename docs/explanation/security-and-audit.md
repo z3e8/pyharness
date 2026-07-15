@@ -106,6 +106,28 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   (`GrantLedger.add` takes an optional `ttl_s`; the CLI mints session-lifetime
   grants only. Plan-scoped grants are deferred to the recursive-`spawn` work.)
 
+### The channel model
+
+Two channels connect the agent and the human, and they are deliberately
+asymmetric:
+
+- **Inbound (human → agent): the approval prompt, only.** It is the single
+  place a human's answer changes what executes, and its text is harness-built
+  from the structured call (see above) — never agent-authored.
+- **Outbound (agent → human): `notify()`** (`broker/capabilities/notify.py`),
+  strictly output-only. The message *is* agent-authored free text, so the
+  rendering keeps it from impersonating the harness: the CLI shows it
+  standalone under a fixed `[agent note]` prefix, visually distinct from the
+  `⚠ approval` prompt and never interleaved into an approval interaction;
+  desktop notifications carry a fixed title with the agent's text only in the
+  body; and a notification accepts no input anywhere — nothing to click,
+  confirm, or reply to. Every notify is a hash-chained audit entry
+  (`notify.notify`) like any other capability call.
+
+An agent-authored message can therefore *inform* a decision but never *be* the
+decision surface — "reply y to allow" written into a notification has nowhere
+to land.
+
 ## Vault — secrets the agent can name but never read
 
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to
@@ -140,6 +162,46 @@ Resolution order, first hit wins: in-memory dict → environment
 passphrase-derived key (scrypt) and Fernet (authenticated AES); a wrong
 passphrase fails to decrypt rather than returning garbage. See
 [Use the secrets vault](../how-to/use-the-vault.md).
+
+## Site profiles — a login the agent can name but never read
+
+A browser context dies with the `Session`, so without persistence every task on
+an authenticated site pays login + 2FA again — a human in the loop every time.
+`pyharness/security/profiles.py:ProfileStore` fixes that by saving a page's
+`storage_state` (cookies + localStorage) under a name, sealed with the **same**
+scrypt+Fernet envelope as the vault (same `PYHARNESS_VAULT_PASSPHRASE`), one file
+per profile at `~/.pyharness/profiles/<name>.enc` (override
+`PYHARNESS_PROFILES_DIR`). Cookie material is credential-grade, so it lives under
+the same **use-but-don't-view** rule as secrets:
+
+- The cleartext `storage_state` is a dict that never leaves parent memory — it is
+  never written to disk unencrypted (Playwright round-trips it in-memory, no temp
+  file) and never returned to agent code. `open_browser(profile=...)`,
+  `save_profile`, and `list_profiles` hand back only a session id, counts, or
+  names. The profile *name* is the sole agent-supplied input and is regex-validated
+  in one place, so it can never become a path.
+- **No passphrase → fail closed.** With no `PYHARNESS_VAULT_PASSPHRASE`,
+  `ProfileStore.from_env()` returns `None` and opening or saving a profile raises;
+  there is no plaintext fallback.
+- **Two credential-moving ops always prompt** under the default policy and are
+  never grant-coverable: `open_browser(profile=...)` (category OUTWARD — it opens
+  the browser *as that identity*, and it is the last checkpoint before free `goto`
+  transmits the restored cookies) via an `approve_if` predicate, and `save_profile`
+  (writes a standing credential) via `require_approval`. `fill_secret` and the
+  secret-gated `look` are unaffected.
+- **Refresh on close is audited, not prompted.** A profile-opened session re-saves
+  its (rotated) state when it closes so the login survives; because close does not
+  flow through the broker, the capability records a `profile_saved` event straight
+  into the hash chain. Profile *deletion* is human-only (a CLI action, not an agent
+  builtin).
+
+The honest boundary: a profile session gives agent code the *powers* of the
+logged-in identity (a free `read_text` can read your inbox) but never the
+credential *bytes* — and the powers are exactly what the one open-approval signs
+off. Two accepted residuals, documented rather than hidden: auto-refresh persists
+*every* cookie the context accrued (so keep a profile session on its site), and a
+minority of sites store auth in `sessionStorage`, which `storage_state` does not
+capture.
 
 ## The out-of-process sandbox
 

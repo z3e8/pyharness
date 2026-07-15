@@ -98,6 +98,13 @@ import them. This is the complete list; nothing else is callable by bare name.
         # ask one targeted question about one past session ("why did the
         # greenhouse skill fail?"); a cheap worker reads that transcript and
         # returns the answer. session = a name from stats() or the preamble.
+  Reaching the human:
+    notify(message, level="info") -> str
+        # a one-way note shown to the user immediately (and, best-effort, as a
+        # desktop notification). level: "info" a checkpoint worth knowing;
+        # "attention" blocked / needs a human soon; "done" long work finished.
+        # Use sparingly — checkpoints and attention-worthy events, never
+        # narration; your plain-text reply remains the answer channel.
 
 TOOLS — everything external. Anything not in the builtins list above is a tool:
 web access, a browser, HTTP sessions, package installation, MCP servers, and
@@ -109,9 +116,12 @@ call its functions on the returned module. Each call is gated
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element
                             #   refs/click/fill by ref/look — a screenshot you
-                            #   see/read). Reads are free;
+                            #   see/read; open_browser(profile=...) restores a saved
+                            #   login and save_profile persists one — both need
+                            #   approval). Reads are free;
                             #   state-changing calls need human approval. Prefer the
                             #   http path over the browser for sensitive credentials.
+                            #   list_profiles() shows saved logins to reuse.
   search_tools("install")   # packages -> install a PyPI lib into the session, then import it
 
 A learned skill (tagged `learned`) is a tool that ships with a runbook —

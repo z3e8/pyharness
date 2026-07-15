@@ -7,6 +7,7 @@ from uuid import uuid4
 from ...core.workspace import Workspace
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
+from ...security.profiles import ProfileStore
 from ...security.sink import SecretSink
 from ...security.vault import Vault
 from .payload import deliver
@@ -36,11 +37,15 @@ class _BrowserSession:
     sink drives read-back redaction; the cleartext it holds never leaves the
     parent."""
 
-    def __init__(self, browser, context, page, sink: SecretSink):
+    def __init__(self, browser, context, page, sink: SecretSink, profile: str | None = None):
         self.browser = browser
         self.context = context
         self.page = page
         self.sink = sink
+        # The named profile this session was opened with (or saved to), or None.
+        # When set, the encrypted storage_state is refreshed on close so rotated
+        # cookies survive to the next session.
+        self.profile = profile
         # The most recent aria snapshot's redacted text, or None. Element refs
         # (`[ref=eN]`) are only valid against this snapshot; navigation clears it
         # since a new page's DOM makes every prior ref meaningless.
@@ -76,18 +81,35 @@ class BrowserCapability:
 
     name = "browser"
 
-    def __init__(self, workspace: Workspace, vault: Vault | None = None, media=None):
+    def __init__(
+        self,
+        workspace: Workspace,
+        vault: Vault | None = None,
+        media=None,
+        *,
+        profiles: ProfileStore | None = None,
+        audit=None,
+    ):
         self.ws = workspace
         self.vault = vault
         # Parent-side staging for screenshots that reach the model (browser.look).
         # None means no image channel is wired (e.g. a test that never looks).
         self.media = media
+        # Encrypted, named storage_state store for persistent web identity. None
+        # means profiles are unavailable (no vault passphrase); open/save then
+        # fail closed rather than writing cleartext.
+        self.profiles = profiles
+        # AuditLog for the close-time profile refresh, which does not flow through
+        # the broker. None (tests, bare library use) skips that audit entry.
+        self.audit = audit
         self._pw = None  # the persistent Playwright driver, started on first use
         self._sessions: dict[str, _BrowserSession] = {}
 
     def exports(self) -> dict:
         return {
             "open_browser": self.open_browser,
+            "save_profile": self.save_profile,
+            "list_profiles": self.list_profiles,
             "goto": self.goto,
             "snapshot": self.snapshot,
             "click": self.click,
@@ -114,6 +136,14 @@ class BrowserCapability:
         so we resolve it against the stored snapshot to show what it points at
         (`button "Submit"`). That line is page-controlled text, so it is repr-quoted
         and capped — a crafted accessible name cannot impersonate harness output."""
+        if op == "open_browser":
+            profile = kwargs.get("profile") or (args[0] if args else None)
+            return ActionCategory.OUTWARD, f"open a browser logged in as profile {profile!r}{self._profile_domains(profile)}"
+        if op == "save_profile":
+            name = kwargs.get("name") or (args[1] if len(args) >= 2 else None)
+            session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+            where = f" from {session.sink.redact(session.page.url)}" if session else ""
+            return ActionCategory.LOCAL, f"save this browser's login state as encrypted profile {name!r}{where}"
         session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
         ref = kwargs.get("ref")
         selector = kwargs.get("selector")
@@ -149,6 +179,23 @@ class BrowserCapability:
             return None
         host = urlsplit(session.page.url).hostname
         return GrantScope("browser", host.lower()) if host else None
+
+    def _profile_domains(self, profile) -> str:
+        """A capped, parenthesized list of the cookie domains a profile would
+        restore, for the open-approval prompt. Best-effort: an absent profile, no
+        store, or a decrypt failure yields no suffix rather than raising — the
+        approval must render even when the metadata can't."""
+        if not profile or self.profiles is None:
+            return ""
+        try:
+            domains = self.profiles.info(profile).get("domains", [])
+        except Exception:  # noqa: BLE001 - preview must not fail on missing/corrupt metadata
+            return ""
+        if not domains:
+            return ""
+        shown = ", ".join(domains[:5])
+        more = ", ..." if len(domains) > 5 else ""
+        return f" (cookies for {shown}{more})"
 
     @staticmethod
     def _ref_line(session: _BrowserSession, ref: str) -> str | None:
@@ -192,17 +239,78 @@ class BrowserCapability:
         round-trip back to agent code."""
         return session.sink.redacted({"url": session.page.url, **extra})
 
-    def open_browser(self) -> str:
+    def open_browser(self, profile: str | None = None) -> str:
         """Launch a headless browser and return its session id. Reuse the id
         across cells and calls; the page and its cookies persist until
-        `close_browser`."""
+        `close_browser`.
+
+        Pass `profile="name"` to restore a saved login (see `save_profile`): the
+        browser opens already authenticated for that site, skipping login + 2FA.
+        Opening a profile needs approval — it acts as that identity — and the
+        (rotated) state re-saves automatically when the session closes. Call
+        `list_profiles()` to see what logins already exist."""
         driver = self._driver()
         browser = driver.chromium.launch(headless=True)
-        context = browser.new_context()
+        if profile is not None:
+            state = self._profiles().load(profile)
+            context = browser.new_context(storage_state=state)
+        else:
+            context = browser.new_context()
         page = context.new_page()
         session_id = uuid4().hex
-        self._sessions[session_id] = _BrowserSession(browser, context, page, SecretSink(self.vault))
+        self._sessions[session_id] = _BrowserSession(browser, context, page, SecretSink(self.vault), profile=profile)
         return session_id
+
+    def save_profile(self, session_id: str, name: str) -> dict:
+        """Persist this browser's login state as an encrypted profile `name`, so a
+        later `open_browser(profile=name)` opens already logged in. Save it after
+        you have logged in (via `fill_secret`, with any 2FA relayed through the
+        conversation). The cookie material is encrypted parent-side and never
+        returned to you — the result reports counts only. State-changing (it
+        writes a standing credential) — gated for approval."""
+        session = self._session(session_id)
+        state = session.context.storage_state(indexed_db=True)
+        self._profiles().save(name, state)
+        session.profile = name  # so close-time refresh now keeps this profile fresh
+        cookies = state.get("cookies", []) if isinstance(state, dict) else []
+        origins = state.get("origins", []) if isinstance(state, dict) else []
+        return {"profile": name, "cookies": len(cookies), "origins": len(origins)}
+
+    def list_profiles(self) -> list[str]:
+        """The names of saved login profiles — never any cookie values. Check this
+        before logging in to a site: if a profile already exists, open with it
+        instead of logging in again."""
+        return self.profiles.names() if self.profiles else []
+
+    def _profiles(self) -> ProfileStore:
+        if self.profiles is None:
+            raise RuntimeError(
+                "profiles need a vault passphrase — set PYHARNESS_VAULT_PASSPHRASE (the CLI prompts for it)"
+            )
+        return self.profiles
+
+    def _refresh_profile(self, session: _BrowserSession) -> None:
+        """Re-save the (rotated) storage_state of a profile-opened session on
+        close, so cookies the site rotated during the session survive. Best-effort
+        — a teardown must never fail on this — and audited directly since close
+        does not flow through the broker."""
+        if session.profile is None or self.profiles is None:
+            return
+        try:
+            state = session.context.storage_state(indexed_db=True)
+            self.profiles.save(session.profile, state)
+            if self.audit is not None:
+                cookies = state.get("cookies", []) if isinstance(state, dict) else []
+                origins = state.get("origins", []) if isinstance(state, dict) else []
+                self.audit.record(
+                    event="profile_saved",
+                    profile=session.profile,
+                    cookies=len(cookies),
+                    origins=len(origins),
+                    trigger="close",
+                )
+        except Exception:  # noqa: BLE001 - refresh is best-effort maintenance, never blocks teardown
+            pass
 
     def goto(self, session_id: str, url: str) -> dict:
         """Navigate to `url`. Returns the final url, page title, and HTTP status.
@@ -416,13 +524,15 @@ class BrowserCapability:
     def close_browser(self, session_id: str) -> str:
         session = self._sessions.pop(session_id, None)
         if session is not None:
+            self._refresh_profile(session)
             session.close()
         return f"closed browser session {session_id}"
 
     def close_all(self) -> None:
         """Tear down every open session and the Playwright driver; called from
-        `Session.close()`."""
+        `Session.close()`. Profile-opened sessions re-save their state first."""
         for session in self._sessions.values():
+            self._refresh_profile(session)
             session.close()
         self._sessions.clear()
         if self._pw is not None:

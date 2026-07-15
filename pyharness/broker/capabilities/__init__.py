@@ -4,6 +4,7 @@ from .files import FilesCapability
 from .history import HistoryCapability
 from .http import HttpSessionCapability
 from .llm import LLMCapability
+from .notify import NotifyCapability
 from .obs import ObservabilityCapability
 from .packages import PackagesCapability
 from .search import SearchCapability
@@ -20,6 +21,7 @@ __all__ = [
     "HistoryCapability",
     "HttpSessionCapability",
     "LLMCapability",
+    "NotifyCapability",
     "ObservabilityCapability",
     "PackagesCapability",
     "Result",

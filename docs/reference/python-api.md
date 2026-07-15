@@ -3,7 +3,8 @@
 The public surface exported from `pyharness` (`pyharness/__init__.py`):
 `Session`, `Agent`, `Kernel`, `Workspace`, `Budget`, `BudgetExceeded`, `Policy`,
 `Decision`, `ActionCategory`, `ApprovalOutcome`, `GrantLedger`, `GrantScope`,
-`Vault`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`, `ToolCall`.
+`Vault`, `ProfileStore`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`,
+`ToolCall`.
 
 Most use only `Session` and `Budget`.
 
@@ -19,6 +20,8 @@ Session(
                                #   skills.save_skill, skills.edit_skill, and
                                #   packages.install
     vault=None,                # Vault — defaults to Vault.from_env()
+    profiles=None,             # ProfileStore — encrypted browser login profiles;
+                               #   defaults to ProfileStore.from_env() (None w/o passphrase)
     registry=None,             # Registry — Session registers the external
                                #   capability tools (web/http/browser/packages),
                                #   MCP servers, and learned skills into it
@@ -110,3 +113,18 @@ Vault.from_env()               # dict + env, plus encrypted file when configured
 `names()` lists available secret names; `get(name)` resolves a value **in the
 parent only** — it is never placed in the agent's kernel. See
 [Use the secrets vault](../how-to/use-the-vault.md).
+
+## `ProfileStore`
+
+```python
+ProfileStore(root, passphrase)
+ProfileStore.from_env()          # None when PYHARNESS_VAULT_PASSPHRASE is unset (fail closed)
+```
+
+Named, encrypted browser `storage_state` blobs (persistent web identity), sealed
+with the same scrypt+Fernet envelope as the vault. `names()` / `exists(name)` /
+`info(name)` expose metadata only; `load(name)` returns the storage_state dict
+**in the parent only** (the browser capability restores it into a context — it is
+never placed in the agent's kernel). `save(name, state)` and `delete(name)` manage
+the store. See
+[Keep the agent logged in](../how-to/site-profiles.md).
