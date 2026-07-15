@@ -112,7 +112,9 @@ def main() -> None:
         approver=_approve,
         on_event=_trace,
         out_of_process=True,
-        mcp_config=mcp_config if mcp_config.exists() else None,
+        # Passed even when the file doesn't exist yet: the session mounts it only
+        # if present, but keeps the path so add_mcp_server(save=True) can create it.
+        mcp_config=mcp_config,
     )
 
     print("pyharness — type a task, or Ctrl-D to exit.")

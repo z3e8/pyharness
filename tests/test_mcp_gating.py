@@ -158,6 +158,107 @@ def test_broker_gated_core_modules_are_not_wrapped_twice(tmp_path):
         registry.close()
 
 
+def _mount_setup(tmp_path, approver=None, config_path=None, vault=None):
+    registry = Registry()
+    policy = Policy(
+        require_approval={"tools.add_mcp_server"},
+        approve_if=[unvetted_mcp_call(lambda: registry)],
+    )
+    broker = Broker(policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver)
+    cap = ToolsCapability(registry, broker=broker, vault=vault, mcp_config_path=config_path)
+    broker.register(cap)
+    return registry, broker, cap
+
+
+def test_add_mcp_server_mounts_lazily_after_approval(tmp_path):
+    approver = _Approver()
+    registry, broker, cap = _mount_setup(tmp_path, approver=approver)
+    try:
+        result = broker.call(
+            "tools", "add_mcp_server", "demo", sys.executable, (str(FAKE),)
+        )
+        assert "mounted MCP server 'demo'" in result
+        (request,) = approver.requests
+        assert "mount MCP server 'demo'" in request.summary
+        assert request.scope is None  # never grantable
+        assert registry.info("demo").kind == "mcp"
+        assert registry.info("demo").module is None  # lazy: not yet connected
+        assert cap.use_tool("demo").read_status() == "[]"
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_denied_without_approver(tmp_path):
+    registry, broker, cap = _mount_setup(tmp_path)
+    try:
+        with pytest.raises(PermissionDenied):
+            broker.call("tools", "add_mcp_server", "demo", sys.executable, (str(FAKE),))
+        assert registry.info("demo") is None
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_refuses_existing_names(tmp_path):
+    registry, broker, cap = _setup(tmp_path)  # "demo" already registered
+    try:
+        with pytest.raises(ValueError, match="already exists"):
+            cap.add_mcp_server("demo", command="x")
+        # Shadowing a core tool name is exactly the spoofing this prevents.
+        registry.register(ModuleType("http"), source="core", name="http")
+        with pytest.raises(ValueError, match="already exists"):
+            cap.add_mcp_server("http", url="https://evil.example/mcp")
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_save_writes_config_with_secret_refs(tmp_path):
+    from pyharness import Vault
+
+    config_path = tmp_path / "mcp.json"
+    vault = Vault({"tok": "cleartext-token"})
+    registry, broker, cap = _mount_setup(
+        tmp_path, approver=_Approver(), config_path=config_path, vault=vault
+    )
+    try:
+        cap.add_mcp_server(
+            "demo",
+            command=sys.executable,
+            args=(str(FAKE),),
+            env={"DEMO_KEY": "secret:tok"},
+            save=True,
+        )
+        saved = json.loads(config_path.read_text())
+        assert saved["mcpServers"]["demo"]["env"] == {"DEMO_KEY": "secret:tok"}
+        assert "cleartext-token" not in config_path.read_text()
+        # The mounted server still resolves the secret through the vault.
+        assert cap.use_tool("demo").getenv(name="DEMO_KEY") == "cleartext-token"
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_save_refuses_cleartext_credentials(tmp_path):
+    config_path = tmp_path / "mcp.json"
+    registry, broker, cap = _mount_setup(tmp_path, config_path=config_path)
+    try:
+        with pytest.raises(ValueError, match="secret:NAME"):
+            cap.add_mcp_server(
+                "demo", url="https://x/mcp", headers={"Authorization": "Bearer abc"}, save=True
+            )
+        assert not config_path.exists()
+        assert registry.info("demo") is None  # nothing mounted either
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_save_requires_a_config_path(tmp_path):
+    registry, broker, cap = _mount_setup(tmp_path)  # no config path
+    try:
+        with pytest.raises(ValueError, match="no MCP config path"):
+            cap.add_mcp_server("demo", command="x", save=True)
+    finally:
+        registry.close()
+
+
 def test_session_wires_mcp_gating_in_process(tmp_path):
     config = {"mcpServers": {"demo": {"command": sys.executable, "args": [str(FAKE)]}}}
     session = Session(tmp_path, mcp_config=config)  # in-process, no approver

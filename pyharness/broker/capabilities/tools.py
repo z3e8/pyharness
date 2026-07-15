@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import functools
+import inspect
+import json
+from pathlib import Path
 from types import ModuleType
 
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...tools.registry import Registry, _public_functions
 from ...util import summarize_args
+
+_SECRET_PREFIX = "secret:"
 
 
 def mcp_tool_meta(registry: Registry, tool, func) -> tuple[bool, dict | None]:
@@ -58,9 +63,11 @@ def _invoke_target(args: tuple, kwargs: dict) -> tuple:
 class ToolsCapability:
     name = "tools"
 
-    def __init__(self, registry: Registry, *, broker=None):
+    def __init__(self, registry: Registry, *, broker=None, vault=None, mcp_config_path=None):
         self.registry = registry
         self._broker = broker  # set by Session; None leaves use_tool ungated
+        self._vault = vault  # resolves secret:NAME refs when mounting a server
+        self._mcp_config_path = Path(mcp_config_path) if mcp_config_path else None
 
     def exports(self) -> dict:
         return {
@@ -68,6 +75,7 @@ class ToolsCapability:
             "describe_tool": self.describe_tool,
             "use_tool": self.use_tool,
             "invoke": self.invoke,
+            "add_mcp_server": self.add_mcp_server,
         }
 
     def search_tools(self, query: str = "", include_all: bool = False) -> str:
@@ -111,6 +119,83 @@ class ToolsCapability:
         the same policy/audit/budget gating as any other capability."""
         return getattr(self.registry.use(tool), func)(*args, **kwargs)
 
+    def add_mcp_server(
+        self,
+        name: str,
+        command: str | None = None,
+        args: tuple = (),
+        *,
+        url: str | None = None,
+        env: dict | None = None,
+        headers: dict | None = None,
+        summary: str | None = None,
+        keywords: tuple = (),
+        category: str | None = None,
+        timeout: float = 30.0,
+        save: bool = False,
+    ) -> str:
+        """Mount an MCP server for this session — local (`command` + `args`) or
+        remote (`url`) — as one tool module named `name`, findable via
+        search_tools and loadable via use_tool. Mounting is lazy: the server is
+        contacted on first describe/use, not now. Requires human approval
+        (mounting a server installs code).
+
+        Credential values in `env`/`headers` should be vault references
+        (`"secret:NAME"`), resolved parent-side and never visible to you.
+        `save=True` also persists the server to the session's MCP config file so
+        later sessions mount it automatically — that path *requires* `secret:`
+        refs for every env/header value; a cleartext credential is refused."""
+        if self.registry.info(name) is not None:
+            raise ValueError(
+                f"a tool named {name!r} already exists; pick a different server name"
+            )
+        if bool(command) == bool(url):
+            raise ValueError("specify exactly one of command (local) or url (remote)")
+        spec = {
+            key: value
+            for key, value in {
+                "command": command,
+                "args": list(args),
+                "url": url,
+                "env": dict(env) if env else None,
+                "headers": dict(headers) if headers else None,
+                "summary": summary,
+                "keywords": list(keywords),
+                "category": category,
+                "timeout": timeout,
+            }.items()
+            if value
+        }
+        if save:
+            self._save_server(name, spec)
+        from ...tools.mcp import mount_config
+
+        mount_config(self.registry, {"mcpServers": {name: spec}}, vault=self._vault)
+        saved = f" and saved to {self._mcp_config_path}" if save else ""
+        return f"mounted MCP server {name!r} (lazy; connects on first use){saved}"
+
+    def _save_server(self, name: str, spec: dict) -> None:
+        """Merge one server spec into the session's MCP config file, refusing to
+        persist anything that isn't a `secret:` reference in env/headers — the
+        config file's contract is that no cleartext credential lives in it."""
+        if self._mcp_config_path is None:
+            raise ValueError(
+                "this session has no MCP config path to save to; "
+                "mount with save=False, or configure PYHARNESS_MCP_CONFIG"
+            )
+        for field in ("env", "headers"):
+            for key, value in (spec.get(field) or {}).items():
+                if not (isinstance(value, str) and value.startswith(_SECRET_PREFIX)):
+                    raise ValueError(
+                        f"{field}[{key!r}] is not a 'secret:NAME' reference; refusing to "
+                        "write a possible cleartext credential to the config file. Store "
+                        "the value in the vault and pass 'secret:NAME' instead."
+                    )
+        path = self._mcp_config_path
+        config = json.loads(path.read_text()) if path.exists() else {}
+        config.setdefault("mcpServers", {})[name] = spec
+        path.write_text(json.dumps(config, indent=2) + "\n")
+
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
         """Describe a gated call for the approver. For `invoke` on an MCP tool,
         the category comes from the server's declared annotations: an explicit
@@ -125,6 +210,22 @@ class ToolsCapability:
             is_mcp, meta = mcp_tool_meta(self.registry, tool, func)
             if is_mcp and meta and meta["annotations"].get("destructiveHint"):
                 return ActionCategory.IRREVERSIBLE, summary
+            return ActionCategory.OUTWARD, summary
+        if op == "add_mcp_server":
+            # Secret-safe: env/header *names* only, never values (which may be
+            # credentials the agent was allowed to pass as secret: refs).
+            bound = inspect.signature(self.add_mcp_server).bind(*args, **kwargs)
+            bound.apply_defaults()
+            b = bound.arguments
+            target = f"command: {b['command']}" if b.get("command") else f"url: {b['url']}"
+            parts = [target]
+            if b.get("env"):
+                parts.append(f"env: {', '.join(b['env'])}")
+            if b.get("headers"):
+                parts.append(f"headers: {', '.join(b['headers'])}")
+            if b.get("save"):
+                parts.append("save: persists to the MCP config file")
+            summary = f"mount MCP server {b['name']!r} ({'; '.join(parts)})"
             return ActionCategory.OUTWARD, summary
         return ActionCategory.OUTWARD, f"tools.{op}({summarize_args(args, kwargs)})"
 

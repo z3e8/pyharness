@@ -94,6 +94,7 @@ class Session:
             require_approval={
                 "skills.save_skill",
                 "packages.install",
+                "tools.add_mcp_server",  # mounting a server installs code
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
             },
@@ -107,10 +108,17 @@ class Session:
         )
         self.vault = vault or Vault.from_env()
         self.registry = registry or Registry()
+        # A path is remembered even if the file doesn't exist yet, so
+        # tools.add_mcp_server(save=True) has somewhere to write; a dict config
+        # has no path (saving is then refused).
+        self.mcp_config_path: Path | None = (
+            Path(mcp_config) if isinstance(mcp_config, (str, Path)) else None
+        )
         if mcp_config is not None:
             from ..tools.mcp import mount_config
 
-            mount_config(self.registry, mcp_config, vault=self.vault)
+            if self.mcp_config_path is None or self.mcp_config_path.exists():
+                mount_config(self.registry, mcp_config, vault=self.vault)
 
         # Skills are learned tools persisted on disk; load any from prior sessions
         # (or hand-authored by the user) so they reload here. Cross-session by
@@ -148,7 +156,12 @@ class Session:
             SearchCapability(self.workspace),
             LLMCapability(self.llm),
             AgentsCapability(self.llm),
-            ToolsCapability(self.registry, broker=self.broker),
+            ToolsCapability(
+                self.registry,
+                broker=self.broker,
+                vault=self.vault,
+                mcp_config_path=self.mcp_config_path,
+            ),
             SecretsCapability(self.vault),
             SkillsCapability(self.registry, self.skills_dir),
             HistoryCapability(self.audit),

@@ -61,6 +61,10 @@ import them. This is the complete list; nothing else is callable by bare name.
     describe_tool(name) -> str   # that tool's functions: signatures + docstrings
         # for a learned skill, also returns its instructions (the procedure).
     use_tool(name) -> module     # load it, then call its functions on the module
+    add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, save=False) -> str
+        # mount an MCP server (local command or remote url) as a tool named
+        # `name`; needs human approval. Credentials go as "secret:NAME" vault
+        # refs, never cleartext. save=True persists it for later sessions.
   Skills — package a repeatable procedure so you and later sessions can reuse it:
     save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
         # instructions = markdown the how-to; files = {"helper.py": source, ...}
