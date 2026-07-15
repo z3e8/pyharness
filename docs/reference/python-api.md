@@ -19,14 +19,21 @@ Session(
     policy=None,               # Policy — defaults to requiring approval for
                                #   skills.save_skill, skills.edit_skill,
                                #   packages.install, tools.add_mcp_server,
-                               #   and non-read-only MCP tool calls
+                               #   non-read-only MCP tool calls, state-changing
+                               #   HTTP (POST/PUT/PATCH/DELETE), state-changing
+                               #   browser actions (click/fill/fill_secret/
+                               #   fill_totp/select_option/press/upload),
+                               #   browser.save_profile, opening a browser with
+                               #   a saved profile, and a screenshot (look)
+                               #   after a secret was typed into the page —
+                               #   see security-and-audit.md for the full list
     vault=None,                # Vault — defaults to Vault.from_env()
     profiles=None,             # ProfileStore — encrypted browser login profiles;
                                #   defaults to ProfileStore.from_env() (None w/o passphrase)
     registry=None,             # Registry — Session registers the external
                                #   capability tools (web/http/browser/packages),
                                #   MCP servers, and learned skills into it
-    approver=None,             # Callable[[ApprovalRequest], bool]
+    approver=None,             # Callable[[ApprovalRequest], ApprovalOutcome | bool]
     on_event=None,             # Callable[[kind, text], None] — stream events
     out_of_process=False,      # run agent code in a sandboxed child process
     mcp_config=None,           # str | Path | dict — MCP servers to mount; a
@@ -47,7 +54,7 @@ Session(
   calls it at exit; library users opt in explicitly. Never raises.
 - **`close()`** — write the `session_end` trace line and fold the session into
   the index (when configured), then tear down the child process (if
-  out-of-process) and any MCP connections.
+  out-of-process), any MCP connections, and any open HTTP/browser sessions.
 
 ```python
 from pyharness import Session, Budget
@@ -101,8 +108,9 @@ An `approver` may return an `ApprovalOutcome` (`DENY` / `ONCE` / `GRANT`) instea
 of a bare `bool` (`True` normalizes to `ONCE`, falsy to `DENY`). `GRANT` allows
 the call *and* mints a scoped grant for `request.scope` (a `GrantScope` of
 `action_class` + `target` host, or `None` when the call is not grantable). The
-`Broker` owns a `GrantLedger`; a live grant matching a later call auto-approves it
-without prompting. IRREVERSIBLE calls are never grantable. Pass a
+`Broker` (`pyharness.broker.Broker` — not a top-level export) owns a
+`GrantLedger`; a live grant matching a later call auto-approves it without
+prompting. IRREVERSIBLE calls are never grantable. Pass a
 `Broker(..., grants=GrantLedger())` to share or inspect the ledger. See
 [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 

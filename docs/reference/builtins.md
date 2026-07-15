@@ -49,7 +49,7 @@ reaches out to. The first-party external tools ship registered under the `web`,
 | `http` | `web`, `http`, `api` | Stateful HTTP: `open_session` (cookies persist on the id across cells), `request` (returns `{status, url, headers, content_type, elapsed_ms, title, links, forms, text, path, bytes, preview, saved}` — `title`/`links`/`forms` are the parsed affordances, populated for HTML and riding inline even when the body spills to disk), `close_session`. POST/PUT bodies, multipart upload of a workspace file, named-secret injection |
 | `browser` | `web`, `browser` | Headless Playwright lane: `open_browser` (pass `profile="name"` to restore a saved login — needs approval, see below) / `goto` / `snapshot` (accessibility tree with stable `[ref=eN]` handles per element, links carrying their url) / `click` / `fill` / `fill_secret` / `fill_totp` (types the current 2FA code derived from a vault TOTP seed — see below) / `select_option` / `press` / `upload` (each targets a `ref=` from the last snapshot or a CSS/text `selector`) / `scroll` / `wait_for` (returns `{found: bool}`; a timeout is a clean `False`) / `read_text` / `look` (a JPEG screenshot delivered to the model as an image it sees — gated once a secret was typed into the page) / `screenshot` (writes a PNG to disk only) / `save_profile` (persist this browser's login as an encrypted profile — needs approval) / `list_profiles` (names only, free) / `close_browser`. Needs the `pyharness[browser]` extra + `playwright install chromium` |
 | `inbox` | `email` | Read-only email over IMAP, one account: `list` (newest-first metadata rows `{id, from, to, subject, date, seen, has_attachments}` — never bodies) / `search` (server-side; `query`/`from_`/`subject`/`since` AND together, same metadata rows) / `read` (one message: headers, the clean text body, a `links` list collecting HTML anchors and bare URLs — a verification/magic link is a first-class value to hand to `web.fetch` or the browser — and attachments written to `inbox/<folder>/<id>/` in the workspace, never inline). Structurally mutation-free: no send/delete/flag/move op exists, fetches are `BODY.PEEK` on a read-only folder, so the mailbox (including unread flags) is left untouched. Config: `PYHARNESS_IMAP_HOST`/`PORT`/`USER` + the vault secret `imap` (see [configuration](configuration.md#email-inbox)) |
-| `packages` | `install` | `install` a PyPI package into the session venv for later `import` |
+| `packages` | `install` | `install` a PyPI package into the session venv for later `import`; `list_installed` lists what's already there |
 
 `describe_tool(name)` is the live source for each tool's exact signatures — the
 docs don't duplicate them. The non-inferable semantics that survive the move:
@@ -116,13 +116,14 @@ Fan bulk work out to cheaper models without filling the orchestrator's context.
 
 | Signature | Notes |
 |-----------|-------|
-| `llm(prompt, tier="smart"\|"cheap", system=None) -> str` | one completion |
-| `agent(task, tier=..., context=None) -> str` | a sub-agent that can itself act |
-| `map_agents(tasks, tier="cheap", max_concurrency=8) -> list[Result]` | parallel sub-agents; each `Result` has `.ok`, `.value`, `.error` |
+| `llm(prompt, tier=None, system=None) -> str` | one completion |
+| `agent(task, tier=None, context=None) -> str` | a single-completion worker on a fixed system prompt — same mechanism as `llm()`, plus an optional `context` string and sub-agent budget accounting; it cannot itself call capabilities or run code |
+| `map_agents(tasks, tier=None, context=None, max_concurrency=8) -> list[Result]` | parallel workers, same as `agent()`; each `Result` has `.ok`, `.value`, `.error` |
 
-Tiers map to models in `pyharness/llm/client.py`: `smart` → Opus, `mid` →
-Sonnet, `cheap` → Haiku. Use `cheap` for bulk/parallel work, `smart` for hard
-reasoning. See [Budget](../explanation/budget.md).
+`tier` is one of `"smart"` / `"mid"` / `"cheap"` and defaults to **`"cheap"`**
+when omitted — pass `tier="smart"` explicitly for hard reasoning. Tiers map to
+models in `pyharness/llm/client.py`: `smart` → Opus, `mid` → Sonnet, `cheap` →
+Haiku. See [Budget](../explanation/budget.md).
 
 ## Tool discovery
 
@@ -133,7 +134,7 @@ Find a tool, inspect it, then load and call it.
 | `search_tools(query="", include_all=False) -> str` | ranked **headers** (name, summary, source/category); search by what you need (e.g. `"web"`), `include_all=True` or `"*"` lists the whole catalog |
 | `describe_tool(name) -> str` | that tool's functions (signatures + docstrings); for a learned skill, also its instructions |
 | `use_tool(name) -> module` | load it, then call its functions on the returned module |
-| `add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, save=False) -> str` | mount an MCP server (local `command` or remote `url`) as a tool named `name`; **requires approval**. Credentials go as `"secret:NAME"` vault refs. `save=True` persists it to the session's MCP config for later sessions (refuses cleartext env/header values) |
+| `add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, summary=None, keywords=(), category=None, timeout=30.0, save=False) -> str` | mount an MCP server (local `command` or remote `url`) as a tool named `name`; **requires approval**. Credentials go as `"secret:NAME"` vault refs. `summary`/`keywords`/`category` feed `search_tools` ranking; `timeout` (seconds) bounds each request. `save=True` persists it to the session's MCP config for later sessions (refuses cleartext env/header values) |
 
 MCP tool calls made through a loaded module are broker-gated per call: reads
 declared `readOnlyHint` flow, anything else prompts (grantable per server), and

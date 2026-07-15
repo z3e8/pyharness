@@ -60,7 +60,6 @@ Or drive it directly without make:
 
 ```bash
 uv venv && uv pip install -e .
-ANTHROPIC_API_KEY=... uv run python examples/demo.py   # one task
 ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 
 uv pip install pytest && uv run pytest -q               # tests (no API key)

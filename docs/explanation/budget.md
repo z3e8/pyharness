@@ -13,12 +13,24 @@ It tracks `spent_usd`, `calls`, and a `by_model` breakdown.
 
 `Budget(limit_usd=...)` sets a cap (default `None` = unlimited; the CLI uses
 `$5.00`). Enforcement is **fail-fast**: the [broker](broker.md) calls
-`budget.check()` before every *metered* action (`llm`, `agents`, `web`), and the
-agent loop checks before each step. When `spent_usd` reaches the limit, the next
-metered action raises `BudgetExceeded` rather than silently overspending.
+`budget.check()` before every *metered* action (`llm`, `agents`, `web`, `obs`),
+and the agent loop checks before each step. When `spent_usd` reaches the limit,
+the next metered action raises `BudgetExceeded` rather than silently
+overspending. `Budget.remaining()` exposes the same headroom for callers — the
+[post-session reflection pass](../how-to/observability.md#post-session-reflection)
+checks it and skips entirely once the budget is exhausted.
 
 Because the check is before the action, the limit bounds agent-initiated work
 (including fan-out via `map_agents`) — not just the orchestrator's own calls.
+The check runs once per broker call, though, not once per task inside a
+fan-out: a single `map_agents` call can dispatch its whole batch (up to
+`max_concurrency`, capped at 64 tasks per call) before the *next* metered call
+sees the exhausted budget and is blocked.
+
+This dollar budget is separate from the sub-agent **count** cap
+(`session_cap=256`, `max_per_call=64` in `pyharness/broker/capabilities/agents.py`),
+which raises `SubAgentLimitExceeded` independent of spend — the two "budgets"
+bound different things and don't share an accumulator.
 
 ## Tiers and pricing
 

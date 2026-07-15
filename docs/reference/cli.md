@@ -11,7 +11,8 @@ pyharness [SESSION_DIR]
 ```
 
 - `SESSION_DIR` — where session state (audit log, trace, workspace) lives.
-  Defaults to `.sessions/cli-<timestamp>`.
+  Defaults to `.sessions/cli-<timestamp>`, or `PYHARNESS_WORKSPACE` when set
+  (see [Configuration](configuration.md)); the explicit arg always wins.
 - Loads `.env` from the current directory (existing env vars win). **Requires
   `ANTHROPIC_API_KEY`**.
 - Runs **out-of-process** with the OS sandbox on, and a **$5.00** budget limit

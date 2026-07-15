@@ -76,10 +76,12 @@ The agent reaches the world the two ways Python itself does, split by one line �
 **builtins are the agent's own body; tools are everything it reaches out to:**
 
 - **Builtins** — a small fixed set always in scope, called by bare name: its
-  workspace (`read`, `write`, `bash`, `search`), delegation (`llm`, `agent`,
-  `map_agents`), reflection (`history`, `save_skill`, `secrets`), and the
-  tool-discovery entrypoint (`search_tools`, `describe_tool`, `use_tool`). See
-  [Builtins](../reference/builtins.md).
+  workspace (`read`, `write`, `edit`, `bash`, `search`), credentials
+  (`secrets`), delegation (`llm`, `agent`, `map_agents`), tool discovery
+  (`search_tools`, `describe_tool`, `use_tool`, `add_mcp_server`), skills
+  (`save_skill`, `edit_skill`, `record_skill_use`), reflection on its own
+  record (`history`, `stats`, `inspect_session`), and reaching the human
+  (`notify`). See [Builtins](../reference/builtins.md).
 - **Tools** — every external system: web access, a browser, HTTP APIs, the
   package index, MCP servers, learned skills. None are in scope automatically.
   The agent finds one with `search_tools()`, inspects it with `describe_tool()`,
@@ -91,10 +93,40 @@ The agent reaches the world the two ways Python itself does, split by one line �
 
 ## Delegation
 
-Because a cell is just code, the agent can spawn more agents from inside one:
-`llm()` for a single completion, `agent()` for a sub-agent that can itself act,
-and `map_agents()` for parallel fan-out. Bulk work runs on the cheap tier and
-never fills the orchestrator's own context — only the summarized results return.
+Because a cell is just code, the agent can spawn more work from inside one:
+`llm()` for a single completion, `agent()` for the same completion wrapped with
+a fixed worker system prompt and an optional `context` string, and
+`map_agents()` for parallel fan-out over `agent()`. None of the three can
+themselves call a capability or run code — they are one-shot text workers, not
+nested run_python loops — so the only real differences between `llm()` and
+`agent()` are the prompt and the sub-agent budget accounting
+(`session_cap`/`max_per_call` in `pyharness/broker/capabilities/agents.py`).
+Bulk work runs on the cheap tier by default and never fills the orchestrator's
+own context — only the summarized results return.
 
 Everything a cell does still routes through [the broker](broker.md), so this
 freedom is bounded by policy, audit, and budget.
+
+## The per-session venv
+
+`pyharness/core/session_venv.py:SessionVenv` is a lazily-created, per-session
+virtualenv that backs the `packages` tool. It is only ever created in
+**out-of-process** mode (`RemoteKernel._start` calls `ensure_created()` when
+spawning the child; nothing calls it in-process) — so `packages.install()` in
+an in-process session returns a message saying it requires out-of-process mode
+rather than installing anything. When created, its site-packages are injected
+into the child so an installed package is importable in later cells.
+
+## After the session ends: reflection
+
+The run_python loop is not the only place the agent revises itself.
+`Session.reflect()` (`pyharness/reflect.py`) runs after `session.messages` is
+already final: a cheap-tier LLM call reads the session's trace and may propose
+a lesson, an `edit_skill`, or a `save_skill` — routed through the same broker
+approval gate as an in-session skill write. Established lessons
+(`pyharness/lessons.py` — a fact promoted after it recurs across enough
+distinct sessions) feed back into the *next* session's preamble, so this is how
+the agent accumulates procedure knowledge across sessions rather than just
+within one. It's driven by the trace, not by agent code, and skipped outright
+once the session's budget is exhausted. See
+[observability](../how-to/observability.md#post-session-reflection).

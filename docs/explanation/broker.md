@@ -23,8 +23,8 @@ policy check  →  audit  →  budget (metered actions)  →  execute
   the prompt. IRREVERSIBLE actions are never grant-covered. See
   [scoped grants](security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 - **Audit** appends the call to a tamper-evident log.
-- **Budget** is checked before *metered* actions (`llm`, `agents`, `web`) so
-  agent-initiated spend fails fast at the limit.
+- **Budget** is checked before *metered* actions (`llm`, `agents`, `web`, `obs`)
+  so agent-initiated spend fails fast at the limit.
 - **Execute** calls the underlying capability function.
 
 Both the denial paths and the success path are recorded. See
@@ -32,19 +32,20 @@ Both the denial paths and the success path are recorded. See
 
 ## How capabilities reach the kernel
 
-Each capability (files, shell, search, web, http, browser, llm, agents, tools,
-secrets, skills, packages) exports named operations, and the broker wraps every
-one in a proxy that routes through the `call()` path above. So when the agent
-calls `read(...)`, it is really calling a broker proxy — the plain-looking
-builtin *is* the enforcement point.
+Each capability (files, shell, search, web, http, browser, inbox, llm, agents,
+tools, secrets, skills, packages, history, obs, notify) exports named
+operations, and the broker wraps every one in a proxy that routes through the
+`call()` path above. So when the agent calls `read(...)`, it is really calling
+a broker proxy — the plain-looking builtin *is* the enforcement point.
 
 Capabilities reach the agent by one of two surfacings, both broker-proxied:
 
 - **Core capabilities** (the agent's own body — files, shell, delegation,
-  discovery, reflection) register with `core=True`; their proxies are injected
-  into the kernel namespace as always-in-scope builtins.
-- **External capabilities** (web, http, browser, packages) register with
-  `core=False`, so they are *not* bare builtins. Instead `Broker.as_tool_module`
+  discovery, reflection: `history`, `obs`, `notify` included) register with
+  `core=True`; their proxies are injected into the kernel namespace as
+  always-in-scope builtins.
+- **External capabilities** (web, http, browser, inbox, packages) register
+  with `core=False`, so they are *not* bare builtins. Instead `Broker.as_tool_module`
   packages each as a module of the same broker proxies (carrying the real
   signatures), registered in the [tool registry](../reference/builtins.md); the
   agent discovers and loads it via `search_tools`/`use_tool`, the same path as an
@@ -84,9 +85,16 @@ across every I/O site — means:
   and LLM client. During a cell the parent blocks, servicing the child's
   capability calls one at a time over IPC — so approvals and budget pauses
   suspend the agent's script naturally (it's blocked on IPC), and **secrets never
-  enter the child**.
+  enter the child**. The IPC itself is asymmetric: child→parent (the untrusted
+  direction) is framed as JSON, so a compromised child can't smuggle an
+  arbitrary pickle back into the parent; parent→child stays on a pickle channel
+  because the parent is trusted (`pyharness/broker/remote/protocol.py`).
+  `RemoteError` normalizes exceptions that can't round-trip through that framing
+  (e.g. `anthropic.APIStatusError`) so the child sees a faithful error either way.
 
 The child is confined at the OS level too (macOS Seatbelt + POSIX rlimits) — see
 [Security & audit](security-and-audit.md). The point of the boundary: the child
-needs neither network nor filesystem-write access, because every legitimate side
-effect goes back through the broker in the parent.
+has no outbound network access and can't write outside its workspace (writes
+*inside* the workspace are allowed, so `savefig`/`to_csv`-style libraries just
+work), because every side effect that leaves the workspace goes back through
+the broker in the parent.

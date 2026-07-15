@@ -49,9 +49,10 @@ import them. This is the complete list; nothing else is callable by bare name.
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
   Delegation — do bulk work without filling your own context:
-    llm(prompt, tier="smart"|"cheap", system=None) -> str
-    agent(task, tier=..., context=None) -> str
-    map_agents(tasks, tier="cheap", max_concurrency=8) -> list[Result]
+    llm(prompt, tier=None, system=None) -> str
+        # tier is "smart"|"mid"|"cheap"; defaults to "cheap" when omitted.
+    agent(task, tier=None, context=None) -> str
+    map_agents(tasks, tier=None, context=None, max_concurrency=8) -> list[Result]
         each Result has .ok, .value, .error
   Tool discovery — find a tool, inspect it, then load and call it:
     search_tools(query="", include_all=False) -> str
@@ -61,7 +62,8 @@ import them. This is the complete list; nothing else is callable by bare name.
     describe_tool(name) -> str   # that tool's functions: signatures + docstrings
         # for a learned skill, also returns its instructions (the procedure).
     use_tool(name) -> module     # load it, then call its functions on the module
-    add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, save=False) -> str
+    add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None,
+                    summary=None, keywords=(), category=None, timeout=30.0, save=False) -> str
         # mount an MCP server (local command or remote url) as a tool named
         # `name`; needs human approval. Credentials go as "secret:NAME" vault
         # refs, never cleartext. save=True persists it for later sessions.

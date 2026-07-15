@@ -132,10 +132,14 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   re-prompt.
 - **Grants never widen policy.** They short-circuit only the *prompt*, never the
   decision — a `DENY` still denies, and `approve_if` predicates still run.
-- **Audited in the hash chain.** Issuance rides the approving call's entry
-  (`grant: {id, action_class, target, expires_at}`); each covered call records
-  `grant_id`; revocation records `{event: "grant_revoked", grant_id}`. The agent
-  sees all of this via `history()`.
+- **Issuance and use are audited in the hash chain.** Issuance rides the
+  approving call's entry (`grant: {id, action_class, target, expires_at}`);
+  each covered call records `grant_id`. The agent sees this via `history()`.
+  `GrantLedger.revoke()`/`clear()` exist as a library-only API (used in tests)
+  — nothing in the CLI or a capability calls them, and `revoke()` itself does
+  not write an audit entry, so revocation is not a reachable or audited
+  behavior in this build; a caller doing manual revocation would need to audit
+  it separately.
 - **Session-lifetime, in-memory.** The ledger dies with the `Session`; nothing
   persists across sessions, so "for this session" is literally true. Standing
   policy has its own home — construct a `Session(policy=…)` without the gate.

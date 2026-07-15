@@ -51,12 +51,15 @@ code.
   a hypothesis. After running it, call `record_skill_use(name, "worked"|"failed",
   note=...)`; the first `"worked"` marks it `verified`, and the bounded journal
   lets a later session see how it last behaved and catch a breaking change.
-- **Revising** a skill needs no separate step: `save_skill` with the same name
-  overwrites it (stale bundled `.py` are pruned) and resets it to unverified while
-  keeping the use log. After a run, the agent reads `history()` and the skill's
-  journal to see what happened and folds the lesson into the instructions on
-  re-save — that is the do → observe → revise loop, no `edit_skill` primitive
-  required.
+- **Revising a skill: prefer `edit_skill(name, edits, reason="")`.** `edits` is
+  a list of `{"old": ..., "new": ...}` deltas — a surgical fix that keeps every
+  detail not being corrected, rather than regenerating the whole runbook.
+  Frontmatter and bundled files are untouched; the revision resets to
+  unverified while keeping the use log. `save_skill` with the same name still
+  fully replaces a skill (stale bundled `.py` are pruned) when a rewrite is
+  genuinely intended. After a run, the agent reads `history()` and the skill's
+  journal to see what happened and folds the lesson in via `edit_skill` — that
+  is the do → observe → revise loop.
 
 ## Mount an MCP server
 

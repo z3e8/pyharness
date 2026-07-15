@@ -39,12 +39,12 @@ load-bearing seams are.
 
 | Path | What lives here |
 |------|-----------------|
-| `pyharness/core/` | `session.py`, `agent.py`, `kernel.py`, `workspace.py`, `media.py` (image blocks back to the model) — the orchestration loop and persistent kernel |
-| `pyharness/broker/` | `dispatch.py` — the single choke point every side effect routes through (policy → audit → budget → execute) |
-| `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py`, `profiles.py` (encrypted browser login profiles) — action policy + the encrypted secrets vault |
-| `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills |
+| `pyharness/core/` | `session.py`, `agent.py`, `kernel.py`, `workspace.py`, `media.py` (image blocks back to the model), `session_venv.py` (per-session venv, out-of-process only) — the orchestration loop and persistent kernel |
+| `pyharness/broker/` | `dispatch.py` — the single choke point every side effect routes through (policy → audit → budget → execute); `capabilities/` — one module per capability (agents, browser, exa, files, history, http, inbox, llm, notify, obs, packages, page, payload, search, secrets, shell, skills, tools, web); `remote/` — the out-of-process child (`child.py`, `host.py`, `protocol.py`, `sandbox.py`) |
+| `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py`, `profiles.py` (encrypted browser login profiles), `totp.py` (RFC 6238 codes from vault seeds), `sink.py` (per-context secret masking) — action policy + the encrypted secrets vault |
+| `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills; `mcp/` — MCP server client/config/transport |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
-| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass), `cli.py`, `cli_vault.py`, `cli_profiles.py`, `cli_index.py`, `cli_mcp.py` |
+| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py`, `trace.py`, `util.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass), `cli.py`, `cli_vault.py`, `cli_profiles.py`, `cli_index.py`, `cli_mcp.py` |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
 | `deploy/observability/` | docker-compose for Phoenix (default) and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
