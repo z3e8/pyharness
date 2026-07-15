@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import time
 from dataclasses import dataclass
 from enum import Enum
 from types import ModuleType
@@ -84,11 +85,18 @@ class Broker:
         approver: Approver | None = None,
         grants: GrantLedger | None = None,
         metered: frozenset[str] = frozenset({"llm", "agents", "web", "obs"}),
+        on_event: Callable[..., None] | None = None,
     ):
         self.policy = policy
         self.audit = audit
         self.budget = budget
         self.approver = approver
+        # Activity events (`action_start`/`action_end`, `approval_pending`/
+        # `approval_resolved`) — the live "what is happening right now" stream,
+        # written before/around execution where the audit log records only
+        # completed effects. The session wires this to trace.jsonl; fail-open,
+        # observability must never break a call.
+        self._on_event = on_event
         self.grants = grants or GrantLedger()
         self.metered = metered
         self._ops: dict[tuple[str, str], Callable] = {}
@@ -203,14 +211,30 @@ class Broker:
         proxy.__name__ = op
         return proxy
 
+    def _emit(self, kind: str, text: str = "", **extra) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(kind, text, **extra)
+        except Exception:  # noqa: BLE001 — events are observability, never a blocker
+            pass
+
     def call(self, cap: str, op: str, *args, **kwargs):
         action = f"{cap}.{op}"
+        started = time.perf_counter()
+        self._emit("action_start", action, args=summarize_args(args, kwargs))
+
+        def _end(**fields) -> None:
+            self._emit(
+                "action_end", action, elapsed_s=round(time.perf_counter() - started, 3), **fields
+            )
 
         with telemetry.tool_span(action) as span:
             decision = self.policy.decide(action, args, kwargs)
             if decision is Decision.DENY:
                 self.audit.record(action=action, decision="deny", ok=False)
                 telemetry.record_tool(span, action=action, decision="deny", ok=False)
+                _end(ok=False, decision="deny")
                 raise PermissionDenied(f"policy denied {action}")
             if decision is Decision.APPROVE:
                 request = self._approval_request(cap, op, action, args, kwargs)
@@ -230,11 +254,20 @@ class Broker:
                         grant_id=grant.id,
                     )
                 else:
+                    # Emitted before the approver blocks on the human, so a live
+                    # view can show *what* the session is waiting on.
+                    self._emit(
+                        "approval_pending",
+                        action,
+                        summary=request.summary,
+                        category=request.category.value,
+                    )
                     outcome = (
                         _normalize(self.approver(request))
                         if self.approver
                         else ApprovalOutcome.DENY
                     )
+                    self._emit("approval_resolved", action, outcome=outcome.value)
                     fields: dict = dict(
                         action=action,
                         decision="approve",
@@ -252,6 +285,7 @@ class Broker:
                     self.audit.record(**fields)
                     if outcome is ApprovalOutcome.DENY:
                         telemetry.record_tool(span, action=action, decision="approve", ok=False)
+                        _end(ok=False, decision="approve")
                         raise PermissionDenied(f"not approved: {action}")
 
             if cap in self.metered:
@@ -265,7 +299,9 @@ class Broker:
                 telemetry.record_tool(
                     span, action=action, decision="allow", ok=False, error=repr(exc)
                 )
+                _end(ok=False, error=repr(exc))
                 raise
             self.audit.record(action=action, ok=True, args=summarize_args(args, kwargs))
             telemetry.record_tool(span, action=action, decision="allow", ok=True)
+            _end(ok=True)
             return result

@@ -37,10 +37,11 @@ def _trace(kind: str, text: str) -> None:
         # Stream LLM tokens inline as they arrive — no box frame, no newline
         print(text, end="", flush=True)
         return
-    if kind in ("llm_call", "note"):
-        # Both are already on screen from the streamed llm_token chunks above:
-        # llm_call is the post-stream summary, note is preamble text emitted
-        # before a tool call. Suppress to avoid double-rendering.
+    if kind in ("llm_call", "note", "llm_start"):
+        # llm_call and note are already on screen from the streamed llm_token
+        # chunks above (llm_call is the post-stream summary, note is preamble
+        # text emitted before a tool call); llm_start is a trace-pairing marker
+        # for the live viewer. Suppress all three to avoid noise.
         return
     if kind == "notify":
         # Agent-authored note to the user. Rendered standalone under a fixed

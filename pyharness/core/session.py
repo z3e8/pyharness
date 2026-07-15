@@ -191,7 +191,12 @@ class Session:
         self._refresh_index()
 
         self.session_venv = SessionVenv()
-        self.broker = Broker(self.policy, self.audit, self.budget, approver=approver)
+        # Activity events go to the trace only (not the display stream): they are
+        # the machine-readable "happening right now" record a live viewer tails;
+        # the CLI already renders the human-facing side (code, output, prompts).
+        self.broker = Broker(
+            self.policy, self.audit, self.budget, approver=approver, on_event=self.trace.record
+        )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(self.workspace, vault=self.vault)

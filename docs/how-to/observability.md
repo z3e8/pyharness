@@ -28,6 +28,17 @@ make clean      # stop and wipe the trace volume
 make logs       # tail Phoenix logs
 ```
 
+## The activity stream
+
+Beyond the turn-by-turn record (task, code, output, answer), `trace.jsonl`
+carries **activity events** written as things happen, not after: `action_start`
+before every broker-gated call and `action_end` on every exit (success, error,
+deny), `approval_pending` before an approval prompt blocks on the human and
+`approval_resolved` after, and `llm_start` before each completion (paired by
+`llm_call`). A start without a matching end *is* the thing currently running —
+or stuck — so a live view (or a `tail -f`) can always answer "what is it doing
+right now, and what is it waiting on".
+
 ## What controls it
 
 Telemetry is **opt-in** and **fail-open** (it can never break the agent). It's on

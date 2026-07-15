@@ -262,6 +262,9 @@ class Agent:
             def _on_token(chunk: str) -> None:
                 self.on_event("llm_token", chunk)
 
+            # Paired with the llm_call event below: start without a matching
+            # llm_call = a completion in flight (or one that died).
+            self.on_event("llm_start", "", tier=self.tier)
             try:
                 completion = self.llm.complete(
                     system=system,
