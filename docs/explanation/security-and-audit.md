@@ -104,6 +104,28 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   (`GrantLedger.add` takes an optional `ttl_s`; the CLI mints session-lifetime
   grants only. Plan-scoped grants are deferred to the recursive-`spawn` work.)
 
+### The channel model
+
+Two channels connect the agent and the human, and they are deliberately
+asymmetric:
+
+- **Inbound (human → agent): the approval prompt, only.** It is the single
+  place a human's answer changes what executes, and its text is harness-built
+  from the structured call (see above) — never agent-authored.
+- **Outbound (agent → human): `notify()`** (`broker/capabilities/notify.py`),
+  strictly output-only. The message *is* agent-authored free text, so the
+  rendering keeps it from impersonating the harness: the CLI shows it
+  standalone under a fixed `[agent note]` prefix, visually distinct from the
+  `⚠ approval` prompt and never interleaved into an approval interaction;
+  desktop notifications carry a fixed title with the agent's text only in the
+  body; and a notification accepts no input anywhere — nothing to click,
+  confirm, or reply to. Every notify is a hash-chained audit entry
+  (`notify.notify`) like any other capability call.
+
+An agent-authored message can therefore *inform* a decision but never *be* the
+decision surface — "reply y to allow" written into a notification has nowhere
+to land.
+
 ## Vault — secrets the agent can name but never read
 
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to

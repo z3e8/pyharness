@@ -166,3 +166,25 @@ confirm an effect landed (`request` returned 200), see why an action was refused
 and revise from what actually happened. Your own cells and notes are already in
 context, so only the audit is surfaced. See
 [Security & audit](../explanation/security-and-audit.md).
+
+## Reaching the human
+
+| Signature | Returns |
+|-----------|---------|
+| `notify(message, level="info")` | `"delivered"` — a one-way note to the user |
+
+The agent's one **outbound** channel to the human, for use from inside a running
+cell: a checkpoint worth knowing (`"info"`), blocked / needs a human soon
+(`"attention"`), or long work finished (`"done"`). The message is shown live in
+the CLI under a fixed `[agent note]` prefix, recorded in the trace and the
+hash-chained audit, and mirrored best-effort as a desktop notification (macOS
+`osascript` / Linux `notify-send`; silently skipped where unavailable, with the
+agent's text only ever in the body under a fixed title).
+
+Strictly output-only: a notification carries no interactivity — nothing to
+click, confirm, or reply to — and is rendered unmistakably as agent-authored
+text, so it can never pass as an approval prompt. The approval prompt remains
+the only channel that accepts human input (see
+[Security & audit](../explanation/security-and-audit.md#the-channel-model)).
+The prompt teaches restraint: checkpoints and attention-worthy events, never
+narration — the plain-text reply remains the answer channel.

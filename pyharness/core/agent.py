@@ -80,6 +80,13 @@ import them. This is the complete list; nothing else is callable by bare name.
         # was allowed and whether it succeeded. action filters by prefix ("http",
         # "browser.click"). Use it to confirm an effect landed, or to see why an
         # action was refused, before deciding what to do next.
+  Reaching the human:
+    notify(message, level="info") -> str
+        # a one-way note shown to the user immediately (and, best-effort, as a
+        # desktop notification). level: "info" a checkpoint worth knowing;
+        # "attention" blocked / needs a human soon; "done" long work finished.
+        # Use sparingly — checkpoints and attention-worthy events, never
+        # narration; your plain-text reply remains the answer channel.
 
 TOOLS — everything external. Anything not in the builtins list above is a tool:
 web access, a browser, HTTP sessions, package installation, MCP servers, and
