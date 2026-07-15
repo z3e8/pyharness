@@ -122,8 +122,44 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         category=meta.get("category") or None,
         verified=journal["verified"],
         uses=tuple(journal["uses"]),
+        check=meta.get("check") or None,
     )
     return name
+
+
+def edit_skill_md(skills_dir: str | Path, name: str, edits: list) -> Path:
+    """Apply delta edits to a skill's SKILL.md body — never a wholesale rewrite
+    (a full regeneration is how accumulated procedure detail gets destroyed).
+    Each edit is `{"old": ..., "new": ...}` (or an (old, new) pair) and `old`
+    must appear exactly once in the current body. Frontmatter and bundled files
+    are untouched; the revised procedure is unproven, so `verified` clears (the
+    use log survives). Returns the skill dir."""
+    skill_dir = Path(skills_dir) / name
+    md = skill_dir / "SKILL.md"
+    if not md.exists():
+        raise KeyError(f"no skill {name!r} to edit")
+    text = md.read_text()
+    meta, body = parse_skill_md(text)
+    if not edits:
+        raise ValueError("no edits given")
+    for i, edit in enumerate(edits):
+        old, new = (edit["old"], edit["new"]) if isinstance(edit, dict) else edit
+        if not old:
+            raise ValueError(f"edit {i}: empty 'old' text")
+        count = body.count(old)
+        if count != 1:
+            raise ValueError(
+                f"edit {i}: 'old' text occurs {count} times in {name}'s instructions"
+                " (must be exactly 1)"
+            )
+        body = body.replace(old, new, 1)
+
+    front = text.split("---", 2)[1] if text.lstrip().startswith("---") else "\n"
+    md.write_text("---" + front + "---\n\n" + body.strip() + "\n")
+    journal = read_journal(skill_dir)
+    journal["verified"] = False
+    _write_journal(skill_dir, journal)
+    return skill_dir
 
 
 def write_skill(
@@ -135,8 +171,12 @@ def write_skill(
     files: dict[str, str] | None = None,
     keywords: tuple[str, ...] = (),
     category: str | None = None,
+    check: str | None = None,
 ) -> Path:
-    """Persist a skill to disk as SKILL.md + bundled .py files. Returns its dir."""
+    """Persist a skill to disk as SKILL.md + bundled .py files. Returns its dir.
+    `check` is the skill's own success test — how a run knows it worked (an
+    assertion, a re-fetch, an expected state) — kept in the frontmatter so trust
+    can rest on something verifiable instead of the runner's impression."""
     if not _NAME_RE.match(name):
         raise ValueError(f"skill name {name!r} must match [A-Za-z0-9_-]+")
     skill_dir = Path(skills_dir) / name
@@ -151,6 +191,8 @@ def write_skill(
         front.append("keywords: " + ", ".join(keywords))
     if category:
         front.append(f"category: {category}")
+    if check:
+        front.append(f"check: {' '.join(str(check).split())}")  # one line
     md = "---\n" + "\n".join(front) + "\n---\n\n" + instructions.strip() + "\n"
     (skill_dir / "SKILL.md").write_text(md)
 

@@ -94,6 +94,7 @@ class Session:
         self.policy = policy or Policy(
             require_approval={
                 "skills.save_skill",
+                "skills.edit_skill",
                 "packages.install",
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
@@ -114,6 +115,8 @@ class Session:
 
         self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
         load_skills(self.registry, self.skills_dir)
+        # Lessons (distilled cross-session facts) live beside the skills root.
+        self.lessons_path = self.skills_dir.parent / "lessons.json"
 
         # The session index (direction 5) — a derived SQLite view over past
         # sessions' JSONL, feeding the `stats`/`inspect_session` builtins and the
@@ -245,23 +248,24 @@ class Session:
         """A few ambient lines from the index — recent sessions and skill trust —
         appended to the system preamble so the agent starts oriented in its own
         past instead of having to remember to look. Empty without an index."""
-        if self.index_db is None or not self.index_db.exists():
-            return ""
-        try:
-            from ..index import query
+        sessions: list = []
+        skills: list = []
+        if self.index_db is not None and self.index_db.exists():
+            try:
+                from ..index import query
 
-            sessions = query(
-                self.index_db,
-                "SELECT name, task, outcome, cost_usd FROM sessions "
-                "ORDER BY started DESC LIMIT 5",
-            )
-            skills = query(
-                self.index_db,
-                "SELECT name, verified, uses, worked, failed FROM skills "
-                "ORDER BY last_used DESC LIMIT 10",
-            )
-        except Exception:  # noqa: BLE001
-            return ""
+                sessions = query(
+                    self.index_db,
+                    "SELECT name, task, outcome, cost_usd FROM sessions "
+                    "ORDER BY started DESC LIMIT 5",
+                )
+                skills = query(
+                    self.index_db,
+                    "SELECT name, verified, uses, worked, failed FROM skills "
+                    "ORDER BY last_used DESC LIMIT 10",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         lines: list[str] = []
         if sessions:
             lines.append("## Recent sessions (query more with stats())")
@@ -277,7 +281,26 @@ class Session:
                 lines.append(
                     f"- {s['name']}: {state}, {s['worked']}/{s['uses']} runs worked"
                 )
+        try:
+            from ..lessons import established
+
+            lessons = established(self.lessons_path)
+        except Exception:  # noqa: BLE001
+            lessons = []
+        if lessons:
+            lines.append("## Lessons (facts observed across sessions)")
+            lines += [f"- {e['text']}" for e in lessons[-10:]]
         return "\n".join(lines)
+
+    def reflect(self) -> str | None:
+        """Run the post-session reflection pass (see reflect.py): a separate
+        cheap-model read of this session's trace that may propose one durable
+        improvement — a new skill, a delta edit, a lesson, or nothing. Skill
+        writes go through the broker (same approval gate as the agent's own).
+        Returns a one-line summary, or None. Never raises."""
+        from ..reflect import reflect as run_reflection
+
+        return run_reflection(self)
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)

@@ -62,18 +62,26 @@ import them. This is the complete list; nothing else is callable by bare name.
         # for a learned skill, also returns its instructions (the procedure).
     use_tool(name) -> module     # load it, then call its functions on the module
   Skills — package a repeatable procedure so you and later sessions can reuse it:
-    save_skill(name, description, instructions, files=None, keywords=(), category=None) -> str
+    save_skill(name, description, instructions, files=None, keywords=(), category=None, check=None) -> str
         # instructions = markdown the how-to; files = {"helper.py": source, ...}
         # optional bundled modules. Persists to disk and registers as a learned
         # tool — find it with search_tools, read it with describe_tool, load its
         # code with use_tool. Save a skill once a procedure is worth repeating.
-        # To revise a skill, save_skill with the SAME name overwrites it — fold
-        # what you learned (a changed selector, a gotcha) into its instructions.
+        # check = one line saying how a run confirms it worked (an assertion, a
+        # re-fetch, an expected state) — give every skill one, and run it before
+        # recording an outcome.
+    edit_skill(name, edits, reason="") -> str
+        # revise a skill with targeted deltas: edits = [{"old": <exact text
+        # occurring once in its instructions>, "new": <replacement>}, ...].
+        # Prefer this over re-saving the whole procedure — surgical fixes keep
+        # the detail you aren't changing. The revision is unverified until it
+        # runs. (save_skill with the same name still fully replaces a skill.)
     record_skill_use(name, outcome, note="") -> str
         # after actually running a skill, log how it went: outcome "worked" or
-        # "failed", plus a short note (a changed selector, why it broke). The
-        # first "worked" marks the skill verified; the log lets you and later
-        # sessions see how it last behaved and catch a breaking change.
+        # "failed", plus a short note (a changed selector, why it broke). Run the
+        # skill's check first — outcomes should rest on evidence. The first
+        # "worked" marks the skill verified; the log lets you and later sessions
+        # see how it last behaved and catch a breaking change.
   Reflect on your own work — the observe half of do → observe → revise:
     history(limit=20, action=None) -> list[dict]
         # your own recent actions, oldest last: what you sent, where, whether it

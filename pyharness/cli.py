@@ -153,6 +153,13 @@ def main() -> None:
             # and print the spend summary. Reprinting it here would double-render.
             print(f"\n\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
     finally:
+        # Post-session reflection (direction 5): a cheap separate pass over the
+        # trace that may propose one improvement — skill writes still prompt for
+        # approval above. On by default; PYHARNESS_REFLECT=false opts out.
+        if os.environ.get("PYHARNESS_REFLECT", "true").strip().lower() not in ("0", "false", "no", "off"):
+            summary = session.reflect()
+            if summary:
+                print(f"\n\033[2m[{summary}]{_RESET}")
         session.close()
 
 
