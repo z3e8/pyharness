@@ -22,7 +22,7 @@ author time (this holds for the [reflection pass](../how-to/observability.md#pos
 proposals too — reflection routes its skill writes through the same broker gate). It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
 **state-changing browser actions** (`click` / `fill` / `fill_secret` /
-`select_option` / `press` / `upload`), since those act outward on the user's
+`fill_totp` / `select_option` / `press` / `upload`), since those act outward on the user's
 behalf; reads, navigation, `snapshot`, `scroll`, and `wait_for` stay free.
 
 Most rules match on the action name alone, but a rule can also judge a call from
@@ -114,9 +114,9 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   fixed class-name map plus that target — no page text reaches it.
 - **IRREVERSIBLE is never covered and never mints.** A `DELETE` re-prompts every
   time, even on a host you granted POSTs to; the ledger is consulted only for
-  non-IRREVERSIBLE calls. `fill_secret` (credential release) and the secret-gated
-  `look` are likewise excluded — their `scope()` returns `None`, so they always
-  ask.
+  non-IRREVERSIBLE calls. `fill_secret` / `fill_totp` (credential release) and
+  the secret-gated `look` are likewise excluded — their `scope()` returns
+  `None`, so they always ask.
 - **Exact match, no wildcards.** A grant on `boards.greenhouse.com` does not cover
   `api.greenhouse.com`; there is no "all hosts" or "all actions" scope. If the
   page navigates to another host, subsequent actions match the new host and
@@ -176,6 +176,16 @@ HTTP response `url` (a `"query"`-style secret can survive into the final url),
 `text`, or `headers`. A resolved secret never round-trips through agent-visible
 output.
 
+The same rule covers values *derived* from a secret. A TOTP seed is a plain
+vault secret (by convention `<site>_totp`); `browser.fill_totp` resolves it
+parent-side, derives the current RFC 6238 code (`security/totp.py`, stdlib
+only), types the code in, and registers the code with the sink too — so a page
+echoing "you entered 287082" comes back masked. Neither the seed nor the code
+has a code path back to agent code: there is deliberately no code-returning
+surface, because a single exception would make the no-cleartext rule
+negotiable. This is what makes an unattended re-login on a 2FA site possible —
+the human approves the `fill_totp` action, not the code.
+
 Masking works on text; pixels it cannot reach. A secret typed into a page is
 visible in a screenshot, so `browser.look` (which puts a screenshot in the
 model's context) is gated by the default policy once a session has injected a
@@ -214,8 +224,8 @@ the same **use-but-don't-view** rule as secrets:
   never grant-coverable: `open_browser(profile=...)` (category OUTWARD — it opens
   the browser *as that identity*, and it is the last checkpoint before free `goto`
   transmits the restored cookies) via an `approve_if` predicate, and `save_profile`
-  (writes a standing credential) via `require_approval`. `fill_secret` and the
-  secret-gated `look` are unaffected.
+  (writes a standing credential) via `require_approval`. `fill_secret`,
+  `fill_totp`, and the secret-gated `look` are unaffected.
 - **Refresh on close is audited, not prompted.** A profile-opened session re-saves
   its (rotated) state when it closes so the login survives; because close does not
   flow through the broker, the capability records a `profile_saved` event straight

@@ -31,9 +31,10 @@ pyharness-profiles rm linkedin
 ```
 
 **Or the agent creates it.** The agent opens a plain browser, logs in with
-`fill_secret` (you relay any 2FA code through the conversation), then calls
-`save_profile` — which prompts for approval, since it writes a standing
-credential:
+`fill_secret`, passes TOTP 2FA itself with `fill_totp` if the site's seed is in
+the vault ([store one](use-the-vault.md#totp-seeds-2fa) as `<site>_totp`; other
+2FA you relay through the conversation), then calls `save_profile` — which
+prompts for approval, since it writes a standing credential:
 
 ```python
 b = use_tool("browser")
@@ -42,9 +43,14 @@ b.goto(sid, "https://www.linkedin.com/login")
 b.snapshot(sid)                                 # see the fields
 b.fill_secret(sid, ref="e5", secret_name="linkedin_email")
 b.fill_secret(sid, ref="e6", secret_name="linkedin_password")
-b.click(sid, ref="e7")                          # sign in (2FA relayed if asked)
+b.click(sid, ref="e7")                          # sign in
+b.fill_totp(sid, ref="e9", secret_name="linkedin_totp")  # 2FA, if asked
 b.save_profile(sid, "linkedin")                 # approval prompt; cookies encrypted
 ```
+
+The same pair covers a profile whose session has expired: the agent re-logs-in
+unattended (each `fill_*` prompting for approval) instead of handing the task
+back to you.
 
 ## Use a profile
 

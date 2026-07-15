@@ -790,6 +790,78 @@ def test_mutating_http_requires_approval(tmp_path, fake_httpx):
     assert prompted == ["POST"]
 
 
+# --- TOTP derivation (Direction #6) ------------------------------------------
+
+
+# RFC 6238 Appendix B vectors: 8 digits, 30s period, T0=0. The seed is the
+# ASCII string "1234567890" repeated to the digest's block-appropriate length.
+_TOTP_VECTORS = [
+    (59, "sha1", "94287082"),
+    (1111111109, "sha1", "07081804"),
+    (1111111111, "sha1", "14050471"),
+    (1234567890, "sha1", "89005924"),
+    (2000000000, "sha1", "69279037"),
+    (20000000000, "sha1", "65353130"),
+    (59, "sha256", "46119246"),
+    (59, "sha512", "90693936"),
+]
+
+
+def _rfc_seed(algorithm: str) -> str:
+    import base64
+
+    length = {"sha1": 20, "sha256": 32, "sha512": 64}[algorithm]
+    raw = ("1234567890" * 7)[:length].encode()
+    return base64.b32encode(raw).decode()
+
+
+def test_totp_rfc6238_vectors():
+    from pyharness.security.totp import totp_code
+
+    for at, algorithm, expected in _TOTP_VECTORS:
+        assert totp_code(_rfc_seed(algorithm), digits=8, algorithm=algorithm, at=at) == expected
+
+
+def test_totp_defaults_six_digits_zero_padded():
+    from pyharness.security.totp import totp_code
+
+    # Same vector truncated to the 6-digit default; str+zfill keeps a leading zero.
+    code = totp_code(_rfc_seed("sha1"), at=59)
+    assert code == "287082" and len(code) == 6
+    assert totp_code(_rfc_seed("sha1"), at=1111111109) == "081804"
+
+
+def test_totp_normalizes_provisioning_formatting():
+    from pyharness.security.totp import totp_code
+
+    # Provisioning UIs show seeds lowercase, space-grouped, unpadded — all must
+    # derive the same code as the canonical form.
+    canonical = _rfc_seed("sha1")
+    grouped = " ".join(canonical[i : i + 4] for i in range(0, len(canonical), 4)).lower()
+    assert totp_code(grouped, at=59) == totp_code(canonical, at=59)
+
+
+def test_totp_rejects_bad_seed_without_echoing_it():
+    from pyharness.security.totp import totp_code
+
+    with pytest.raises(ValueError) as exc:
+        totp_code("not!base32", at=59)
+    assert "not!base32" not in str(exc.value)  # a seed is credential material
+    with pytest.raises(ValueError):
+        totp_code("", at=59)
+    with pytest.raises(ValueError):
+        totp_code(_rfc_seed("sha1"), algorithm="md5", at=59)
+
+
+def test_secret_sink_tracks_derived_cleartext():
+    from pyharness.security.sink import SecretSink
+
+    sink = SecretSink(None)  # track() needs no vault — the value is already cleartext
+    sink.track("287082")
+    assert sink.has_injected
+    assert sink.redact("you entered 287082") == "you entered ***"
+
+
 # --- Browser lane (C2) -------------------------------------------------------
 # Playwright is an optional extra, so these drive the capability against a fake
 # page — no chromium binary, runs in CI. A live smoke test would be
@@ -906,6 +978,36 @@ def test_browser_read_text_masks_injected_secret(tmp_path):
     r = cap.read_text("sid")
     assert "hunter2" not in r["text"]
     assert "***" in r["text"]
+
+
+def _freeze_totp_time(monkeypatch, at=59):
+    # fill_totp derives at "now"; pin the totp module's clock so the expected
+    # code is the RFC vector for T=59 ("287082" at 6 digits).
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("pyharness.security.totp.time", SimpleNamespace(time=lambda: at))
+
+
+def test_browser_fill_totp_types_code_never_seed_or_code(tmp_path, monkeypatch):
+    _freeze_totp_time(monkeypatch)
+    seed = _rfc_seed("sha1")
+    cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"github_totp": seed}))
+    result = cap.fill_totp("sid", "#otp", "github_totp")
+    # The derived code was typed into the page; neither it nor the seed returns.
+    assert ("fill", "#otp", "287082") in page.calls
+    assert seed not in repr(result) and "287082" not in repr(result)
+
+
+def test_browser_fill_totp_masks_echoed_code_and_gates_look(tmp_path, monkeypatch):
+    _freeze_totp_time(monkeypatch)
+    cap, page = _browser_with_fake(
+        Workspace(tmp_path), vault=Vault({"github_totp": _rfc_seed("sha1")}), text="code 287082 accepted"
+    )
+    cap.fill_totp("sid", "#otp", "github_totp")
+    r = cap.read_text("sid")
+    assert "287082" not in r["text"] and "***" in r["text"]
+    # A second factor in the page is a secret on screen: the look gate applies.
+    assert cap.has_injected_secrets("sid")
 
 
 def test_browser_read_text_returns_full_page_and_can_save(tmp_path, monkeypatch):
@@ -1740,6 +1842,7 @@ def test_http_and_browser_scope_extraction(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))  # fake page url is http://start
     assert cap.scope("click", ("sid",), {}) == GrantScope("browser", "start")
     assert cap.scope("fill_secret", ("sid",), {}) is None  # credentials always prompt
+    assert cap.scope("fill_totp", ("sid",), {}) is None  # a second factor is a credential too
     assert cap.scope("goto", ("sid",), {}) is None  # navigation is not a mutation
     assert cap.scope("click", ("nope",), {}) is None  # no such session
 
@@ -1836,6 +1939,29 @@ def test_fill_secret_not_covered_by_browser_grant(tmp_path):
     ns["click"]("sid", "#a")  # mints a browser grant
     ns["fill_secret"]("sid", "#pw", "pw")  # credential release still prompts
     assert prompts == ["browser.click", "browser.fill_secret"]
+
+
+def test_fill_totp_not_covered_by_browser_grant(tmp_path, monkeypatch):
+    # Releasing a second factor is a credential release: a domain grant covers
+    # mechanical actions, never fill_totp — it prompts every time.
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    _freeze_totp_time(monkeypatch)
+    prompts = []
+
+    def approver(request):
+        prompts.append(request.action)
+        return ApprovalOutcome.GRANT
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"github_totp": _rfc_seed("sha1")}))
+    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["click"]("sid", "#a")  # mints a browser grant
+    ns["fill_totp"]("sid", "#otp", "github_totp")  # still prompts
+    ns["fill_totp"]("sid", "#otp", "github_totp")  # and prompts again — never minted
+    assert prompts == ["browser.click", "browser.fill_totp", "browser.fill_totp"]
 
 
 def test_look_not_covered_by_browser_grant(tmp_path):

@@ -42,6 +42,12 @@ class SecretSink:
         self._injected.add(secret)
         return secret
 
+    def track(self, value: str) -> None:
+        """Record a cleartext *derived* from a vault secret parent-side (a TOTP
+        code from a stored seed) for the same masking as a resolved secret — the
+        page may echo the derived value even though it was never a vault entry."""
+        self._injected.add(value)
+
     def redact(self, text: str) -> str:
         """Mask every cleartext this sink has resolved out of `text`. Only values
         this sink injected are masked — no need to scan for arbitrary secrets."""

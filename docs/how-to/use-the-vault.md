@@ -57,5 +57,25 @@ http.request(s, "POST", "https://api.example.com/login",
 into the JSON/form body. Load them with `use_tool` (`search_tools("web")` to find
 them); see [Builtins](../reference/builtins.md).
 
+## TOTP seeds (2FA)
+
+A TOTP seed is just a vault secret — the base32 string the site shows next to
+its QR code at 2FA setup ("can't scan? enter this code"). Store it under
+`<site>_totp`:
+
+```bash
+pyharness-vault set github_totp     # paste the base32 seed (hidden)
+```
+
+At a login's 2FA step the agent calls `browser.fill_totp(sid, ref="e5",
+secret_name="github_totp")`: the seed is resolved parent-side, the current
+6-digit code derived there (RFC 6238, stdlib), and typed into the field.
+Neither the seed nor the code ever reaches agent code, and both are masked out
+of later page reads. `fill_totp` prompts for approval every time — releasing a
+second factor is a credential release, never covered by a domain grant. With a
+[site profile](site-profiles.md) keeping the agent logged in and a seed
+covering re-login, an expired session no longer needs a human in the loop
+beyond the approval prompt.
+
 > Out-of-process, secret-bearing env vars are scrubbed from the child before any
 > agent code runs, so even a shell-out can't read them.

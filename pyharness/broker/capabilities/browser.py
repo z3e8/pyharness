@@ -9,6 +9,7 @@ from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.profiles import ProfileStore
 from ...security.sink import SecretSink
+from ...security.totp import totp_code
 from ...security.vault import Vault
 from .payload import deliver
 
@@ -20,6 +21,7 @@ MUTATING_ACTIONS = frozenset(
         "browser.click",
         "browser.fill",
         "browser.fill_secret",
+        "browser.fill_totp",
         "browser.select_option",
         "browser.press",
         "browser.upload",
@@ -29,7 +31,11 @@ MUTATING_ACTIONS = frozenset(
 # Ops whose second positional arg is the element selector (used by preview() to
 # describe the target). press/upload take other positional args first, so they
 # rely on the ref=/selector= keyword instead.
-_SELECTOR_POS_OPS = frozenset({"click", "fill", "fill_secret", "select_option"})
+_SELECTOR_POS_OPS = frozenset({"click", "fill", "fill_secret", "fill_totp", "select_option"})
+
+# Credential-releasing ops: never grant-covered (scope() returns None), so each
+# one prompts on its own even inside a granted domain.
+_CREDENTIAL_OPS = frozenset({"fill_secret", "fill_totp"})
 
 
 class _BrowserSession:
@@ -73,7 +79,9 @@ class BrowserCapability:
     takes a secret *name*, resolves the cleartext parent-side, types it into the
     field, and records it on the session so every subsequent read masks it. The
     agent never sees the value, and the audit log records the name (via
-    `summarize_args`), never the value.
+    `summarize_args`), never the value. `fill_totp` extends the rule to 2FA: the
+    vault holds the TOTP *seed*, the current code is derived parent-side at the
+    moment of use, and neither seed nor code is ever returned.
 
     Every method returns a structured result (url / title / status), not a bare
     string, so the agent can check its own work — assert on status, re-read to
@@ -115,6 +123,7 @@ class BrowserCapability:
             "click": self.click,
             "fill": self.fill,
             "fill_secret": self.fill_secret,
+            "fill_totp": self.fill_totp,
             "select_option": self.select_option,
             "press": self.press,
             "scroll": self.scroll,
@@ -165,14 +174,15 @@ class BrowserCapability:
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
         """The grant key for a gated page action: action-class "browser" plus the
         host of the live page. The host comes from Playwright's own `page.url`
-        (harness state a page cannot forge), not from page text. `fill_secret` is
-        deliberately excluded even though it mutates: releasing a credential into a
-        page deserves its own look every time, so it always prompts. No session or
+        (harness state a page cannot forge), not from page text. `fill_secret` and
+        `fill_totp` are deliberately excluded even though they mutate: releasing a
+        credential (or a second factor) into a page deserves its own look every
+        time, so they always prompt. No session or
         no parseable host → None (not grantable → always prompts).
 
         `op` arrives bare (e.g. "click") while `MUTATING_ACTIONS` holds dotted
         names ("browser.click"), so the membership test re-dots it."""
-        if f"browser.{op}" not in MUTATING_ACTIONS or op == "fill_secret":
+        if f"browser.{op}" not in MUTATING_ACTIONS or op in _CREDENTIAL_OPS:
             return None
         session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
         if session is None:
@@ -264,7 +274,8 @@ class BrowserCapability:
     def save_profile(self, session_id: str, name: str) -> dict:
         """Persist this browser's login state as an encrypted profile `name`, so a
         later `open_browser(profile=name)` opens already logged in. Save it after
-        you have logged in (via `fill_secret`, with any 2FA relayed through the
+        you have logged in (via `fill_secret`, with TOTP 2FA via `fill_totp` if
+        the site has a seed in the vault, or other 2FA relayed through the
         conversation). The cookie material is encrypted parent-side and never
         returned to you — the result reports counts only. State-changing (it
         writes a standing credential) — gated for approval."""
@@ -402,6 +413,22 @@ class BrowserCapability:
         session = self._session(session_id)
         secret = session.sink.resolve(secret_name)
         session.page.fill(self._target(session, selector, ref), secret)
+        return self._state(session)
+
+    def fill_totp(
+        self, session_id: str, selector: str | None = None, secret_name: str | None = None, *, ref: str | None = None
+    ) -> dict:
+        """Type the current 2FA code derived from a named vault TOTP seed (e.g.
+        "github_totp" — `secrets()` lists what exists) into a field, targeted by a
+        snapshot `ref` (preferred) or a CSS/text `selector`. The seed is resolved
+        parent-side and the RFC 6238 code derived here at the moment of use;
+        neither the seed nor the code ever reaches agent code, and later reads
+        mask the code."""
+        session = self._session(session_id)
+        seed = session.sink.resolve(secret_name)
+        code = totp_code(seed)
+        session.sink.track(code)  # the page may echo the code back; mask it like the seed
+        session.page.fill(self._target(session, selector, ref), code)
         return self._state(session)
 
     def select_option(

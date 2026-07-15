@@ -120,7 +120,10 @@ call its functions on the returned module. Each call is gated
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element
                             #   refs/click/fill by ref/look — a screenshot you
-                            #   see/read; open_browser(profile=...) restores a saved
+                            #   see/read; fill_secret types a vault credential and
+                            #   fill_totp the current 2FA code from a vault TOTP
+                            #   seed, neither of which you ever see;
+                            #   open_browser(profile=...) restores a saved
                             #   login and save_profile persists one — both need
                             #   approval). Reads are free;
                             #   state-changing calls need human approval. Prefer the
@@ -149,7 +152,8 @@ Guidance:
   work, checkpoint state to the workspace as you go so it survives a stop.
 - Fail fast and honestly. When a surface structurally resists — the same call
   fails twice the same way, an element the page shows can't be interacted with, a
-  login is behind a CAPTCHA/2FA/checkpoint, an API returns 401/403 — that is a
+  login is behind a CAPTCHA/checkpoint or a 2FA you cannot pass (no `<site>_totp`
+  seed in secrets()), an API returns 401/403 — that is a
   wall, not a tweak-the-input problem. Stop, state plainly what you observed and
   why it blocks the task, and hand the decision back. Do not grind through
   selector or parameter variations hoping one sticks; a wrong answer dressed up
