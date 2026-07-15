@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
+from ...security.egress import check_url
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.profiles import ProfileStore
@@ -329,6 +330,7 @@ class BrowserCapability:
         Waits for `domcontentloaded` rather than the full `load` event: a heavy
         page whose trackers and lazy media never quiesce would otherwise time out
         even though its content is already present."""
+        check_url(url)  # SSRF guard: no link-local/metadata (or private, if strict) targets
         session = self._session(session_id)
         resp = session.page.goto(url, wait_until="domcontentloaded")
         session.last_snapshot = None  # new page: every prior ref is now meaningless
@@ -513,9 +515,10 @@ class BrowserCapability:
 
     def screenshot(self, session_id: str, path: str) -> dict:
         """Save a PNG screenshot to a workspace-relative `path` (resolved
-        parent-side, escape-guarded) and return where it landed. Note: a secret
-        visible on screen appears in the image — it is written to disk, not
-        returned to agent code."""
+        parent-side, escape-guarded) and return where it landed. A secret visible
+        on screen appears in the image, and the agent can read the PNG back from
+        the workspace, so — like `look` — once this session has typed a secret into
+        the page the default policy makes `screenshot` require approval."""
         session = self._session(session_id)
         target = self.ws.path(path)
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -18,13 +18,27 @@ correlating a request id with its response. A *response* is a message carrying
 from __future__ import annotations
 
 import json
-import os
 import queue
 import subprocess
 import threading
 import time
 from collections import deque
 from typing import Protocol, runtime_checkable
+
+from ...broker.remote.sandbox import scrubbed_environ
+from ...llm.client import PROVIDER_SECRET_ENV
+from ...security.vault import DEFAULT_ENV_PREFIX, PASSPHRASE_ENV
+
+# Secret-bearing variables a local MCP subprocess must never inherit — the same
+# set stripped from the child kernel and from `shell.bash` subprocesses: vault
+# secrets (`PYHARNESS_SECRET_*`), the vault passphrase, and the provider API keys
+# the parent holds to call the LLM. A local MCP server is arbitrary third-party
+# code (and its supply chain); without this it could read the operator's Anthropic
+# key or the vault passphrase straight out of its own environment. The server's
+# own configured `env` (with `secret:` refs already resolved parent-side) is
+# merged on top, so it still receives the credentials it was set up with.
+_SECRET_ENV_PREFIXES = (DEFAULT_ENV_PREFIX,)
+_SECRET_ENV_NAMES = (PASSPHRASE_ENV, *PROVIDER_SECRET_ENV)
 
 # Protocol version we advertise at `initialize` (the current stable spec).
 # Servers negotiate down if needed; the client records the negotiated version
@@ -81,7 +95,9 @@ class StdioTransport:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**os.environ, **(env or {})},
+            # Start from a secret-scrubbed copy of the parent environment, then
+            # layer the server's own configured env on top (see _SECRET_ENV_*).
+            env={**scrubbed_environ(_SECRET_ENV_PREFIXES, _SECRET_ENV_NAMES), **(env or {})},
             cwd=cwd,
             text=True,
             bufsize=1,

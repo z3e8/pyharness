@@ -29,6 +29,15 @@ from .registry import Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
+
+def validate_skill_name(name: str) -> str:
+    """A skill name becomes a directory under the skills root, so it must be a
+    simple slug — no dots or slashes that could traverse out of it. The single
+    check every write/edit/record path runs before `name` touches the filesystem."""
+    if not _NAME_RE.match(name):
+        raise ValueError(f"skill name {name!r} must match [A-Za-z0-9_-]+ (no dots or slashes)")
+    return name
+
 # A skill's trust state lives in a sidecar next to SKILL.md, not in the
 # procedure itself: whether it has ever run successfully (`verified`) and a
 # bounded log of recent outcomes. Trust is earned by a real run — a freshly
@@ -134,6 +143,7 @@ def edit_skill_md(skills_dir: str | Path, name: str, edits: list) -> Path:
     must appear exactly once in the current body. Frontmatter and bundled files
     are untouched; the revised procedure is unproven, so `verified` clears (the
     use log survives). Returns the skill dir."""
+    validate_skill_name(name)
     skill_dir = Path(skills_dir) / name
     md = skill_dir / "SKILL.md"
     if not md.exists():
@@ -177,8 +187,7 @@ def write_skill(
     `check` is the skill's own success test — how a run knows it worked (an
     assertion, a re-fetch, an expected state) — kept in the frontmatter so trust
     can rest on something verifiable instead of the runner's impression."""
-    if not _NAME_RE.match(name):
-        raise ValueError(f"skill name {name!r} must match [A-Za-z0-9_-]+")
+    validate_skill_name(name)
     skill_dir = Path(skills_dir) / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     # A skill is exactly its last save: drop bundled .py from a prior version so a

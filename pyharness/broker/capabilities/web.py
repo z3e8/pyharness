@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 
+from ...security.grants import GrantScope
+from ...security.policy import ActionCategory
 from . import exa
 from .http import HttpSessionCapability
 from .page import render_page_map
@@ -20,6 +23,39 @@ class WebCapability:
             "search_results": self.search_results,
             "fetch": self.fetch,
         }
+
+    @staticmethod
+    def _fetch_auth(args: tuple, kwargs: dict):
+        """(url, auth-name-or-None, auth-style) from a `fetch` call in either
+        convention. `fetch(url, auth=..., auth_style=...)` — auth is the 2nd
+        positional, auth_style the 3rd."""
+        url = kwargs.get("url") or (args[0] if args else "")
+        auth = kwargs.get("auth") or (args[1] if len(args) >= 2 else None)
+        style = kwargs.get("auth_style") or (args[2] if len(args) >= 3 else "bearer")
+        return url, auth, style
+
+    def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
+        """Only `fetch` is gated, and only when it attaches a vault secret (see
+        session._request_carries_secret). Name the credential and the target so the
+        human can catch a token headed for the wrong host — the value is never
+        shown (auth is a secret *name*)."""
+        url, auth, style = self._fetch_auth(args, kwargs)
+        summary = f"GET {url}"
+        if auth:
+            summary += f" [auth={auth} via {style}]"
+        return ActionCategory.OUTWARD, summary
+
+    def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
+        """Grant key for a secret-carrying fetch: action-class "http" (shared with
+        the HTTP capability, so one host grant covers both) plus the target host.
+        A fetch with no secret is not gated, so it needs no scope."""
+        if op != "fetch":
+            return None
+        url, auth, _ = self._fetch_auth(args, kwargs)
+        if not auth:
+            return None
+        host = urlsplit(url).hostname if url else None
+        return GrantScope("http", host.lower()) if host else None
 
     def search_results(self, query: str, num_results: int = 10) -> list[dict]:
         """Search the web and return a *raw ranked list* to fan out over — each

@@ -115,10 +115,29 @@ class RemoteKernel:
                 # fresh child instead of sending down a broken pipe.
                 self._discard()
                 return "(kernel process died — session state lost)"
-            if msg[0] == "done":
-                return msg[1]
+            except ValueError:
+                # Undecodable frame (not valid JSON) from the untrusted child.
+                # `json.JSONDecodeError` is a ValueError; treat a garbage frame as a
+                # hostile/broken child rather than letting the decode error escape
+                # into the parent's control flow.
+                self._discard()
+                return "(kernel protocol error — session state lost)"
 
+            # Validate the frame shape before trusting it. A hostile child could
+            # send a scalar, a wrong-arity list, or wrong-typed members; splatting
+            # those (`*args`/`**kwargs`) or unpacking them would raise arbitrary
+            # exceptions in this privileged parent. Anything off-protocol tears the
+            # child down deterministically instead.
+            tag = msg[0] if isinstance(msg, list) and msg else None
+            if tag == "done" and len(msg) == 2:
+                return msg[1]
+            if tag != "call" or len(msg) != 4:
+                self._discard()
+                return "(kernel protocol error — session state lost)"
             _, op, args, kwargs = msg  # ("call", op, args, kwargs)
+            if not (isinstance(op, str) and isinstance(args, list) and isinstance(kwargs, dict)):
+                self._discard()
+                return "(kernel protocol error — session state lost)"
             try:
                 value = _seal_for_wire(self.broker.call_op(op, *args, **kwargs))
                 reply = ("ok", value)

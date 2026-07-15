@@ -1,6 +1,18 @@
 from __future__ import annotations
 
+from urllib.parse import quote, quote_plus
+
 from .vault import Vault
+
+
+def _mask_forms(value: str) -> set[str]:
+    """Every literal spelling of `value` that could appear in agent-visible output.
+    A query-style secret survives into `resp.url` percent-encoded (`p@ss` ->
+    `p%40ss`), so a raw-substring mask would miss it; include the URL-encoded forms
+    so redaction still catches it. Empty and unchanged forms fold together."""
+    forms = {value, quote(value, safe=""), quote_plus(value)}
+    forms.discard("")
+    return forms
 
 
 class SecretSink:
@@ -23,15 +35,17 @@ class SecretSink:
 
     def __init__(self, vault: Vault | None):
         self._vault = vault
-        self._injected: set[str] = set()
+        # Every literal spelling to mask out of agent-visible output — the raw
+        # cleartext plus its URL-encoded forms (see _mask_forms).
+        self._masks: set[str] = set()
 
     @property
     def has_injected(self) -> bool:
         """Whether this sink has resolved any secret — i.e. a live credential is
         present in its injection context. The default policy reads this to gate a
-        screenshot-to-model (`browser.look`) once a secret was typed into the page,
-        since pixels can't be masked the way text can."""
-        return bool(self._injected)
+        screenshot once a secret was typed into the page, since pixels can't be
+        masked the way text can."""
+        return bool(self._masks)
 
     def resolve(self, name: str) -> str:
         """Resolve a secret name to cleartext parent-side and record it for later
@@ -39,21 +53,20 @@ class SecretSink:
         if self._vault is None:
             raise RuntimeError("no vault configured for secret injection")
         secret = self._vault.get(name)
-        self._injected.add(secret)
+        self._masks |= _mask_forms(secret)
         return secret
 
     def track(self, value: str) -> None:
         """Record a cleartext *derived* from a vault secret parent-side (a TOTP
         code from a stored seed) for the same masking as a resolved secret — the
         page may echo the derived value even though it was never a vault entry."""
-        self._injected.add(value)
+        self._masks |= _mask_forms(value)
 
     def redact(self, text: str) -> str:
         """Mask every cleartext this sink has resolved out of `text`. Only values
         this sink injected are masked — no need to scan for arbitrary secrets."""
-        for secret in self._injected:
-            if secret:
-                text = text.replace(secret, "***")
+        for mask in self._masks:
+            text = text.replace(mask, "***")
         return text
 
     def redact_bytes(self, data: bytes) -> bytes:
@@ -61,9 +74,8 @@ class SecretSink:
         written to disk. The binary counterpart of `redact`: a secret echoed into
         a saved payload must not survive to the workspace file any more than it may
         round-trip through returned text."""
-        for secret in self._injected:
-            if secret:
-                data = data.replace(secret.encode(), b"***")
+        for mask in self._masks:
+            data = data.replace(mask.encode(), b"***")
         return data
 
     def redacted(self, value):

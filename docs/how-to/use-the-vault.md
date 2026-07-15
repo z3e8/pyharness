@@ -57,6 +57,13 @@ http.request(s, "POST", "https://api.example.com/login",
 into the JSON/form body. Load them with `use_tool` (`search_tools("web")` to find
 them); see [Builtins](../reference/builtins.md).
 
+Attaching a secret sends a credential off-box, so it prompts for approval the
+first time — even on a `GET`, which is otherwise a free read — naming the secret
+and destination host so a human can catch a token headed somewhere it shouldn't
+go. Approve "all … on `<host>`" once and further authenticated calls to that same
+host flow without re-prompting. See
+[the policy model](../explanation/security-and-audit.md#policy--what-may-run).
+
 ## TOTP seeds (2FA)
 
 A TOTP seed is just a vault secret — the base32 string the site shows next to
