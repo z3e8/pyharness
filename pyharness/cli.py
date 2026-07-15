@@ -112,6 +112,7 @@ def main() -> None:
         on_event=_trace,
         out_of_process=True,
         mcp_config=mcp_config if mcp_config.exists() else None,
+        index_db=os.environ.get("PYHARNESS_INDEX_DB", "~/.pyharness/index.db"),
     )
 
     print("pyharness — type a task, or Ctrl-D to exit.")

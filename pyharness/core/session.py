@@ -13,6 +13,7 @@ from ..broker.capabilities import (
     HistoryCapability,
     HttpSessionCapability,
     LLMCapability,
+    ObservabilityCapability,
     PackagesCapability,
     SearchCapability,
     SecretsCapability,
@@ -69,6 +70,7 @@ class Session:
         out_of_process: bool = False,
         mcp_config: str | Path | dict | None = None,
         skills_dir: str | Path | None = None,
+        index_db: str | Path | None = None,
     ):
         telemetry.setup_telemetry()
         self.id = uuid4().hex
@@ -113,6 +115,13 @@ class Session:
         self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
         load_skills(self.registry, self.skills_dir)
 
+        # The session index (direction 5) — a derived SQLite view over past
+        # sessions' JSONL, feeding the `stats`/`inspect_session` builtins and the
+        # preamble. None (the default) leaves those dataless; the CLI passes the
+        # global DB. Refresh is fail-open: the index is a cache, never a blocker.
+        self.index_db = Path(index_db).expanduser() if index_db else None
+        self._refresh_index()
+
         # Variables agent-controlled code must never see: env-backed secrets
         # (the vault's prefix), the file-vault passphrase, and the provider API
         # keys the parent uses to call the LLM. Stripped from the child's
@@ -147,6 +156,7 @@ class Session:
             # so the session index can attribute skill uses to sessions.
             SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record),
             HistoryCapability(self.audit),
+            ObservabilityCapability(self.index_db, self.llm),
         ):
             self.broker.register(capability)
 
@@ -207,10 +217,67 @@ class Session:
             workspace_root=self.workspace.dir,
             on_event=on_event_traced,
             media=self.media,
+            preamble_extra=self._render_history_preamble(),
         )
         self.messages: list[dict] = []
         self._closed = False
         self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
+
+    def _refresh_index(self) -> None:
+        """Bring the session index up to date (all remembered roots plus this
+        session's parent dir). Fail-open — a broken index never blocks a session."""
+        if self.index_db is None:
+            return
+        try:
+            from ..index import update_index
+
+            update_index(
+                self.index_db, [self.workspace.root.parent], skills_dir=self.skills_dir
+            )
+        except Exception:  # noqa: BLE001 — the index is a cache, never a blocker
+            import logging
+
+            logging.getLogger("pyharness.index").debug(
+                "index refresh failed", exc_info=True
+            )
+
+    def _render_history_preamble(self) -> str:
+        """A few ambient lines from the index — recent sessions and skill trust —
+        appended to the system preamble so the agent starts oriented in its own
+        past instead of having to remember to look. Empty without an index."""
+        if self.index_db is None or not self.index_db.exists():
+            return ""
+        try:
+            from ..index import query
+
+            sessions = query(
+                self.index_db,
+                "SELECT name, task, outcome, cost_usd FROM sessions "
+                "ORDER BY started DESC LIMIT 5",
+            )
+            skills = query(
+                self.index_db,
+                "SELECT name, verified, uses, worked, failed FROM skills "
+                "ORDER BY last_used DESC LIMIT 10",
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+        lines: list[str] = []
+        if sessions:
+            lines.append("## Recent sessions (query more with stats())")
+            for s in sessions:
+                task = (s["task"] or "")[:70]
+                lines.append(
+                    f"- {s['name']}: {task!r} — {s['outcome']}, ${s['cost_usd'] or 0:.2f}"
+                )
+        if skills:
+            lines.append("## Skills (trust from real runs; details via describe_tool)")
+            for s in skills:
+                state = "verified" if s["verified"] else "unverified"
+                lines.append(
+                    f"- {s['name']}: {state}, {s['worked']}/{s['uses']} runs worked"
+                )
+        return "\n".join(lines)
 
     def run(self, task: str) -> str:
         self.trace.record("task", task)
@@ -245,6 +312,7 @@ class Session:
                 calls=self.budget.calls,
                 by_model=self.budget.by_model,
             )
+            self._refresh_index()  # fold this session into the index for the next one
         if hasattr(self.kernel, "close"):
             self.kernel.close()
         self.http.close_all()

@@ -378,7 +378,9 @@ def _index_skills(conn: sqlite3.Connection, skills_dir: Path) -> None:
         )
 
 
-def query(db_path: str | Path, sql: str, *, limit: int = 200) -> list[dict]:
+def query(
+    db_path: str | Path, sql: str, *, params: tuple = (), limit: int = 200
+) -> list[dict]:
     """Run read-only SQL against the index and return rows as dicts (capped at
     `limit`). The connection is opened read-only and an authorizer denies
     ATTACH/DETACH, so agent SQL can read this DB and nothing else."""
@@ -393,7 +395,7 @@ def query(db_path: str | Path, sql: str, *, limit: int = 200) -> list[dict]:
         conn.execute("PRAGMA query_only = ON")
         conn.set_authorizer(_readonly_authorizer)
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(sql).fetchmany(limit)
+        rows = conn.execute(sql, params).fetchmany(limit)
         return [dict(r) for r in rows]
     finally:
         conn.close()

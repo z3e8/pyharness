@@ -80,6 +80,16 @@ import them. This is the complete list; nothing else is callable by bare name.
         # was allowed and whether it succeeded. action filters by prefix ("http",
         # "browser.click"). Use it to confirm an effect landed, or to see why an
         # action was refused, before deciding what to do next.
+    stats(sql=None, limit=200) -> list[dict] | str
+        # read-only SQL over your session index: every PAST session, LLM call,
+        # capability call, error, and skill use, plus views (skill_stats,
+        # skill_run_costs, error_taxonomy, session_costs). Call with no sql for
+        # the schema. Use it for aggregate questions — how reliable is a skill,
+        # what keeps failing, what did similar tasks cost.
+    inspect_session(session, question) -> str
+        # ask one targeted question about one past session ("why did the
+        # greenhouse skill fail?"); a cheap worker reads that transcript and
+        # returns the answer. session = a name from stats() or the preamble.
 
 TOOLS — everything external. Anything not in the builtins list above is a tool:
 web access, a browser, HTTP sessions, package installation, MCP servers, and
@@ -173,6 +183,7 @@ class Agent:
         workspace_root: str | Path | None = None,
         on_event: Callable[[str, str], None] | None = None,
         media=None,
+        preamble_extra: str = "",
     ):
         self.llm = llm
         self.kernel = kernel
@@ -180,6 +191,9 @@ class Agent:
         self.tier = tier
         self.max_steps = max_steps
         self.workspace_root = workspace_root
+        # Session-computed ambient context (recent sessions, skill trust) appended
+        # after render_context — world-state, so it belongs in the preamble.
+        self.preamble_extra = preamble_extra
         self.on_event = on_event or (lambda kind, text, **kw: None)
         # Parent-side outbox a cell's capabilities fill with images (browser.look);
         # drained after each kernel.run into the tool_result's content blocks.
@@ -202,6 +216,8 @@ class Agent:
 
     def _run_loop(self, messages: list[dict]) -> str:
         system = f"{SYSTEM_PROMPT}\n\n{render_context(self.workspace_root)}"
+        if self.preamble_extra:
+            system = f"{system}\n\n{self.preamble_extra}"
         for _ in range(self.max_steps):
             self.budget.check()
 
