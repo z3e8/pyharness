@@ -94,30 +94,49 @@ class Broker:
         self._ops: dict[tuple[str, str], Callable] = {}
         self._capabilities: dict[str, object] = {}
         self._core: set[str] = set()  # capabilities surfaced as bare-name builtins
+        self._hidden: set[tuple[str, str]] = set()  # ops excluded from that surface
 
     def register(self, capability, *, core: bool = True) -> None:
         """Register a capability's ops on the broker. `core=True` (the default)
         also surfaces them as always-in-scope builtins via `namespace()` /
         `op_names()`; `core=False` registers them for gating but leaves them off
         the bare-name namespace, to be reached through the tool registry instead
-        (see `as_tool_module`). Either way every call is broker-gated identically."""
+        (see `as_tool_module`). Either way every call is broker-gated identically.
+
+        A capability may additionally set `hidden_ops` (a set of its own op
+        names) for ops that must stay internal even on a `core=True` capability
+        — reachable via `call()`/`call_op()` (so other proxies can route through
+        them) but never bound as a bare-name builtin. `tools.invoke` is the
+        motivating case: it's the funnel every tool-module proxy calls through,
+        not an entry point meant for agent code to call directly."""
         self._capabilities[capability.name] = capability
         if core:
             self._core.add(capability.name)
+        hidden = getattr(capability, "hidden_ops", frozenset())
         for name, func in capability.exports().items():
             self._ops[(capability.name, name)] = func
+            if name in hidden:
+                self._hidden.add((capability.name, name))
 
     def namespace(self) -> dict[str, Callable]:
         """The functions injected into the agent's kernel as always-in-scope
         builtins, each routed through this broker. Only `core` capabilities are
-        surfaced here; non-core ones are reached via the tool registry."""
-        return {op: self._proxy(cap, op) for (cap, op) in self._ops if cap in self._core}
+        surfaced here, minus any op a capability marked `hidden_ops`; non-core
+        ones are reached via the tool registry."""
+        return {
+            op: self._proxy(cap, op)
+            for (cap, op) in self._ops
+            if cap in self._core and (cap, op) not in self._hidden
+        }
 
     def op_names(self) -> list[str]:
         """The flat operation names the agent calls by bare name (`read`, `bash`,
         ...). The out-of-process child binds a proxy for each and addresses calls
-        by name; must match `namespace()`, so it too is core-only."""
-        return [op for (cap, op) in self._ops if cap in self._core]
+        by name; must match `namespace()`, so it applies the same core/hidden
+        filter."""
+        return [
+            op for (cap, op) in self._ops if cap in self._core and (cap, op) not in self._hidden
+        ]
 
     def as_tool_module(self, cap: str, *, summary: str = "") -> ModuleType:
         """Build a module whose public functions are broker-gated proxies for one

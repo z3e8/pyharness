@@ -62,6 +62,11 @@ def _invoke_target(args: tuple, kwargs: dict) -> tuple:
 
 class ToolsCapability:
     name = "tools"
+    # `invoke` is the internal funnel every tool-module proxy (in-process and
+    # the out-of-process child's RemoteToolSpec) routes through — not an entry
+    # point for agent code to call by bare name. Keep it gated and reachable
+    # via call()/call_op(), just not bound in the kernel namespace.
+    hidden_ops = frozenset({"invoke"})
 
     def __init__(self, registry: Registry, *, broker=None, vault=None, mcp_config_path=None):
         self.registry = registry
