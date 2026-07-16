@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 from uuid import uuid4
 
 from ..obs import telemetry
@@ -25,6 +26,7 @@ from ..broker.capabilities import (
 )
 from ..broker.capabilities.browser import MUTATING_ACTIONS as MUTATING_BROWSER_ACTIONS
 from ..broker.capabilities.http import MUTATING_METHODS
+from ..broker.capabilities.spawn import SpawnCapability, SpawnResult
 from ..broker.capabilities.tools import unvetted_mcp_call
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
@@ -40,6 +42,32 @@ from .kernel import Kernel
 from .media import MediaOutbox
 from .session_venv import SessionVenv
 from .workspace import Workspace
+
+
+# What a spawned child session may hold. Its body — workspace files, search,
+# LLM-as-function delegation — is always in scope; everything else must be
+# granted by name in `spawn(tools=...)`. `spawn` itself is never grantable, so
+# delegation depth is one by construction (the Claude Code trick: enforce the
+# cap by omitting the capability, not by a runtime check).
+CHILD_BODY = frozenset({"files", "search", "llm"})
+CHILD_GRANTABLE = frozenset(
+    {
+        "shell",
+        "secrets",
+        "skills",
+        "history",
+        "obs",
+        "notify",
+        "web",
+        "http",
+        "browser",
+        "inbox",
+        "packages",
+    }
+)
+# External capabilities are reached through tool discovery, so granting any of
+# them implies the `tools` capability (search_tools/describe_tool/use_tool).
+_EXTERNAL = frozenset({"web", "http", "browser", "inbox", "packages"})
 
 
 def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
@@ -101,12 +129,31 @@ class Session:
         skills_dir: str | Path | None = None,
         index_db: str | Path | None = None,
         keep_outputs: int = 8,
+        max_steps: int = 30,
+        tier: str = "mid",
+        # Spawned-child wiring (set by Session._spawn_child, not by callers):
+        # a capability allowlist, the parent's audit log (one hash chain for the
+        # whole session tree), the parent's workspace dir (shared data plane),
+        # and a preamble that replaces the history/skills orientation block.
+        capabilities: Iterable[str] | None = None,
+        audit: AuditLog | None = None,
+        workspace_dir: Path | None = None,
+        preamble: str | None = None,
     ):
         telemetry.setup_telemetry()
         self.id = uuid4().hex
-        self.workspace = Workspace(root)
+        self.workspace = Workspace(root, shared_dir=workspace_dir)
         self.budget = budget or Budget()
-        self.audit = AuditLog(self.workspace.root / "audit.jsonl")
+        self.audit = audit or AuditLog(self.workspace.root / "audit.jsonl")
+        # None = a full parent session; a set = a spawned child holding its
+        # body plus exactly what it was granted.
+        if capabilities is None:
+            self._caps: frozenset[str] | None = None
+        else:
+            granted = frozenset(capabilities)
+            self._caps = granted | CHILD_BODY | ({"tools"} if granted & _EXTERNAL else frozenset())
+        self._out_of_process = out_of_process
+        self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
 
@@ -140,6 +187,9 @@ class Session:
                 "skills.edit_skill",
                 "packages.install",
                 "tools.add_mcp_server",  # mounting a server installs code
+                # Approving a spawn is approving the child's whole plan: task,
+                # capability set, budget slice (see SpawnCapability.preview).
+                "spawn.spawn",
                 # State-changing browser actions; navigation and reads stay free.
                 *MUTATING_BROWSER_ACTIONS,
                 # Persisting a login writes a standing credential — sign off once.
@@ -179,7 +229,8 @@ class Session:
         from ..tools.skills import load_skills
 
         self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
-        load_skills(self.registry, self.skills_dir)
+        if self._has("skills"):
+            load_skills(self.registry, self.skills_dir)
         # Lessons (distilled cross-session facts) live beside the skills root.
         self.lessons_path = self.skills_dir.parent / "lessons.json"
 
@@ -207,29 +258,47 @@ class Session:
             self.workspace, vault=self.vault, media=self.media, profiles=self.profiles, audit=self.audit
         )
         # Core builtins — the agent's own body (workspace, shell, delegation,
-        # reflection) plus the tool-discovery entrypoint. Always in scope.
-        for capability in (
+        # reflection) plus the tool-discovery entrypoint. Always in scope for a
+        # parent session; a spawned child holds its body plus what `spawn(tools=)`
+        # granted it (see CHILD_BODY/CHILD_GRANTABLE above).
+        core_caps: list = [
             FilesCapability(self.workspace),
+            SearchCapability(self.workspace),
+            LLMCapability(self.llm, budget=self.budget),
+        ]
+        if self._has("shell"):
             # bash and the child kernel run on the minimal allowlist environment
             # (security/env.py) — no secret, and no unknown .env var, is one
             # `printenv` away from agent code.
-            ShellCapability(self.workspace),
-            SearchCapability(self.workspace),
-            LLMCapability(self.llm, budget=self.budget),
-            ToolsCapability(
-                self.registry,
-                broker=self.broker,
-                vault=self.vault,
-                mcp_config_path=self.mcp_config_path,
-            ),
-            SecretsCapability(self.vault),
+            core_caps.append(ShellCapability(self.workspace))
+        if self._has("tools"):
+            core_caps.append(
+                ToolsCapability(
+                    self.registry,
+                    broker=self.broker,
+                    vault=self.vault,
+                    mcp_config_path=self.mcp_config_path,
+                )
+            )
+        if self._has("secrets"):
+            core_caps.append(SecretsCapability(self.vault))
+        if self._has("skills"):
             # Skill authorship/outcomes land in the trace (not the display stream)
             # so the session index can attribute skill uses to sessions.
-            SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record),
-            HistoryCapability(self.audit),
-            ObservabilityCapability(self.index_db, self.llm),
-            NotifyCapability(on_event=on_event_traced),
-        ):
+            core_caps.append(
+                SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record)
+            )
+        if self._has("history"):
+            core_caps.append(HistoryCapability(self.audit))
+        if self._has("obs"):
+            core_caps.append(ObservabilityCapability(self.index_db, self.llm))
+        if self._has("notify"):
+            core_caps.append(NotifyCapability(on_event=on_event_traced))
+        # Real sub-agents — parent sessions only: a child's capability set never
+        # includes spawn, so delegation depth is one by construction.
+        if self._caps is None:
+            core_caps.append(SpawnCapability(self._spawn_child))
+        for capability in core_caps:
             self.broker.register(capability)
 
         # External-reaching capabilities — the web, a browser, HTTP APIs, the
@@ -256,6 +325,8 @@ class Session:
              "packages", ("install", "pip", "package", "dependency", "library", "import")),
         ]
         for capability, summary, category, keywords in tool_caps:
+            if not self._has(capability.name):
+                continue
             self.broker.register(capability, core=False)
             self.registry.register(
                 self.broker.as_tool_module(capability.name, summary=summary),
@@ -280,15 +351,155 @@ class Session:
             self.llm,
             self.kernel,
             self.budget,
+            tier=tier,
+            max_steps=max_steps,
             workspace_root=self.workspace.dir,
             on_event=on_event_traced,
             media=self.media,
-            preamble_extra=self._render_history_preamble(),
+            preamble_extra=preamble if preamble is not None else self._render_history_preamble(),
             keep_outputs=keep_outputs,
         )
         self.messages: list[dict] = []
         self._closed = False
         self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
+
+    def _has(self, name: str) -> bool:
+        """Whether this session holds a capability: parents hold everything,
+        a spawned child holds its body plus what it was granted."""
+        return self._caps is None or name in self._caps
+
+    def _child_preamble(self, granted: frozenset[str], max_steps: int, limit_usd: float | None) -> str:
+        """The sub-session block appended to the child's system prompt. It must
+        correct the static prompt's builtin list (the child holds a subset) and
+        carry the report contract — the handoff is the whole point of a spawn."""
+        builtins_by_cap = {
+            "files": "read/write/edit",
+            "search": "search",
+            "llm": "llm/map_llm",
+            "shell": "bash",
+            "secrets": "secrets",
+            "skills": "save_skill/edit_skill/record_skill_use",
+            "history": "history",
+            "obs": "stats/inspect_session",
+            "notify": "notify",
+            "tools": "search_tools/describe_tool/use_tool/add_mcp_server",
+        }
+        held = CHILD_BODY | granted | ({"tools"} if granted & _EXTERNAL else frozenset())
+        builtins = ", ".join(v for k, v in builtins_by_cap.items() if k in held)
+        mounted = sorted(granted & _EXTERNAL)
+        tools_line = (
+            f"TOOLS mounted this session: {', '.join(mounted)} — load with use_tool(name)."
+            if mounted
+            else "No external tools are mounted this session."
+        )
+        walls = f"at most {max_steps} steps"
+        if limit_usd is not None:
+            walls += f" and ${limit_usd:.2f} of spend"
+        return (
+            "## Spawned sub-session\n"
+            "You are a sub-session spawned by an orchestrator to complete the one\n"
+            "task below. The rules above apply, with corrections:\n"
+            f"- Your builtins are only: {builtins}. Anything else named above\n"
+            "  (including spawn) is NOT available this session — do not call it.\n"
+            f"- {tools_line}\n"
+            "- You share the orchestrator's workspace: write anything large or\n"
+            "  durable to files there, at the paths the task assigns.\n"
+            f"- Walls: {walls}. Checkpoint results to the workspace as you go.\n"
+            "- Your final plain-text reply is your REPORT — the only thing the\n"
+            "  orchestrator sees. Make it self-contained and condensed: outcome\n"
+            "  first, then key findings and decisions, then the workspace paths of\n"
+            "  everything you produced. Never paste large content into the report;\n"
+            "  point at files instead."
+        )
+
+    def _spawn_child(
+        self,
+        task: str,
+        *,
+        tools: tuple[str, ...],
+        budget_usd: float | None,
+        max_steps: int,
+        tier: str,
+    ) -> SpawnResult:
+        """Build, run, and settle one spawned child session (the working half of
+        the `spawn` builtin — the gated surface lives in SpawnCapability)."""
+        granted = frozenset(tools) - CHILD_BODY  # body names are accepted, implied
+        unknown = granted - CHILD_GRANTABLE
+        if unknown:
+            raise ValueError(
+                f"unknown spawn tools {sorted(unknown)}; grantable: {sorted(CHILD_GRANTABLE)}"
+            )
+
+        self._spawn_seq += 1
+        name = f"{self.workspace.root.name}-spawn-{self._spawn_seq:02d}"
+        # A sibling session dir, so the index/inspect_session/`pyharness show`
+        # all see the child exactly like any other session.
+        child_root = self.workspace.root.parent / name
+
+        # Reserve the slice up front: the child budget is its own accumulator
+        # with its own limit, settled into the parent's on close via absorb().
+        remaining = self.budget.remaining()
+        if budget_usd is None:
+            limit = None if remaining == float("inf") else remaining / 4
+        else:
+            limit = min(budget_usd, remaining)
+        child_budget = Budget(limit_usd=limit)
+        child_llm = (
+            self.llm.with_budget(child_budget)
+            if hasattr(self.llm, "with_budget")
+            else self.llm
+        )
+
+        # Approvals bubble to the same human, labeled with the child's name so
+        # the approver can tell whose plan is asking.
+        parent_approver = self.broker.approver
+        approver = None
+        if parent_approver is not None:
+            def approver(request, _name=name):  # noqa: E306
+                return parent_approver(replace(request, summary=f"[{_name}] {request.summary}"))
+
+        self.trace.record(
+            "spawn", task, child=name, tools=sorted(granted),
+            budget_usd=limit, max_steps=max_steps, tier=tier,
+        )
+        child = Session(
+            child_root,
+            llm=child_llm,
+            budget=child_budget,
+            vault=self.vault,
+            profiles=self.profiles,
+            approver=approver,
+            out_of_process=self._out_of_process,
+            skills_dir=self.skills_dir,
+            index_db=self.index_db,
+            max_steps=max_steps,
+            tier=tier,
+            capabilities=granted,
+            audit=self.audit,  # one hash chain for the whole session tree
+            workspace_dir=self.workspace.dir,
+            preamble=self._child_preamble(granted, max_steps, limit),
+        )
+        child.trace.record("spawned_by", parent=self.id, parent_name=self.workspace.root.name)
+        try:
+            report = child.run(task)
+        except Exception as exc:  # noqa: BLE001 — a failed child is data, not a crash
+            report = f"(spawn failed: {exc!r})"
+        finally:
+            child.close()
+            self.budget.absorb(child_budget)
+
+        from ..obs.transcript import session_digest
+
+        digest = session_digest(child_root)
+        outcome = digest["outcome"]
+        return SpawnResult(
+            ok=outcome == "answered",
+            report=report,
+            outcome=outcome,
+            session=name,
+            spent_usd=round(child_budget.spent_usd, 6),
+            steps=digest["steps"],
+        )
 
     def _refresh_index(self) -> None:
         """Bring the session index up to date (all remembered roots plus this

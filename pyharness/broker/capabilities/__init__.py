@@ -4,6 +4,7 @@ from .history import HistoryCapability
 from .http import HttpSessionCapability
 from .inbox import InboxCapability
 from .llm import LLMCapability, Result, WorkerLimitExceeded
+from .spawn import SpawnCapability, SpawnLimitExceeded, SpawnResult
 from .notify import NotifyCapability
 from .obs import ObservabilityCapability
 from .packages import PackagesCapability
@@ -26,6 +27,9 @@ __all__ = [
     "PackagesCapability",
     "Result",
     "SearchCapability",
+    "SpawnCapability",
+    "SpawnLimitExceeded",
+    "SpawnResult",
     "SecretsCapability",
     "ShellCapability",
     "SkillsCapability",

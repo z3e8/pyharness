@@ -131,6 +131,16 @@ class AnthropicLLM:
             self._budget.record(u.model, u.cost_usd)
         return u
 
+    def with_budget(self, budget: Budget) -> "AnthropicLLM":
+        """A sibling client on the same underlying connection, metering into a
+        different Budget — how a spawned child session gets its own slice
+        accounted separately from its parent's."""
+        clone = object.__new__(AnthropicLLM)
+        clone._client = self._client
+        clone._budget = budget
+        clone._max_tokens = self._max_tokens
+        return clone
+
     def complete(
         self,
         *,

@@ -133,6 +133,24 @@ toolless — they cannot call capabilities or run code.
 |-----------|-------|
 | `llm(prompt, tier=None, system=None, context=None) -> str` | one completion; `context` is a string appended to the prompt — the way to hand a large variable to a worker instead of printing it |
 | `map_llm(prompts, tier=None, system=None, context=None, max_concurrency=8) -> list[Result]` | parallel fan-out of `llm()`; each `Result` has `.ok`, `.value`, `.error`; a failed worker becomes data, not an exception. `system` defaults to a fixed return-only-the-result worker prompt. Count-capped (`max_per_call=64` per call, `session_cap=256` per session in `pyharness/broker/capabilities/llm.py`) |
+| `spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> SpawnResult` | a real sub-agent: a scoped child session — own kernel, context, and step/budget walls — that works the task to completion and returns a distilled report. **Needs human approval** (the prompt shows the task, capability set, and budget slice — approving it approves the child's whole plan) |
+
+`spawn` specifics: the child always holds its body (`read`/`write`/`edit`,
+`search`, `llm`/`map_llm`); `tools` grants more by name from `shell`,
+`secrets`, `skills`, `history`, `obs`, `notify`, `web`, `http`, `browser`,
+`inbox`, `packages` (granting an external one implies tool discovery). It can
+never spawn — delegation depth is one by construction. It shares the parent's
+workspace (file handoff is free; the parent assigns output paths in the task)
+and starts with none of the parent's conversation, so the task must be
+self-contained: objective, output format, boundaries, paths. Its own approvals
+bubble to the same human, labeled with the child's name; its side effects land
+in the parent's audit chain; its session dir is a sibling
+(`<parent>-spawn-NN`), so `inspect_session(result.session, question)` answers
+follow-ups without re-reading its transcript. `SpawnResult` fields: `.ok`,
+`.report` (the child's final message, verbatim), `.outcome` (the shared
+session vocabulary), `.session`, `.spent_usd`, `.steps`. A failed child comes
+back as a `SpawnResult` with `ok=False`, not an exception. Per-session spawn
+cap: 16 (`pyharness/broker/capabilities/spawn.py`).
 
 `tier` is one of `"smart"` / `"mid"` / `"cheap"` and defaults to **`"cheap"`**
 when omitted — pass `tier="smart"` explicitly for hard reasoning. Tiers map to

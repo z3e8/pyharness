@@ -4,7 +4,7 @@ The public surface exported from `pyharness` (`pyharness/__init__.py`):
 `Session`, `Agent`, `Kernel`, `Workspace`, `Budget`, `BudgetExceeded`, `Policy`,
 `Decision`, `ActionCategory`, `ApprovalOutcome`, `GrantLedger`, `GrantScope`,
 `Vault`, `ProfileStore`, `Registry`, `AuditLog`, `AnthropicLLM`, `Completion`,
-`ToolCall`.
+`ToolCall`, `SpawnResult`.
 
 Most use only `Session` and `Budget`.
 
@@ -19,6 +19,7 @@ Session(
     policy=None,               # Policy — defaults to requiring approval for
                                #   skills.save_skill, skills.edit_skill,
                                #   packages.install, tools.add_mcp_server,
+                               #   spawn.spawn (a spawned child's whole plan),
                                #   non-read-only MCP tool calls, state-changing
                                #   HTTP (POST/PUT/PATCH/DELETE), state-changing
                                #   browser actions (click/fill/fill_secret/
@@ -44,8 +45,17 @@ Session(
                                #   inspect_session builtins + history preamble).
                                #   None leaves them dataless; the CLI passes
                                #   ~/.pyharness/index.db
+    keep_outputs=8,            # recent cells whose full output stays in context
+    max_steps=30,              # orchestrator step ceiling (a spawned child runs 15)
+    tier="mid",                # orchestrator model tier
 )
 ```
+
+Four further keyword args (`capabilities`, `audit`, `workspace_dir`, `preamble`)
+exist for the `spawn()` builtin's recursive child sessions — set by
+`Session._spawn_child`, not by callers. A spawned child returns a `SpawnResult`
+(`ok`, `report`, `outcome`, `session`, `spent_usd`, `steps`) to the kernel that
+spawned it; see [builtins](builtins.md#delegation).
 
 - **`run(task: str) -> str`** — run one task to completion and return the final
   text answer. History persists across calls on the same `Session`.

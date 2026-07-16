@@ -104,6 +104,22 @@ count-capped (`session_cap`/`max_per_call` in
 `pyharness/broker/capabilities/llm.py`) and runs on the cheap tier by default;
 only the distilled results return to the orchestrator's context.
 
+The second tier is `spawn()` — a **real sub-agent**. A spawned child is a full
+recursive `Session`: its own kernel, its own message history, its own step and
+budget walls, and a capability allowlist granted at spawn time
+(`spawn(tools=...)`). Unlike an `llm()` worker it can act — fetch, browse, run
+code — so gather-work stays out of the orchestrator's context entirely. The
+composition reuses the same machinery everywhere: the child's side effects
+route through its own broker into the *parent's* audit chain, its approvals
+bubble to the same human (labeled), its spend settles into the parent's
+budget, and its session dir is indexed like any other (so `inspect_session`
+answers follow-ups about it). The handoff is deliberately two-channel: a
+condensed final report (the child's last message, returned verbatim in a
+`SpawnResult`), plus the shared workspace for anything large. Depth is one by
+construction — a child's capability set never includes `spawn` — and the
+`spawn` call itself always needs human approval: approving it is approving
+the child's whole plan (task, capability set, budget slice).
+
 Everything a cell does still routes through [the broker](broker.md), so this
 freedom is bounded by policy, audit, and budget.
 

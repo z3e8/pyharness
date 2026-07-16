@@ -14,7 +14,7 @@ It tracks `spent_usd`, `calls`, and a `by_model` breakdown.
 
 `Budget(limit_usd=...)` sets a cap (default `None` = unlimited; the CLI uses
 `$5.00`). Enforcement is **fail-fast**: the [broker](broker.md) calls
-`budget.check()` before every *metered* action (`llm`, `web`, `obs`),
+`budget.check()` before every *metered* action (`llm`, `web`, `obs`, `spawn`),
 and the agent loop checks before each step. When `spent_usd` reaches the limit,
 the next metered action raises `BudgetExceeded` rather than silently
 overspending. `Budget.remaining()` exposes the same headroom for callers — the
@@ -32,6 +32,14 @@ This dollar budget is separate from the worker **count** cap
 (`session_cap=256`, `max_per_call=64` in `pyharness/broker/capabilities/llm.py`),
 which raises `WorkerLimitExceeded` independent of spend — the two "budgets"
 bound different things and don't share an accumulator.
+
+A **spawned child session** gets its own `Budget` with its own limit — the
+`budget_usd` argument capped by the parent's remaining headroom, defaulting to
+a quarter of it — so a child can never spend past its slice while it runs.
+When the child closes, its spend settles into the parent's accumulator
+(`Budget.absorb`), so the parent's totals cover the whole session tree. Spawns
+carry their own count cap too (16 per session,
+`pyharness/broker/capabilities/spawn.py`).
 
 ## Tiers and pricing
 
