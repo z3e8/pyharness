@@ -125,13 +125,14 @@ See [Use the secrets vault](../how-to/use-the-vault.md).
 
 ## Delegation
 
-Fan bulk work out to cheaper models without filling the orchestrator's context.
+LLM calls as functions: digest or transform data the agent holds without that
+data ever entering the orchestrator's context. Workers are one-shot and
+toolless — they cannot call capabilities or run code.
 
 | Signature | Notes |
 |-----------|-------|
-| `llm(prompt, tier=None, system=None) -> str` | one completion |
-| `agent(task, tier=None, context=None) -> str` | a single-completion worker on a fixed system prompt — same mechanism as `llm()`, plus an optional `context` string and sub-agent budget accounting; it cannot itself call capabilities or run code |
-| `map_agents(tasks, tier=None, context=None, max_concurrency=8) -> list[Result]` | parallel workers, same as `agent()`; each `Result` has `.ok`, `.value`, `.error` |
+| `llm(prompt, tier=None, system=None, context=None) -> str` | one completion; `context` is a string appended to the prompt — the way to hand a large variable to a worker instead of printing it |
+| `map_llm(prompts, tier=None, system=None, context=None, max_concurrency=8) -> list[Result]` | parallel fan-out of `llm()`; each `Result` has `.ok`, `.value`, `.error`; a failed worker becomes data, not an exception. `system` defaults to a fixed return-only-the-result worker prompt. Count-capped (`max_per_call=64` per call, `session_cap=256` per session in `pyharness/broker/capabilities/llm.py`) |
 
 `tier` is one of `"smart"` / `"mid"` / `"cheap"` and defaults to **`"cheap"`**
 when omitted — pass `tier="smart"` explicitly for hard reasoning. Tiers map to

@@ -48,12 +48,16 @@ import them. This is the complete list; nothing else is callable by bare name.
     search(pattern, path=".")
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
-  Delegation — do bulk work without filling your own context:
-    llm(prompt, tier=None, system=None) -> str
-        # tier is "smart"|"mid"|"cheap"; defaults to "cheap" when omitted.
-    agent(task, tier=None, context=None) -> str
-    map_agents(tasks, tier=None, context=None, max_concurrency=8) -> list[Result]
-        each Result has .ok, .value, .error
+  Delegation — LLM calls as functions; digest data without reading it yourself:
+    llm(prompt, tier=None, system=None, context=None) -> str
+        # one completion, no tools. tier is "smart"|"mid"|"cheap"; defaults to
+        # "cheap". context: a string appended to the prompt — hand over a
+        # variable's contents this way instead of printing them to yourself:
+        #   summary = llm("List the key findings.", context=big_var, tier="mid")
+    map_llm(prompts, tier=None, system=None, context=None, max_concurrency=8) -> list[Result]
+        # parallel fan-out of llm() over many prompts; each Result has .ok,
+        # .value, .error. Use for bulk transform work — summarize/extract/
+        # classify each item — never for anything that must act.
   Tool discovery — find a tool, inspect it, then load and call it:
     search_tools(query="", include_all=False) -> str
         # ranked headers only (name, summary, source/category). Search by what you
@@ -153,6 +157,14 @@ The rule, with no exceptions: if a function is in the builtins list above, call
 it directly; for anything else, search_tools() → describe_tool() → use_tool().
 
 Guidance:
+- Spend context like money. Never print a large variable to see what it is:
+  print len(), .keys(), or a slice first, then only the part you need. To
+  digest something big you hold (a page, a log, a document), don't read it —
+  delegate it: llm("what changed?", context=big_var) costs you a paragraph,
+  printing the variable costs you the whole thing, permanently.
+- Delegate transforms, not steps. llm()/map_llm() pay off on bulk or bulky
+  text work; a small sequential step is cheaper done in your own Python than
+  round-tripped through a worker.
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.

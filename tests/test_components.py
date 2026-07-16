@@ -210,8 +210,8 @@ def test_as_tool_module_surfaces_a_capability_through_the_registry(tmp_path):
     assert (Workspace(tmp_path).dir / "note.txt").read_text() == "data"
 
 
-def test_subagent_session_cap():
-    from pyharness.broker.capabilities import AgentsCapability, SubAgentLimitExceeded
+def test_llm_worker_session_cap():
+    from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
         def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None):
@@ -219,18 +219,14 @@ def test_subagent_session_cap():
 
             return Completion(text="ok", tool_calls=[], content=[])
 
-    import pytest
-
-    agents = AgentsCapability(StubLLM(), session_cap=2)
-    assert agents.agent("one") == "ok"
-    assert agents.agent("two") == "ok"
-    with pytest.raises(SubAgentLimitExceeded):
-        agents.agent("three")
-
     # In fan-out the cap surfaces as failed Results, not an exception.
-    results = AgentsCapability(StubLLM(), session_cap=1).map_agents(["a", "b", "c"])
-    assert sum(r.ok for r in results) == 1
+    cap = LLMCapability(StubLLM(), session_cap=2)
+    results = cap.map_llm(["a", "b", "c"])
+    assert sum(r.ok for r in results) == 2
     assert any("cap reached" in (r.error or "") for r in results)
+
+    # The cap counts fan-out workers only; single llm() calls stay uncapped.
+    assert cap.run("one more") == "ok"
 
 
 def test_vault_never_via_namespace(tmp_path):

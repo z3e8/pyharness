@@ -4,7 +4,7 @@ An AI agent whose **action space is Python**. The orchestrator does exactly two
 things: reply with text, or emit one `run_python` call the harness executes in a
 persistent kernel. There are no fine-grained JSON tool calls — when the agent
 needs a capability, it writes Python (`read(path)`, `bash(cmd)`,
-`map_agents(tasks)`).
+`map_llm(prompts)`).
 
 See the [documentation](docs/index.md) for the full design, guides, and reference.
 
@@ -16,8 +16,8 @@ See the [documentation](docs/index.md) for the full design, guides, and referenc
 - **One broker, every side effect.** Files, shell, web, LLM calls, sub-agents,
   and tools all route through a single dispatch that does policy → audit →
   budget → execute. In-process today; swappable for an isolated child later.
-- **Delegation.** `llm()`, `agent()`, and `map_agents()` let the orchestrator
-  fan out bulk work to cheaper models without filling its own context.
+- **Delegation.** `llm()` and `map_llm()` let the orchestrator fan out bulk
+  work to cheaper models without filling its own context.
 
 ## Usage
 

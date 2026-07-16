@@ -84,7 +84,7 @@ class Broker:
         *,
         approver: Approver | None = None,
         grants: GrantLedger | None = None,
-        metered: frozenset[str] = frozenset({"llm", "agents", "web", "obs"}),
+        metered: frozenset[str] = frozenset({"llm", "web", "obs"}),
         on_event: Callable[..., None] | None = None,
     ):
         self.policy = policy

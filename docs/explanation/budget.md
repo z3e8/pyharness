@@ -3,8 +3,9 @@
 ## One accumulator per session
 
 `Budget` (`pyharness/budget.py`) is the single place LLM spend is tallied. Every
-completion — whether from the orchestrator, an `llm()` call, or a sub-agent —
-records its cost into the session's shared `Budget` via the LLM client, so
+completion — whether from the orchestrator, an `llm()` call, or a `map_llm`
+worker — records its cost into the session's shared `Budget` via the LLM
+client, so
 metering is centralized regardless of who made the call.
 
 It tracks `spent_usd`, `calls`, and a `by_model` breakdown.
@@ -13,7 +14,7 @@ It tracks `spent_usd`, `calls`, and a `by_model` breakdown.
 
 `Budget(limit_usd=...)` sets a cap (default `None` = unlimited; the CLI uses
 `$5.00`). Enforcement is **fail-fast**: the [broker](broker.md) calls
-`budget.check()` before every *metered* action (`llm`, `agents`, `web`, `obs`),
+`budget.check()` before every *metered* action (`llm`, `web`, `obs`),
 and the agent loop checks before each step. When `spent_usd` reaches the limit,
 the next metered action raises `BudgetExceeded` rather than silently
 overspending. `Budget.remaining()` exposes the same headroom for callers — the
@@ -21,15 +22,15 @@ overspending. `Budget.remaining()` exposes the same headroom for callers — the
 checks it and skips entirely once the budget is exhausted.
 
 Because the check is before the action, the limit bounds agent-initiated work
-(including fan-out via `map_agents`) — not just the orchestrator's own calls.
-The check runs once per broker call, though, not once per task inside a
-fan-out: a single `map_agents` call can dispatch its whole batch (up to
-`max_concurrency`, capped at 64 tasks per call) before the *next* metered call
-sees the exhausted budget and is blocked.
+(including fan-out via `map_llm`) — not just the orchestrator's own calls. On
+top of the broker's once-per-call gate, each fan-out worker re-checks the
+budget before its own completion, so a batch stops dispatching as soon as the
+limit is hit (workers already in flight can still land, so a slight overshoot
+of up to `max_concurrency` completions remains possible).
 
-This dollar budget is separate from the sub-agent **count** cap
-(`session_cap=256`, `max_per_call=64` in `pyharness/broker/capabilities/agents.py`),
-which raises `SubAgentLimitExceeded` independent of spend — the two "budgets"
+This dollar budget is separate from the worker **count** cap
+(`session_cap=256`, `max_per_call=64` in `pyharness/broker/capabilities/llm.py`),
+which raises `WorkerLimitExceeded` independent of spend — the two "budgets"
 bound different things and don't share an accumulator.
 
 ## Tiers and pricing

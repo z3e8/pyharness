@@ -7,7 +7,6 @@ from uuid import uuid4
 from ..obs import telemetry
 from ..audit import AuditLog
 from ..broker.capabilities import (
-    AgentsCapability,
     BrowserCapability,
     FilesCapability,
     HistoryCapability,
@@ -216,8 +215,7 @@ class Session:
             # `printenv` away from agent code.
             ShellCapability(self.workspace),
             SearchCapability(self.workspace),
-            LLMCapability(self.llm),
-            AgentsCapability(self.llm, budget=self.budget),
+            LLMCapability(self.llm, budget=self.budget),
             ToolsCapability(
                 self.registry,
                 broker=self.broker,

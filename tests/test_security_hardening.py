@@ -19,7 +19,7 @@ from pyharness.broker.capabilities import (
     InboxCapability,
     WebCapability,
 )
-from pyharness.broker.capabilities.agents import AgentsCapability
+from pyharness.broker.capabilities.llm import LLMCapability
 from pyharness.broker.capabilities.inbox import _quote
 from pyharness.broker.capabilities.notify import NotifyCapability
 from pyharness.broker.capabilities.skills import SkillsCapability
@@ -301,13 +301,13 @@ def test_skill_name_rejects_traversal(tmp_path):
         cap.record_skill_use("../evil", "worked")
 
 
-# --- A sub-agent fan-out cannot overshoot the budget -------------------------
+# --- An LLM-worker fan-out cannot overshoot the budget ------------------------
 
-def test_agents_check_budget_before_each_completion():
+def test_llm_workers_check_budget_before_each_completion():
     budget = Budget(limit_usd=1.0)
     budget.spent_usd = 2.0  # already over
-    cap = AgentsCapability(llm=object(), budget=budget)
+    cap = LLMCapability(llm=object(), budget=budget)
     with pytest.raises(BudgetExceeded):
-        cap.agent("task")  # propagates, like the orchestrator's own overrun
-    results = cap.map_agents(["a", "b"])  # fan-out turns it into per-task error data
+        cap.run("task")  # propagates, like the orchestrator's own overrun
+    results = cap.map_llm(["a", "b"])  # fan-out turns it into per-task error data
     assert results and all(not r.ok for r in results)

@@ -12,7 +12,7 @@ things each step:
    kernel.
 
 There are no other tools. When the agent needs a capability, it *writes Python*:
-`read(path)`, `bash(cmd)`, `map_agents(tasks)`.
+`read(path)`, `bash(cmd)`, `map_llm(prompts)`.
 
 ## Why Python instead of JSON tools
 
@@ -77,7 +77,7 @@ The agent reaches the world the two ways Python itself does, split by one line �
 
 - **Builtins** — a small fixed set always in scope, called by bare name: its
   workspace (`read`, `write`, `edit`, `bash`, `search`), credentials
-  (`secrets`), delegation (`llm`, `agent`, `map_agents`), tool discovery
+  (`secrets`), delegation (`llm`, `map_llm`), tool discovery
   (`search_tools`, `describe_tool`, `use_tool`, `add_mcp_server`), skills
   (`save_skill`, `edit_skill`, `record_skill_use`), reflection on its own
   record (`history`, `stats`, `inspect_session`), and reaching the human
@@ -94,15 +94,15 @@ The agent reaches the world the two ways Python itself does, split by one line �
 ## Delegation
 
 Because a cell is just code, the agent can spawn more work from inside one:
-`llm()` for a single completion, `agent()` for the same completion wrapped with
-a fixed worker system prompt and an optional `context` string, and
-`map_agents()` for parallel fan-out over `agent()`. None of the three can
-themselves call a capability or run code — they are one-shot text workers, not
-nested run_python loops — so the only real differences between `llm()` and
-`agent()` are the prompt and the sub-agent budget accounting
-(`session_cap`/`max_per_call` in `pyharness/broker/capabilities/agents.py`).
-Bulk work runs on the cheap tier by default and never fills the orchestrator's
-own context — only the summarized results return.
+`llm()` for a single completion and `map_llm()` for parallel fan-out of the
+same call over many prompts. Both are **LLM calls as functions** — one-shot
+text workers that cannot themselves call a capability or run code, not nested
+run_python loops. Their `context` parameter is the context-hygiene seam: the
+agent hands a large kernel variable to a worker (`llm("what changed?",
+context=big_var)`) instead of printing it into its own history. Fan-out is
+count-capped (`session_cap`/`max_per_call` in
+`pyharness/broker/capabilities/llm.py`) and runs on the cheap tier by default;
+only the distilled results return to the orchestrator's context.
 
 Everything a cell does still routes through [the broker](broker.md), so this
 freedom is bounded by policy, audit, and budget.

@@ -14,8 +14,8 @@ from pyharness import Budget, Policy, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker
 from pyharness.broker.capabilities import (
-    AgentsCapability,
     FilesCapability,
+    LLMCapability,
     ToolsCapability,
 )
 from pyharness.broker.remote import RemoteKernel
@@ -30,7 +30,7 @@ requires_sandbox = pytest.mark.skipif(
 
 
 class StubLLM:
-    """A worker that always succeeds, so map_agents results are deterministic."""
+    """A worker that always succeeds, so map_llm results are deterministic."""
 
     def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None):
         return Completion(text="worked", tool_calls=[], content=[])
@@ -84,7 +84,7 @@ def _broker(tmp_path, policy=None, *, with_agents=False):
     registry.register(_example_tool(), source="installed")
     broker.register(ToolsCapability(registry))
     if with_agents:
-        broker.register(AgentsCapability(StubLLM()))
+        broker.register(LLMCapability(StubLLM()))
     return broker
 
 
@@ -153,10 +153,10 @@ def test_use_tool_remote_module(kernel_factory, tmp_path):
     assert "tools.invoke" in actions
 
 
-def test_map_agents_returns_results(kernel_factory, tmp_path):
+def test_map_llm_returns_results(kernel_factory, tmp_path):
     kernel = kernel_factory(_broker(tmp_path, with_agents=True))
     out = kernel.run(
-        "rs = map_agents(['a', 'b', 'c'])\n"
+        "rs = map_llm(['a', 'b', 'c'])\n"
         "print(sum(r.ok for r in rs), rs[0].value)"
     )
     assert out == "3 worked"
