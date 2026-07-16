@@ -23,10 +23,11 @@ Design rules:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
 from pathlib import Path
+
+from .transcript import iter_jsonl, session_digest
 
 DEFAULT_DB = "~/.pyharness/index.db"
 
@@ -135,18 +136,6 @@ _TRUNC = 400  # stored text snippet cap (task/answer/code)
 def _clip(text: object, limit: int = _TRUNC) -> str:
     s = str(text or "")
     return s if len(s) <= limit else s[: limit - 1] + "…"
-
-
-def _jsonl(path: Path):
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
 
 
 def _fingerprint(session_dir: Path) -> str:
@@ -263,31 +252,17 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
         conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (sid,))
     conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
 
-    started = ended = None
-    task = answer = None
-    tasks = steps = errors = llm_calls = 0
-    cost = 0.0
-    stopped_budget = False
     pending_cell: tuple | None = None
-
-    for e in _jsonl(session_dir / "trace.jsonl"):
+    for e in iter_jsonl(session_dir / "trace.jsonl"):
         ts = e.get("ts")
         kind = e.get("kind")
-        started = started if started is not None else ts
-        ended = ts if ts is not None else ended
-        if kind == "task":
-            tasks += 1
-            task = task or _clip(e.get("text"))
-        elif kind == "llm_call":
-            llm_calls += 1
-            cost += e.get("cost_usd") or 0.0
+        if kind == "llm_call":
             conn.execute(
                 "INSERT INTO llm_calls VALUES (?,?,?,?,?,?,?,?)",
                 (sid, ts, e.get("model"), e.get("tier"), e.get("cost_usd"),
                  e.get("latency_s"), e.get("input_tokens"), e.get("output_tokens")),
             )
         elif kind == "code":
-            steps += 1
             if pending_cell is not None:
                 conn.execute("INSERT INTO cells VALUES (?,?,?,?)", pending_cell)
             pending_cell = (sid, ts, _clip(e.get("text")), None)
@@ -299,32 +274,20 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
                 )
                 pending_cell = None
         elif kind == "error":
-            errors += 1
-            text = str(e.get("text") or "")
-            stopped_budget = stopped_budget or text.startswith("BudgetExceeded")
-            conn.execute("INSERT INTO errors VALUES (?,?,?)", (sid, ts, _clip(text)))
-        elif kind == "answer":
-            answer = _clip(e.get("text"))
+            conn.execute(
+                "INSERT INTO errors VALUES (?,?,?)", (sid, ts, _clip(e.get("text")))
+            )
         elif kind == "skill_use":
             conn.execute(
                 "INSERT INTO skill_uses VALUES (?,?,?,?,?)",
                 (sid, ts, e.get("skill"), e.get("outcome"), e.get("note")),
             )
-        elif kind == "budget":
-            # spent_usd is cumulative for the session; prefer it over summed calls
-            cost = max(cost, e.get("spent_usd") or 0.0)
-        elif kind == "session_end":
-            cost = max(cost, e.get("spent_usd") or 0.0)
     if pending_cell is not None:
         conn.execute("INSERT INTO cells VALUES (?,?,?,?)", pending_cell)
 
-    actions = denials = 0
-    for e in _jsonl(session_dir / "audit.jsonl"):
-        actions += 1
+    for e in iter_jsonl(session_dir / "audit.jsonl"):
         ok = e.get("ok")
         approved = e.get("approved")
-        denied = e.get("decision") == "deny" or approved is False
-        denials += denied
         conn.execute(
             "INSERT INTO actions VALUES (?,?,?,?,?,?,?,?)",
             (sid, e.get("ts"), e.get("action"),
@@ -333,24 +296,17 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
              _clip(e.get("error")) or None, _clip(e.get("args")) or None),
         )
 
-    if answer == "(stopped: reached max_steps)":
-        outcome = "stopped:max_steps"
-    elif stopped_budget:
-        outcome = "stopped:budget"
-    elif answer is not None:
-        outcome = "answered"
-    elif errors:
-        outcome = "error"
-    elif tasks:
-        outcome = "aborted"  # a task ran but no answer or error landed (e.g. Ctrl-C)
-    else:
-        outcome = "empty"
-
+    # The summary row shares its counting and outcome vocabulary with the CLI's
+    # digest (`run --json` / `show`) — one scan there, one set of semantics.
+    d = session_digest(session_dir)
     conn.execute(
         "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (sid, session_dir.name, _project_of(session_dir), started, ended,
-         task, tasks, outcome, answer, steps, errors, llm_calls,
-         round(cost, 6), actions, denials, fingerprint),
+        (sid, session_dir.name, _project_of(session_dir), d["started"], d["ended"],
+         None if d["task"] is None else _clip(d["task"]),
+         d["tasks"], d["outcome"],
+         None if d["answer"] is None else _clip(d["answer"]),
+         d["steps"], d["errors"], d["llm_calls"],
+         d["cost_usd"], d["actions"], d["denials"], fingerprint),
     )
     return True
 

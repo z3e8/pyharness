@@ -28,6 +28,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .transcript import latest_session
+
 log = logging.getLogger("pyharness.watch")
 
 _POLL_S = 0.25
@@ -37,13 +39,8 @@ _KEEPALIVE_POLLS = 20  # one SSE comment every ~5s so dead clients are noticed
 def _pick_trace(target: Path) -> Path | None:
     """The trace file to follow: `target/trace.jsonl` when target is itself a
     session root, else the most recently modified `*/trace.jsonl` under it."""
-    direct = target / "trace.jsonl"
-    if direct.exists():
-        return direct
-    candidates = [p for p in target.glob("*/trace.jsonl") if p.is_file()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    session = latest_session(target)
+    return None if session is None else session / "trace.jsonl"
 
 
 class Tail:

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from pyharness.broker.capabilities.obs import ObservabilityCapability, _render_transcript
+from pyharness.broker.capabilities.obs import ObservabilityCapability
 from pyharness.core.session import Session
 from pyharness.index import update_index
 from pyharness.llm.client import Completion
@@ -86,15 +86,6 @@ def test_inspect_session_hands_transcript_to_worker(tmp_path):
 
     with pytest.raises(KeyError, match="no session"):
         cap.inspect_session("nope", "?")
-
-
-def test_render_transcript_truncates_entries(tmp_path):
-    d = tmp_path / "s"
-    d.mkdir()
-    with (d / "trace.jsonl").open("w") as f:
-        f.write(json.dumps({"ts": 1.0, "kind": "output", "text": "y" * 10_000}) + "\n")
-    text = _render_transcript(d / "trace.jsonl")
-    assert len(text) < 6000 and "truncated" in text
 
 
 def test_session_preamble_and_builtins(tmp_path):

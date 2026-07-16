@@ -36,7 +36,7 @@ import subprocess
 from pathlib import Path
 
 from . import lessons as lessons_store
-from .broker.capabilities.obs import _render_transcript
+from .transcript import render_transcript
 
 log = logging.getLogger("pyharness.reflect")
 
@@ -98,7 +98,7 @@ def _reflect(session, *, apply: bool) -> str | None:
     if session.budget.remaining() <= 0:
         return None  # don't spend past an exhausted budget on a bonus pass
 
-    transcript = _render_transcript(session.trace.path)
+    transcript = render_transcript(session.trace.path)
     skills = _skill_catalog(session)
     prompt = (
         f"CURRENT SKILL LIBRARY:\n{skills or '(empty)'}\n\n"

@@ -14,15 +14,10 @@ look at the past.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ...index import SCHEMA_HELP, query
-
-# Per-entry and total caps for the transcript handed to the worker: enough that
-# real sessions fit whole, bounded so a pathological trace can't blow the call.
-_ENTRY_CAP = 4000
-_TOTAL_CAP = 300_000
+from ...transcript import render_transcript
 
 _INSPECT_SYSTEM = """\
 You answer questions about one past session of an autonomous Python agent.
@@ -79,7 +74,7 @@ class ObservabilityCapability:
         )
         if not rows:
             raise KeyError(f"no session {session!r} in the index — see stats()")
-        transcript = _render_transcript(Path(rows[0]["id"]) / "trace.jsonl")
+        transcript = render_transcript(Path(rows[0]["id"]) / "trace.jsonl")
         completion = self.llm.complete(
             system=_INSPECT_SYSTEM,
             messages=[
@@ -91,52 +86,3 @@ class ObservabilityCapability:
             tier="cheap",
         )
         return completion.text
-
-
-def _render_transcript(trace_path: Path) -> str:
-    """Flatten a trace.jsonl into a readable transcript for the worker. The
-    per-call prompt snapshots (`system`/`messages` on llm_call entries) are
-    dropped — they repeat the whole history every turn; the event stream itself
-    IS the session."""
-    if not trace_path.exists():
-        raise FileNotFoundError(f"no trace at {trace_path}")
-    parts: list[str] = []
-    total = 0
-    for line in trace_path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        kind = e.get("kind")
-        text = str(e.get("text") or "")
-        if kind == "task":
-            part = f"[user task]\n{text}"
-        elif kind == "llm_call":
-            part = f"[agent]\n{text}" if text else ""
-        elif kind == "code":
-            part = f"[code]\n{text}"
-        elif kind == "output":
-            part = f"[output]\n{text}"
-        elif kind == "error":
-            part = f"[error] {text}"
-        elif kind == "skill_use":
-            part = f"[skill_use] {e.get('skill')}: {e.get('outcome')} {e.get('note') or ''}".rstrip()
-        elif kind == "answer":
-            part = f"[final answer]\n{text}"
-        elif kind == "session_end":
-            part = f"[session end] spent ${e.get('spent_usd', 0):.4f} over {e.get('calls', 0)} LLM calls"
-        else:  # session_start, note, budget — low-signal for inspection
-            continue
-        if not part:
-            continue
-        if len(part) > _ENTRY_CAP:
-            part = part[:_ENTRY_CAP] + f"\n…[truncated, {len(part)} chars total]"
-        parts.append(part)
-        total += len(part)
-        if total > _TOTAL_CAP:
-            parts.append("…[transcript truncated]")
-            break
-    return "\n\n".join(parts)
