@@ -127,6 +127,28 @@ of run N vs run 1 — the is-repetition-getting-cheaper metric), `error_taxonomy
 (what keeps failing), `session_costs` (daily spend). Any sqlite client works
 too — the file is plain SQLite.
 
+## Inspect a run cheaply
+
+The low-context loop for scripts and coding agents (Claude Code included):
+launch a probe run headlessly, read a compact digest, and only then drill in.
+Never bulk-read `trace.jsonl` — every `llm_call` entry embeds the full prompt
+snapshot, so the raw file is orders of magnitude bigger than the session.
+
+```bash
+pyharness run "the probe task" --json    # one JSON digest on stdout, exit code = outcome
+pyharness show                           # digest of the latest session (no API key)
+pyharness show <name> --transcript       # flattened transcript, prompt snapshots dropped
+pyharness-index --sql "SELECT ..."       # aggregate questions across sessions
+```
+
+Escalate in that order: the digest answers "did it work, what did it cost, was
+anything denied"; the transcript answers "what did it actually do"; the index
+answers cross-session questions; and only a targeted read of `trace.jsonl`
+(e.g. one `kind` filtered with `jq`) answers the rest. Flags, the digest
+schema, and exit codes are in the [CLI reference](../reference/cli.md#pyharness-run).
+The `harness-loop` Claude Code skill (`.claude/skills/harness-loop/`) packages
+this loop for agents working on this repo.
+
 ## Post-session reflection
 
 After each CLI session, a separate cheap-model pass reads the transcript and

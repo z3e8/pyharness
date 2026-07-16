@@ -4,10 +4,15 @@ Five console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
-Interactive agent REPL (`pyharness/cli.py`).
+The agent CLI (`pyharness/cli.py`), with three subcommands: `repl` (the
+default), `run`, and `show`.
+
+### `pyharness repl`
+
+Interactive agent REPL.
 
 ```bash
-pyharness [SESSION_DIR]
+pyharness [repl] [SESSION_DIR]
 ```
 
 - `SESSION_DIR` — where session state (audit log, trace, workspace) lives.
@@ -43,6 +48,57 @@ On exit, the session is folded into the [session index](../how-to/observability.
 and the [reflection pass](../how-to/observability.md#post-session-reflection)
 runs (a skill proposal still asks for approval; `PYHARNESS_REFLECT=false` skips
 the pass).
+
+### `pyharness run`
+
+One task, headless, no stdin — the entry point for scripts and coding agents
+(see [Inspect a run cheaply](../how-to/observability.md#inspect-a-run-cheaply)).
+
+```bash
+pyharness run "TASK" [--dir PATH] [--budget USD] [--json] [--approve-all] [--reflect]
+```
+
+- `--dir` — session root; defaults to a fresh `.sessions/run-<timestamp>` per
+  invocation (deliberately ignores `PYHARNESS_WORKSPACE` — a probe run wants a
+  clean digest; a reused dir makes it cumulative). `--budget` caps spend
+  (default $5).
+- **Approvals are denied** (fail closed, audited like any denial) — there is no
+  stdin to ask. `--approve-all` answers each request `once`; it never mints a
+  standing grant. No vault passphrase prompt either: vault-backed features fail
+  closed.
+- Prints the final answer to stdout (a `[session …]` summary goes to stderr);
+  `--json` prints the session digest instead — one JSON object with
+  `session, name, outcome, answer, task, tasks, steps, llm_calls, errors,
+  cost_usd, actions, denials, started, ended, trace, audit, workspace`.
+- `--reflect` (or truthy `PYHARNESS_REFLECT`) runs the reflection pass;
+  without `--approve-all` its skill writes are denied like any other.
+- The embedded live viewer still starts (`PYHARNESS_WATCH`, URL on stderr).
+- Exit code reflects the outcome:
+
+| outcome | exit |
+|---------|------|
+| `answered` | 0 |
+| `stopped:max_steps` | 2 |
+| `stopped:budget` | 3 |
+| `error` | 4 |
+| `aborted` / `empty` | 5 |
+| interrupted (Ctrl-C) | 130 |
+
+### `pyharness show`
+
+Inspect a past session from its JSONL record — pure reads, no API key.
+
+```bash
+pyharness show [SESSION] [--root DIR] [--transcript | --json]
+```
+
+- `SESSION` — a session dir path or a name under `--root` (default
+  `./.sessions`); omitted, the most recently active session.
+- Default output is the human digest; `--json` the same envelope as
+  `run --json`; `--transcript` the flattened transcript (task, agent text,
+  code, outputs, errors, skill uses, answer — the bulky per-call prompt
+  snapshots in `trace.jsonl` are dropped, which is why this is the
+  low-context view).
 
 ## `pyharness-vault`
 

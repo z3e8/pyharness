@@ -15,7 +15,7 @@ itself on startup.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `PYHARNESS_WORKSPACE` | a fresh `.sessions/cli-<timestamp>` | A stable session root reused across runs, so files dropped into `<root>/workspace/` (and files the agent creates there) survive between sessions. `~` expands; relative paths resolve from the repo. A path passed on the CLI (`uv run pyharness <path>`) overrides it. |
+| `PYHARNESS_WORKSPACE` | a fresh `.sessions/cli-<timestamp>` | A stable session root reused across runs, so files dropped into `<root>/workspace/` (and files the agent creates there) survive between sessions. `~` expands; relative paths resolve from the repo. A path passed on the CLI (`uv run pyharness repl <path>`) overrides it; one-shot `pyharness run` ignores it (fresh dir per probe, `--dir` opts into reuse). |
 | `PYHARNESS_KEEP_OUTPUTS` | `8` | How many recent cells keep their full output in the agent's context; older tool outputs are elided to a short stub (the kernel still holds every variable, and the full text stays in `trace.jsonl`). `0` or negative disables elision. |
 
 ## Live viewer
