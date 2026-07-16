@@ -23,7 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-from .security.vault import _DEFAULT_FILE, EncryptedFile, _entry
+from ..security.vault import _DEFAULT_FILE, EncryptedFile, _entry
 
 
 def _open() -> EncryptedFile:

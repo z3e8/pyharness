@@ -114,7 +114,7 @@ def test_browser_fill_secret_checks_page_host(tmp_path):
 
 
 def test_cli_set_host_binds_and_list_shows_it(tmp_path, monkeypatch, capsys):
-    from pyharness import cli_vault
+    from pyharness.cli import vault as cli_vault
 
     monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "secrets.enc"))
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")
@@ -136,7 +136,7 @@ def test_cli_set_host_binds_and_list_shows_it(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_set_rejects_bad_usage(tmp_path, monkeypatch):
-    from pyharness import cli_vault
+    from pyharness.cli import vault as cli_vault
 
     monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "secrets.enc"))
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")

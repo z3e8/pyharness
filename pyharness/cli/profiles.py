@@ -18,7 +18,7 @@ import getpass
 import os
 import sys
 
-from .security.profiles import PROFILES_DIR_ENV, _DEFAULT_DIR, ProfileStore
+from ..security.profiles import PROFILES_DIR_ENV, _DEFAULT_DIR, ProfileStore
 
 
 def _open() -> ProfileStore:

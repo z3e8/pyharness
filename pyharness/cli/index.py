@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from .index import DEFAULT_DB, SCHEMA_HELP, query, update_index
+from ..index import DEFAULT_DB, SCHEMA_HELP, query, update_index
 
 _SKILLS_DIR = "~/.pyharness/skills"  # matches Session's default skills root
 

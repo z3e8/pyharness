@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from pyharness.cli_mcp import main
+from pyharness.cli.mcp import main
 
 
 def _run(monkeypatch, tmp_path, *argv):

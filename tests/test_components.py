@@ -1993,7 +1993,7 @@ def test_look_not_covered_by_browser_grant(tmp_path):
 
 def test_cli_approve_offers_grant_when_scoped(monkeypatch, capsys):
     from pyharness.broker import ApprovalOutcome, ApprovalRequest
-    from pyharness.cli import _approve
+    from pyharness.cli.main import _approve
     from pyharness.security import GrantScope
 
     req = ApprovalRequest("browser.click", ActionCategory.OUTWARD, "click #x on http://h",
@@ -2011,7 +2011,7 @@ def test_cli_approve_offers_grant_when_scoped(monkeypatch, capsys):
 
 def test_cli_approve_no_grant_for_irreversible_or_unscoped(monkeypatch):
     from pyharness.broker import ApprovalOutcome, ApprovalRequest
-    from pyharness.cli import _approve
+    from pyharness.cli.main import _approve
     from pyharness.security import GrantScope
 
     prompts = []
@@ -2097,7 +2097,7 @@ def test_notify_is_core_builtin_wired_to_session_events(tmp_path):
 
 
 def test_cli_renders_notify_distinct_from_approval(capsys):
-    from pyharness.cli import _trace
+    from pyharness.cli.main import _trace
 
     _trace("notify", "blocked on 2FA — need you")
     out = capsys.readouterr().out

@@ -4,7 +4,7 @@ Five console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
-The agent CLI (`pyharness/cli.py`), with three subcommands: `repl` (the
+The agent CLI (`pyharness/cli/main.py`), with three subcommands: `repl` (the
 default), `run`, and `show`.
 
 ### `pyharness repl`
@@ -102,7 +102,7 @@ pyharness show [SESSION] [--root DIR] [--transcript | --json]
 
 ## `pyharness-vault`
 
-Manage the encrypted secrets file (`pyharness/cli_vault.py`).
+Manage the encrypted secrets file (`pyharness/cli/vault.py`).
 
 ```bash
 pyharness-vault set NAME [VALUE] [--host HOST ...]
@@ -119,7 +119,7 @@ when you run `pyharness` so the session can open it. See
 
 ## `pyharness-mcp`
 
-Manage the MCP server config the session mounts (`pyharness/cli_mcp.py`).
+Manage the MCP server config the session mounts (`pyharness/cli/mcp.py`).
 
 ```bash
 pyharness-mcp add NAME --command CMD [--arg=A]...   # local server
@@ -141,7 +141,7 @@ config shape and the in-session alternative (`add_mcp_server`).
 ## `pyharness-index`
 
 Maintain and query the [session index](../how-to/observability.md#the-session-index)
-(`pyharness/cli_index.py`).
+(`pyharness/cli/index.py`).
 
 ```bash
 pyharness-index                    # update: scan ./.sessions + all remembered roots
@@ -171,7 +171,7 @@ replaying a finished one.
 
 ## `pyharness-profiles`
 
-Manage encrypted browser login profiles (`pyharness/cli_profiles.py`).
+Manage encrypted browser login profiles (`pyharness/cli/profiles.py`).
 
 ```bash
 pyharness-profiles list                 # names + saved-at + cookie count + domains — never values

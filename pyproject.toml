@@ -26,12 +26,12 @@ dependencies = [
 browser = ["playwright>=1.61"]
 
 [project.scripts]
-pyharness = "pyharness.cli:main"
-pyharness-vault = "pyharness.cli_vault:main"
-pyharness-mcp = "pyharness.cli_mcp:main"
-pyharness-index = "pyharness.cli_index:main"
+pyharness = "pyharness.cli.main:main"
+pyharness-vault = "pyharness.cli.vault:main"
+pyharness-mcp = "pyharness.cli.mcp:main"
+pyharness-index = "pyharness.cli.index:main"
 pyharness-watch = "pyharness.watch:main"
-pyharness-profiles = "pyharness.cli_profiles:main"
+pyharness-profiles = "pyharness.cli.profiles:main"
 
 [build-system]
 requires = ["hatchling"]

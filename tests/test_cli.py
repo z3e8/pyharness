@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
-from pyharness.cli import (
+from pyharness.cli.main import (
     _EXIT_BY_OUTCOME,
     _headless_approver,
     _reflect_enabled,
@@ -126,7 +126,7 @@ def test_run_once_returns_answered_digest(tmp_path):
 
 
 def test_headless_run_denies_gated_actions(tmp_path):
-    from pyharness.cli import _build_session
+    from pyharness.cli.main import _build_session
 
     session = _build_session(
         tmp_path / "sess", budget_usd=1.0, approver=_headless_approver(False),
@@ -155,7 +155,7 @@ def test_exit_codes_cover_every_outcome():
 
 
 def test_run_json_prints_one_envelope(monkeypatch, tmp_path, capsys):
-    import pyharness.cli as cli
+    import pyharness.cli.main as cli
 
     digest = {"name": "run-1", "outcome": "answered", "answer": "hi",
               "cost_usd": 0.01, "llm_calls": 1}
@@ -171,7 +171,7 @@ def test_run_json_prints_one_envelope(monkeypatch, tmp_path, capsys):
 
 
 def test_run_exit_code_reflects_outcome(monkeypatch, tmp_path, capsys):
-    import pyharness.cli as cli
+    import pyharness.cli.main as cli
 
     digest = {"name": "run-1", "outcome": "stopped:budget", "answer": None,
               "cost_usd": 1.0, "llm_calls": 3}
@@ -219,7 +219,7 @@ def test_resolve_session_unknown_exits_with_hint(tmp_path):
 
 
 def test_show_digest_json_and_transcript(monkeypatch, tmp_path, capsys):
-    import pyharness.cli as cli
+    import pyharness.cli.main as cli
 
     root = tmp_path / ".sessions"
     _seed_session(root, "run-1")

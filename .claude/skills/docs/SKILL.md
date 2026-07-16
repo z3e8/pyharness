@@ -55,7 +55,7 @@ pages track specific sources — when you touch the left, update the right:
 | the `SYSTEM_PROMPT` builtins in `pyharness/core/agent.py` | `reference/builtins.md` |
 | env vars (add/rename/default) in `.env.example` | `reference/configuration.md` |
 | the public exports in `pyharness/__init__.py` | `reference/python-api.md` |
-| CLI flags/behavior in `cli.py` / `cli_vault.py` | `reference/cli.md` |
+| CLI flags/behavior in `cli/main.py` / `cli/vault.py` | `reference/cli.md` |
 | tiers, pricing, or budget enforcement | `explanation/budget.md` |
 | policy defaults, vault rules, or the sandbox | `explanation/security-and-audit.md` |
 | how side effects route through the broker | `explanation/broker.md` |
