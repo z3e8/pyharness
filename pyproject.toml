@@ -30,7 +30,7 @@ pyharness = "pyharness.cli.main:main"
 pyharness-vault = "pyharness.cli.vault:main"
 pyharness-mcp = "pyharness.cli.mcp:main"
 pyharness-index = "pyharness.cli.index:main"
-pyharness-watch = "pyharness.watch:main"
+pyharness-watch = "pyharness.obs.watch:main"
 pyharness-profiles = "pyharness.cli.profiles:main"
 
 [build-system]

@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from pyharness.transcript import (
+from pyharness.obs.transcript import (
     classify_outcome,
     latest_session,
     render_transcript,

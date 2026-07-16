@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from .. import telemetry
+from ..obs import telemetry
 from ..audit import AuditLog
 from ..broker.capabilities import (
     AgentsCapability,
@@ -35,7 +35,7 @@ from ..security.policy import Policy
 from ..security.profiles import ProfileStore
 from ..security.vault import Vault
 from ..tools.registry import Registry
-from ..trace import TraceLog
+from ..obs.trace import TraceLog
 from .agent import Agent
 from .kernel import Kernel
 from .media import MediaOutbox
@@ -298,7 +298,7 @@ class Session:
         if self.index_db is None:
             return
         try:
-            from ..index import update_index
+            from ..obs.index import update_index
 
             update_index(
                 self.index_db, [self.workspace.root.parent], skills_dir=self.skills_dir
@@ -318,7 +318,7 @@ class Session:
         skills: list = []
         if self.index_db is not None and self.index_db.exists():
             try:
-                from ..index import query
+                from ..obs.index import query
 
                 sessions = query(
                     self.index_db,

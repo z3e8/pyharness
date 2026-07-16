@@ -36,7 +36,7 @@ import subprocess
 from pathlib import Path
 
 from . import lessons as lessons_store
-from .transcript import render_transcript
+from .obs.transcript import render_transcript
 
 log = logging.getLogger("pyharness.reflect")
 

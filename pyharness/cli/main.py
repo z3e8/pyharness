@@ -16,7 +16,7 @@ from ..security.policy import ActionCategory
 from ..security.profiles import PROFILES_DIR_ENV
 from ..security.profiles import _DEFAULT_DIR as _PROFILES_DEFAULT_DIR
 from ..security.vault import _DEFAULT_FILE
-from ..transcript import latest_session, render_transcript, session_digest
+from ..obs.transcript import latest_session, render_transcript, session_digest
 
 _COLORS = {"code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
@@ -157,7 +157,7 @@ def _start_watch(root: Path) -> None:
     machine-clean."""
     if os.environ.get("PYHARNESS_WATCH", "true").strip().lower() in ("0", "false", "no", "off"):
         return
-    from ..watch import start_in_thread
+    from ..obs.watch import start_in_thread
 
     url = start_in_thread(root, port=int(os.environ.get("PYHARNESS_WATCH_PORT", "6061")))
     if url:

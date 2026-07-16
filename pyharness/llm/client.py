@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Callable, Protocol
 
-from .. import telemetry
+from ..obs import telemetry
 from ..budget import Budget
 
 # Provider credentials the *parent* holds so it can call the LLM or a search

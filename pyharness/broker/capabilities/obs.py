@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...index import SCHEMA_HELP, query
-from ...transcript import render_transcript
+from ...obs.index import SCHEMA_HELP, query
+from ...obs.transcript import render_transcript
 
 _INSPECT_SYSTEM = """\
 You answer questions about one past session of an autonomous Python agent.

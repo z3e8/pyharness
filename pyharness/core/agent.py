@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .. import telemetry
+from ..obs import telemetry
 from ..budget import Budget
 from ..llm.client import TIERS
 from .kernel import Kernel

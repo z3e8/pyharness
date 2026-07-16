@@ -7,7 +7,7 @@ from enum import Enum
 from types import ModuleType
 from typing import Callable
 
-from .. import telemetry
+from ..obs import telemetry
 from ..audit import AuditLog
 from ..budget import Budget
 from ..security.grants import GrantLedger, GrantScope

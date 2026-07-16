@@ -314,7 +314,7 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
 def _index_skills(conn: sqlite3.Connection, skills_dir: Path) -> None:
     """Snapshot every skill journal into the `skills` table (current state,
     replacing the previous snapshot — history lives in `skill_uses`)."""
-    from .tools.skills import read_journal
+    from ..tools.skills import read_journal
 
     conn.execute("DELETE FROM skills")
     if not skills_dir.is_dir():

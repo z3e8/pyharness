@@ -8,7 +8,7 @@ import threading
 import httpx
 import pytest
 
-from pyharness.watch import Tail, WatchServer, _pick_trace, start_in_thread
+from pyharness.obs.watch import Tail, WatchServer, _pick_trace, start_in_thread
 
 
 def _write(path, *entries):

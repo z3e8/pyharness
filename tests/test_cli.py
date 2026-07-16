@@ -17,7 +17,7 @@ from pyharness.cli.main import (
     _trace,
 )
 from pyharness.llm.client import Completion
-from pyharness.transcript import session_digest
+from pyharness.obs.transcript import session_digest
 
 
 class ScriptedLLM:
@@ -143,7 +143,7 @@ def test_headless_run_denies_gated_actions(tmp_path):
 
 
 def test_exit_codes_cover_every_outcome():
-    from pyharness.transcript import classify_outcome  # the outcome vocabulary
+    from pyharness.obs.transcript import classify_outcome  # the outcome vocabulary
 
     outcomes = {
         classify_outcome(answer=a, errors=e, tasks=t, stopped_budget=b)

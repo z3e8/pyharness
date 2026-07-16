@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from pyharness.index import SCHEMA_HELP, query, update_index
+from pyharness.obs.index import SCHEMA_HELP, query, update_index
 from pyharness.tools.skills import record_use, write_skill
 
 

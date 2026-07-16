@@ -157,7 +157,7 @@ rebuilds.
 ## `pyharness-watch`
 
 The [live session viewer](../how-to/observability.md#the-live-view-pyharness-watch)
-(`pyharness/watch.py`) — a local page tailing `trace.jsonl`.
+(`pyharness/obs/watch.py`) — a local page tailing `trace.jsonl`.
 
 ```bash
 pyharness-watch                     # tails .sessions/, follows the newest session

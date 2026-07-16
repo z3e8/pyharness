@@ -8,7 +8,7 @@ import pytest
 
 from pyharness.broker.capabilities.obs import ObservabilityCapability
 from pyharness.core.session import Session
-from pyharness.index import update_index
+from pyharness.obs.index import update_index
 from pyharness.llm.client import Completion
 
 
@@ -124,7 +124,7 @@ def test_close_folds_session_into_index(tmp_path):
     s = Session(root / "cli-a", llm=RecordingLLM(), index_db=db,
                 skills_dir=tmp_path / "skills")
     s.close()
-    from pyharness.index import query
+    from pyharness.obs.index import query
 
     rows = query(db, "SELECT name, outcome FROM sessions")
     assert rows == [{"name": "cli-a", "outcome": "empty"}]

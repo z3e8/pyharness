@@ -53,7 +53,8 @@ load-bearing seams are.
 | `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills; `mcp/` — MCP server client/config/transport |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
 | `pyharness/cli/` | console-script entry points, one module each: `main.py` (`pyharness`), `vault.py`, `profiles.py`, `index.py`, `mcp.py` |
-| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `telemetry.py` (opt-in OTel export), `trace.py`, `transcript.py` (shared read-side views: digest, flattened transcript, outcome vocabulary), `watch.py` (live session viewer, `pyharness-watch`), `util.py`, `index.py` (derived SQLite session index), `reflect.py` + `lessons.py` (post-session self-improvement pass, opt-in) |
+| `pyharness/obs/` | read-side observability: `transcript.py` (shared session views: digest, flattened transcript, outcome vocabulary), `index.py` (derived SQLite session index), `watch.py` (live session viewer, `pyharness-watch`), `telemetry.py` (opt-in OTel export), `trace.py` |
+| `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `util.py`, `reflect.py` + `lessons.py` (post-session self-improvement pass, opt-in) |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
 | `deploy/observability/` | docker-compose for the optional OTel backends: Phoenix, and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
