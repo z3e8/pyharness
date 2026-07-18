@@ -20,7 +20,7 @@ class RecordingLLM:
         self.calls: list[dict] = []
 
     def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None):
+                 max_tokens=None, on_token=None, cache_anchor=None):
         self.calls.append({"system": system, "messages": messages, "tier": tier})
         return Completion(self.reply, [], [{"type": "text", "text": self.reply}])
 

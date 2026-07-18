@@ -54,6 +54,38 @@ def _supports_adaptive_thinking(model: str) -> bool:
     return "opus" in model or "sonnet" in model
 
 
+def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> list[dict]:
+    """The request's message list with one `cache_control` breakpoint added,
+    without mutating the caller's history — markers left on history dicts would
+    accumulate across steps and blow the API's 4-breakpoint-per-request limit.
+
+    The marker goes on the last content block of `messages[cache_anchor]` when
+    given (the caller's newest byte-stable message — see Agent's elision
+    frontier), else of the last message (full-history incremental caching:
+    each step's entry extends the previous one). Together with the system
+    breakpoint that is 2 of the 4 allowed markers. Prompts below the model's
+    minimum cacheable prefix silently don't cache — the marker is harmless."""
+    if not messages:
+        return messages
+    idx = cache_anchor if cache_anchor is not None and 0 <= cache_anchor < len(messages) else len(messages) - 1
+    target = messages[idx]
+    content = target.get("content") if isinstance(target, dict) else None
+    if isinstance(content, str):
+        if not content:
+            return messages
+        marked_content = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        marked_content = list(content)
+        marked_content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+    else:
+        # SDK content-block objects (assistant turns) or empty content: skip
+        # marking rather than guess at a mutation.
+        return messages
+    return [*messages[:idx], {**target, "content": marked_content}, *messages[idx + 1:]]
+
+
 @dataclass(frozen=True)
 class Usage:
     model: str
@@ -102,7 +134,7 @@ class Completion:
 
 class LLM(Protocol):
     def complete(
-        self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...
+        self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=..., cache_anchor=...
     ) -> Completion: ...
 
 
@@ -185,6 +217,7 @@ class AnthropicLLM:
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
         on_token: "Callable[[str], None] | None" = None,
+        cache_anchor: int | None = None,
     ) -> Completion:
         # A tier names a cost/capability band, never a raw model id. Resolving an
         # unknown tier to the literal string (the old `TIERS.get(tier, tier)`) let
@@ -201,10 +234,12 @@ class AnthropicLLM:
         kwargs: dict = {
             "model": model,
             "max_tokens": max_tokens or TIER_MAX_TOKENS.get(tier, self._max_tokens),
-            "messages": messages,
+            "messages": _cache_marked_messages(messages, cache_anchor),
         }
         if system:
-            kwargs["system"] = system
+            kwargs["system"] = [
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ]
         if tools:
             kwargs["tools"] = tools
         if _supports_adaptive_thinking(model):

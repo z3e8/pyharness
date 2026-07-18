@@ -11,7 +11,11 @@ import pytest
 
 import anthropic
 
-from pyharness.llm.client import STREAM_ATTEMPTS, AnthropicLLM
+from pyharness.llm.client import (
+    STREAM_ATTEMPTS,
+    AnthropicLLM,
+    _cache_marked_messages,
+)
 
 
 def _response(text="ok"):
@@ -141,3 +145,63 @@ def test_unknown_tier_fails_closed(monkeypatch):
     with pytest.raises(ValueError, match="unknown tier"):
         llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8")
 
+
+def test_request_carries_cache_markers(monkeypatch):
+    llm = _llm(monkeypatch, [FakeStream(resp=_response())])
+    messages = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": [{"type": "text", "text": "step"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "out"}]},
+    ]
+    llm.complete(system="sys prompt", messages=messages, tier="cheap")
+
+    kwargs = llm._client.messages.calls[0]
+    assert kwargs["system"] == [
+        {"type": "text", "text": "sys prompt", "cache_control": {"type": "ephemeral"}}
+    ]
+    sent_last = kwargs["messages"][-1]["content"][-1]
+    assert sent_last["cache_control"] == {"type": "ephemeral"}
+    # The caller's history must stay pristine — stale markers would accumulate
+    # past the API's 4-breakpoint limit.
+    assert "cache_control" not in messages[-1]["content"][-1]
+    assert messages[0]["content"] == "task"
+
+
+def test_cache_anchor_marks_the_anchor_message(monkeypatch):
+    llm = _llm(monkeypatch, [FakeStream(resp=_response())])
+    messages = [
+        {"role": "user", "content": "task"},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "[output elided: 900 chars]"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "fresh output"}]},
+    ]
+    llm.complete(messages=messages, tier="cheap", cache_anchor=1)
+
+    sent = llm._client.messages.calls[0]["messages"]
+    assert sent[1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in sent[2]["content"][-1]
+    assert "cache_control" not in messages[1]["content"][-1]
+
+
+def test_cache_marker_wraps_string_content():
+    marked = _cache_marked_messages([{"role": "user", "content": "hello"}], None)
+    assert marked[0]["content"] == [
+        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_cache_marker_skips_unmarkable_content():
+    # SDK content-block objects (assistant turns) aren't dicts — leave alone.
+    sdk_blocks = [SimpleNamespace(type="text", text="x")]
+    messages = [{"role": "assistant", "content": sdk_blocks}]
+    assert _cache_marked_messages(messages, None) is messages
+    assert _cache_marked_messages([], None) == []
+
+
+def test_cache_marker_out_of_range_anchor_falls_back_to_last():
+    messages = [
+        {"role": "user", "content": "a"},
+        {"role": "user", "content": "b"},
+    ]
+    marked = _cache_marked_messages(messages, 99)
+    assert marked[0]["content"] == "a"
+    assert marked[1]["content"][0]["cache_control"] == {"type": "ephemeral"}

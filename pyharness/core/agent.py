@@ -316,6 +316,10 @@ class Agent:
                     tier=self.tier,
                     tools=[RUN_PYTHON_TOOL],
                     on_token=_on_token,
+                    # The elision frontier: everything at or before it is
+                    # byte-stable across steps, so the prompt cache breakpoint
+                    # belongs there once elision starts mutating mid-history.
+                    cache_anchor=_cache_anchor(messages, self.keep_outputs),
                 )
             except Exception as exc:
                 self.on_event("error", f"LLM call failed: {exc}")
@@ -434,6 +438,28 @@ def _elide_old_outputs(messages: list[dict], keep_recent: int) -> None:
         for block in msg["content"]:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 block["content"] = _elided(block.get("content"))
+
+
+def _cache_anchor(messages: list[dict], keep_recent: int) -> int | None:
+    """Where the prompt-cache breakpoint belongs once elision is active: the
+    index of the newest *elided* tool_result message. Everything at or before
+    it is byte-stable from now on (elision is idempotent and only ever advances),
+    so each step's cache entry there extends the previous step's. Before elision
+    starts (or with it disabled) returns None — the client then marks the last
+    message and the whole history caches incrementally. Must mirror the
+    `tool_msgs[:-keep_recent]` selection in `_elide_old_outputs`."""
+    if keep_recent <= 0:
+        return None
+    tool_idxs = [
+        i
+        for i, m in enumerate(messages)
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+    ]
+    if len(tool_idxs) <= keep_recent:
+        return None
+    return tool_idxs[-(keep_recent + 1)]
 
 
 def _elided(content):

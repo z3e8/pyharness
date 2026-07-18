@@ -14,11 +14,13 @@ class ScriptedLLM:
         self.calls = []
         self.tiers = []
         self.systems = []
+        self.anchors = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
         self.calls.append(list(messages))
         self.tiers.append(tier)
         self.systems.append(system)
+        self.anchors.append(cache_anchor)
         return self.completions.pop(0)
 
 
@@ -67,7 +69,7 @@ def test_agent_defaults_to_mid_tier():
 class FailingLLM:
     """Raises on complete() to simulate a stream that dies mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
         raise RuntimeError("stream interrupted")
 
 
@@ -93,7 +95,7 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
 class InterruptedLLM:
     """Raises KeyboardInterrupt on complete() to simulate a Ctrl-C mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
         raise KeyboardInterrupt
 
 
@@ -247,3 +249,36 @@ def test_kernel_state_persists_across_cells(tmp_path):
     # The second cell's output reflects state from the first.
     last_user = llm.calls[-1][-1]
     assert last_user["content"][0]["content"] == "42"
+
+
+def test_cache_anchor_tracks_the_elision_frontier():
+    from pyharness.core.agent import _cache_anchor
+
+    def tool_msg(i):
+        return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "out"}]}
+
+    msgs = [{"role": "user", "content": "task"}]
+    assert _cache_anchor(msgs, 2) is None  # no tool results yet
+    for i in range(4):
+        msgs.extend([{"role": "assistant", "content": []}, tool_msg(i)])
+    # tool msgs sit at indices 2, 4, 6, 8; with keep_recent=2 the frontier is
+    # the newest elided one — the 3rd from the end.
+    assert _cache_anchor(msgs, 2) == 4
+    assert _cache_anchor(msgs, 4) is None  # nothing elided yet
+    assert _cache_anchor(msgs, 0) is None  # elision disabled
+
+
+def test_agent_passes_elision_frontier_as_cache_anchor():
+    llm = ScriptedLLM([
+        _tool_completion("print(1)"),
+        _tool_completion("print(2)"),
+        _tool_completion("print(3)"),
+        _text_completion("done"),
+    ])
+    agent = Agent(llm, Kernel({}), Budget(), keep_outputs=1)
+
+    agent.run("task", [])
+
+    # Calls 1-2: elision hasn't started, full-history caching (None).
+    # Calls 3-4: the frontier advances one tool message per step.
+    assert llm.anchors == [None, None, 2, 4]

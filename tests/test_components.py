@@ -214,7 +214,7 @@ def test_llm_worker_session_cap():
     from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None):
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, cache_anchor=None):
             from pyharness.llm.client import Completion
 
             return Completion(text="ok", tool_calls=[], content=[])

@@ -32,7 +32,7 @@ requires_sandbox = pytest.mark.skipif(
 class StubLLM:
     """A worker that always succeeds, so map_llm results are deterministic."""
 
-    def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None):
+    def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, cache_anchor=None):
         return Completion(text="worked", tool_calls=[], content=[])
 
 
