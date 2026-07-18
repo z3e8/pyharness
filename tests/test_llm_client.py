@@ -4,6 +4,8 @@ All offline — the SDK client object is replaced with scripted fakes; only the
 exception classes and request-shaping logic are real.
 """
 
+import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -14,6 +16,7 @@ import anthropic
 from pyharness.llm.client import (
     STREAM_ATTEMPTS,
     AnthropicLLM,
+    StreamStalled,
     _cache_marked_messages,
 )
 
@@ -31,14 +34,28 @@ def _response(text="ok"):
     )
 
 
-class FakeStream:
-    """One scripted stream attempt: yields `tokens`, then either raises `exc`
-    (a mid-stream failure) or returns `resp` from get_final_message()."""
+def _text_event(text):
+    return SimpleNamespace(
+        type="content_block_delta", delta=SimpleNamespace(type="text_delta", text=text)
+    )
 
-    def __init__(self, resp=None, exc=None, tokens=()):
+
+def _think_event(text):
+    return SimpleNamespace(
+        type="content_block_delta", delta=SimpleNamespace(type="thinking_delta", thinking=text)
+    )
+
+
+class FakeStream:
+    """One scripted stream attempt: yields text events for `tokens` (plus any
+    explicit `events`), then either raises `exc` (a mid-stream failure) or
+    returns `resp` from get_final_message()."""
+
+    def __init__(self, resp=None, exc=None, tokens=(), events=None):
         self.resp = resp
         self.exc = exc
-        self.tokens = tokens
+        self.events = list(events) if events is not None else [_text_event(t) for t in tokens]
+        self.response = SimpleNamespace(close=lambda: None)  # watchdog target
 
     def __enter__(self):
         return self
@@ -46,17 +63,12 @@ class FakeStream:
     def __exit__(self, *args):
         return False
 
-    @property
-    def text_stream(self):
-        def gen():
-            yield from self.tokens
-            if self.exc is not None:
-                raise self.exc
-        return gen()
-
-    def get_final_message(self):
+    def __iter__(self):
+        yield from self.events
         if self.exc is not None:
             raise self.exc
+
+    def get_final_message(self):
         return self.resp
 
 
@@ -205,3 +217,111 @@ def test_cache_marker_out_of_range_anchor_falls_back_to_last():
     marked = _cache_marked_messages(messages, 99)
     assert marked[0]["content"] == "a"
     assert marked[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+# ---- raw event stream: thinking surfacing ------------------------------------
+
+
+def test_thinking_deltas_reach_on_thinking_not_on_token(monkeypatch):
+    llm = _llm(monkeypatch, [
+        FakeStream(
+            resp=_response("out"),
+            events=[_think_event("mull "), _think_event(""), _think_event("it over"),
+                    _text_event("out")],
+        ),
+    ])
+    thoughts, tokens = [], []
+    completion = llm.complete(
+        messages=[{"role": "user", "content": "hi"}],
+        on_token=tokens.append,
+        on_thinking=thoughts.append,
+    )
+    assert completion.text == "out"
+    assert thoughts == ["mull ", "it over"]  # empty deltas are dropped
+    assert tokens == ["out"]
+
+
+def test_thinking_config_per_tier(monkeypatch):
+    llm = _llm(monkeypatch, [FakeStream(resp=_response()) for _ in range(3)])
+    for tier in ("smart", "mid", "cheap"):
+        llm.complete(messages=[{"role": "user", "content": "hi"}], tier=tier)
+    calls = llm._client.messages.calls
+    # opus defaults display to omitted — summaries must be requested; sonnet 4.6
+    # already defaults to summarized and predates the display param; haiku has
+    # no adaptive thinking at all.
+    assert calls[0]["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert calls[1]["thinking"] == {"type": "adaptive"}
+    assert "thinking" not in calls[2]
+
+
+# ---- watchdog: stalls and runaway attempts -----------------------------------
+
+
+class HangingStream:
+    """Blocks mid-stream until the watchdog closes the response, then raises —
+    the shape of a wedged-but-pinging connection (bytes flow, no events, so the
+    httpx read timeout never fires)."""
+
+    def __init__(self):
+        self._closed = threading.Event()
+        self.response = SimpleNamespace(close=self._closed.set)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def __iter__(self):
+        yield _text_event("par")
+        if not self._closed.wait(5.0):
+            raise AssertionError("watchdog never closed the response")
+        raise httpx.ReadError("connection closed")
+
+    def get_final_message(self):  # pragma: no cover — iteration always raises
+        raise AssertionError("unreachable")
+
+
+class BabblingStream:
+    """Emits events forever without finishing — runaway generation that keeps
+    resetting the stall detector; only the attempt deadline catches it."""
+
+    def __init__(self):
+        self._closed = threading.Event()
+        self.response = SimpleNamespace(close=self._closed.set)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def __iter__(self):
+        while not self._closed.is_set():
+            yield _text_event(".")
+            time.sleep(0.005)
+        raise httpx.ReadError("connection closed")
+
+    def get_final_message(self):  # pragma: no cover — iteration always raises
+        raise AssertionError("unreachable")
+
+
+def test_stalled_stream_is_killed_and_retried(monkeypatch):
+    monkeypatch.setattr("pyharness.llm.client.STALL_TIMEOUT_S", 0.05)
+    llm = _llm(monkeypatch, [HangingStream(), FakeStream(resp=_response("saved"))])
+    completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
+    assert completion.text == "saved"
+    assert len(llm._client.messages.calls) == 2
+
+
+def test_runaway_stream_hits_the_attempt_deadline(monkeypatch):
+    monkeypatch.setattr("pyharness.llm.client.ATTEMPT_DEADLINE_S", 0.1)
+    llm = _llm(monkeypatch, [BabblingStream(), FakeStream(resp=_response("saved"))])
+    completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
+    assert completion.text == "saved"
+    assert len(llm._client.messages.calls) == 2
+
+
+def test_stream_stalled_is_retryable(monkeypatch):
+    llm = _llm(monkeypatch, [])
+    assert llm._retryable(StreamStalled("stalled"))

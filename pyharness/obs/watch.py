@@ -351,8 +351,12 @@ PAGE = r"""<!doctype html>
   .subagent .dot.done { background: #58b368; }
   .subagent .dot.err { background: #ff8484; }
   .subagent .sub-body { padding: 4px 14px 10px; }
+  details.think > summary { color: #8a7fb0; }
+  .think pre { color: #9a92b8; font-style: italic; border-left: 3px solid #4a3f6e;
+               max-height: 260px; overflow-y: auto; }
   body.hide-code .k-code, body.hide-output .k-output,
-  body.hide-action .k-action, body.hide-prompt .k-prompt { display: none; }
+  body.hide-action .k-action, body.hide-prompt .k-prompt,
+  body.hide-think .k-think { display: none; }
   .search-hide { display: none !important; }
 </style>
 </head>
@@ -370,6 +374,7 @@ PAGE = r"""<!doctype html>
     <label><input type="checkbox" data-f="output" checked> output</label>
     <label><input type="checkbox" data-f="action" checked> actions</label>
     <label><input type="checkbox" data-f="prompt" checked> prompts</label>
+    <label><input type="checkbox" data-f="think" checked> thinking</label>
     <input type="search" id="search" placeholder="filter text…">
     <span id="searchcount"></span>
     <button id="jump-err">next error</button>
@@ -616,8 +621,27 @@ function handle(e) {
     laneAdd(lane, el('div', 'task', e.text));
   } else if (k === 'llm_start') {
     startActive(lane, 'llm', 'thinking (' + (e.tier || '?') + ')…');
+  } else if (k === 'llm_thinking') {
+    // Summarized thinking, streamed. Collapsed by default; the summary row is
+    // the expand button. One block per completion — llm_call closes it.
+    if (!lane.think) {
+      const d = el('details', 'cell think');
+      const sum = el('summary');
+      sum.appendChild(el('span', 'tag', 'thinking'));
+      const meta = el('span', 'tag', '');
+      sum.appendChild(meta);
+      d.appendChild(sum);
+      const pre = el('pre', '', '');
+      d.appendChild(pre);
+      lane.think = { pre, meta, chars: 0 };
+      laneAdd(lane, d, 'k-think');
+    }
+    lane.think.pre.textContent += e.text || '';
+    lane.think.chars += (e.text || '').length;
+    lane.think.meta.textContent = lane.think.chars + ' chars';
   } else if (k === 'llm_call') {
     endActive(lane, 'llm');
+    lane.think = null;
     if (e.text) {
       const n = el('div', 'agent', e.text);
       const bits = [];
@@ -656,6 +680,7 @@ function handle(e) {
     laneAdd(lane, el('div', 'row notify', '[agent note] ' + e.text));
   } else if (k === 'error') {
     endActive(lane, 'llm');
+    lane.think = null;
     laneAdd(lane, el('div', 'row error', e.text));
     if (!lane.isRoot) laneDone(lane, 'err', 'error');
   } else if (k === 'answer') {

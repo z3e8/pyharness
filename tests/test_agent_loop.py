@@ -16,7 +16,7 @@ class ScriptedLLM:
         self.systems = []
         self.anchors = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         self.calls.append(list(messages))
         self.tiers.append(tier)
         self.systems.append(system)
@@ -69,7 +69,7 @@ def test_agent_defaults_to_mid_tier():
 class FailingLLM:
     """Raises on complete() to simulate a stream that dies mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         raise RuntimeError("stream interrupted")
 
 
@@ -95,7 +95,7 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
 class InterruptedLLM:
     """Raises KeyboardInterrupt on complete() to simulate a Ctrl-C mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         raise KeyboardInterrupt
 
 

@@ -306,6 +306,11 @@ class Agent:
             def _on_token(chunk: str) -> None:
                 self.on_event("llm_token", chunk)
 
+            def _on_thinking(chunk: str) -> None:
+                # Summarized adaptive thinking, streamed so the quiet spans
+                # between text and tool calls are visibly the model working.
+                self.on_event("llm_thinking", chunk)
+
             # Paired with the llm_call event below: start without a matching
             # llm_call = a completion in flight (or one that died).
             self.on_event("llm_start", "", tier=self.tier)
@@ -316,6 +321,7 @@ class Agent:
                     tier=self.tier,
                     tools=[RUN_PYTHON_TOOL],
                     on_token=_on_token,
+                    on_thinking=_on_thinking,
                     # The elision frontier: everything at or before it is
                     # byte-stable across steps, so the prompt cache breakpoint
                     # belongs there once elision starts mutating mid-history.

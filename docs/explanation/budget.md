@@ -67,12 +67,23 @@ output elision starts rewriting mid-history, the elision frontier the agent
 passes as `cache_anchor`. Repeat prefixes then bill at cache-read rates instead
 of full price, step over step.
 
-Every streamed completion is also retried on transient failure — read timeouts
-on a silent stream, dropped connections, 429/529/5xx — up to 3 attempts with
-exponential backoff (`STREAM_ATTEMPTS`). This covers mid-stream failures the
-SDK's own `max_retries` never sees, and a retry re-reads the prefill the failed
-attempt already cached. Deterministic errors (bad request, auth) raise
-immediately. The agent loop additionally surfaces truncation instead of hiding
+The client consumes the raw event stream (never the SDK's `text_stream`, which
+drops everything but text deltas): text deltas stream to the display, and
+summarized adaptive-thinking deltas stream as `llm_thinking` events — so a
+thinking span shows as the model working, not dead air. A per-attempt watchdog
+supervises the stream: no event within `STALL_TIMEOUT_S`, or a whole attempt
+running past `ATTEMPT_DEADLINE_S`, closes the connection and raises a
+retryable `StreamStalled`. This is the authoritative stall detector — the
+httpx read timeout only bounds byte gaps, which SSE pings reset, so it can
+neither catch a wedged-but-pinging stream nor tell a healthy quiet gap from a
+dead one.
+
+Every streamed completion is also retried on transient failure — watchdog
+stalls, read timeouts on a fully silent stream, dropped connections,
+429/529/5xx — up to 3 attempts with exponential backoff (`STREAM_ATTEMPTS`).
+This covers mid-stream failures the SDK's own `max_retries` never sees, and a
+retry re-reads the prefill the failed attempt already cached. Deterministic
+errors (bad request, auth) raise immediately. The agent loop additionally surfaces truncation instead of hiding
 it: a `max_tokens` cutoff mid-tool-call is answered with an error tool_result
 (never executed) so the model retakes the step, and a `refusal` stop ends the
 turn as `(stopped: refusal)`.

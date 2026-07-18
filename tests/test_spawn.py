@@ -21,7 +21,7 @@ class ScriptedLLM:
         self._completions = list(completions)
         self.child_budget = None
 
-    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None, on_token=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         return self._completions.pop(0)
 
     def with_budget(self, budget):

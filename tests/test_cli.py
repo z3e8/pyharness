@@ -28,7 +28,7 @@ class ScriptedLLM:
         self.replies = list(replies)
 
     def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None, cache_anchor=None):
+                 max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         reply = self.replies.pop(0) if self.replies else ""
         return Completion(reply, [], [{"type": "text", "text": reply}])
 

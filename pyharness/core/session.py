@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterable
@@ -160,9 +161,30 @@ class Session:
         # One event sink shared by the agent loop and any capability that emits
         # events (notify): everything lands in trace.jsonl, then the caller's
         # on_event (the CLI renderer) sees it live.
+        # llm_token fires once per streaming chunk — too frequent for the trace.
+        # llm_thinking is chunk-frequent too, but the live viewer streams it
+        # from the trace, so chunks are buffered and flushed in batches (size or
+        # age), with any remainder flushed before the next non-thinking record
+        # so ordering in the file matches what happened.
+        think_buf: list[str] = []
+        think_last = [0.0]
+
+        def _flush_thinking() -> None:
+            if think_buf:
+                self.trace.record("llm_thinking", "".join(think_buf))
+                think_buf.clear()
+
         def on_event_traced(kind: str, text: str, **extra) -> None:
-            # llm_token fires once per streaming chunk — too frequent for trace
-            if kind != "llm_token":
+            if kind == "llm_thinking":
+                now = time.monotonic()
+                if not think_buf:
+                    think_last[0] = now
+                think_buf.append(text)
+                if sum(len(c) for c in think_buf) >= 600 or now - think_last[0] >= 1.5:
+                    _flush_thinking()
+                    think_last[0] = now
+            elif kind != "llm_token":
+                _flush_thinking()
                 self.trace.record(kind, text, **extra)
             if on_event is not None:
                 on_event(kind, text)

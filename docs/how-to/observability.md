@@ -12,7 +12,10 @@ each code cell and its output (collapsible, with copy), in-flight actions with
 elapsed time, a sticky banner for the pending approval the session is waiting
 on, errors, and running spend. Each `llm_call` also carries a collapsed
 **full-prompt view** (system prompt + every message that pass) so you can see
-exactly what the model saw. A filter/search toolbar hides kinds and finds text.
+exactly what the model saw, and each completion's summarized adaptive thinking
+streams into a collapsed, expandable **thinking** block (one per turn) so quiet
+spans are visibly the model reasoning. A filter/search toolbar hides kinds
+(including thinking) and finds text.
 Because the JSONL record is written synchronously by the session, the view is
 real-time by construction.
 

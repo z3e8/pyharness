@@ -140,7 +140,7 @@ def test_agent_emits_llm_start_before_each_completion():
     events = []
 
     class LLM:
-        def complete(self, *, system, messages, tier="smart", tools=None, on_token=None, cache_anchor=None):
+        def complete(self, *, system, messages, tier="smart", tools=None, on_token=None, on_thinking=None, cache_anchor=None):
             events.append(("complete", ""))
             return Completion(text="done", tool_calls=[], content=[], stop_reason="end_turn")
 

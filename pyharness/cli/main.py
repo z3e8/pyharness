@@ -35,11 +35,34 @@ def _load_dotenv(path: Path = Path(".env")) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+# Whether the line currently being streamed is a dim thinking marker that the
+# next answer token must close (module-level: the renderer is a plain callback).
+_thinking_open = False
+
+
+def _close_thinking() -> None:
+    global _thinking_open
+    if _thinking_open:
+        print(_RESET, flush=True)
+        _thinking_open = False
+
+
 def _trace(kind: str, text: str) -> None:
+    global _thinking_open
+    if kind == "llm_thinking":
+        # The model is thinking (summarized deltas stream in the live viewer).
+        # In the terminal, one dim marker per thinking span — not the full text,
+        # which would drown the answer stream.
+        if not _thinking_open:
+            print("\033[2m[thinking…]", end="", flush=True)
+            _thinking_open = True
+        return
     if kind == "llm_token":
         # Stream LLM tokens inline as they arrive — no box frame, no newline
+        _close_thinking()
         print(text, end="", flush=True)
         return
+    _close_thinking()
     if kind in ("llm_call", "note", "llm_start"):
         # llm_call and note are already on screen from the streamed llm_token
         # chunks above (llm_call is the post-stream summary, note is preamble

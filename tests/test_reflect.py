@@ -28,7 +28,7 @@ class ScriptedLLM:
         self.calls: list[dict] = []
 
     def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None, cache_anchor=None):
+                 max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
         self.calls.append({"system": system, "messages": messages, "tier": tier})
         reply = self.replies.pop(0) if self.replies else ""
         return Completion(reply, [], [{"type": "text", "text": reply}])
