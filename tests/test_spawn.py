@@ -144,6 +144,22 @@ def test_budget_absorb():
     assert parent.by_model == {"m": 1.5, "n": 0.25}
 
 
+def test_child_preamble_is_cache_stable_across_budgets(tmp_path):
+    # The child preamble must not embed the per-child budget slice or step
+    # ceiling: those vary per spawn, so baking them into the cached system
+    # prefix would give every sibling a distinct prompt and defeat the prompt
+    # cache. Same grant -> byte-identical preamble regardless of walls.
+    session = _session(tmp_path, ScriptedLLM([]))
+    try:
+        granted = frozenset({"web", "http"})
+        preamble = session._child_preamble(granted)
+        assert session._child_preamble(granted) == preamble
+        assert "$" not in preamble  # no dollar budget figure
+        assert "steps" not in preamble  # no numeric step ceiling
+    finally:
+        session.close()
+
+
 def test_child_approvals_bubble_to_parent_labeled(tmp_path):
     seen = []
 

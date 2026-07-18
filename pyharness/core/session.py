@@ -409,10 +409,16 @@ class Session:
         a spawned child holds its body plus what it was granted."""
         return self._caps is None or name in self._caps
 
-    def _child_preamble(self, granted: frozenset[str], max_steps: int, limit_usd: float | None) -> str:
+    def _child_preamble(self, granted: frozenset[str]) -> str:
         """The sub-session block appended to the child's system prompt. It must
         correct the static prompt's builtin list (the child holds a subset) and
-        carry the report contract — the handoff is the whole point of a spawn."""
+        carry the report contract — the handoff is the whole point of a spawn.
+
+        Deliberately free of per-child numbers (budget slice, step ceiling): they
+        vary per spawn, and baking them into the cached system prefix gives every
+        child a distinct prompt so siblings never share a prompt cache. The live
+        figures already reach the child in the per-cell meter; here we keep only
+        the qualitative note."""
         builtins_by_cap = {
             "files": "read/write/edit",
             "search": "search",
@@ -433,9 +439,6 @@ class Session:
             if mounted
             else "No external tools are mounted this session."
         )
-        walls = f"at most {max_steps} steps"
-        if limit_usd is not None:
-            walls += f" and ${limit_usd:.2f} of spend"
         return (
             "## Spawned sub-session\n"
             "You are a sub-session spawned by an orchestrator to complete the one\n"
@@ -445,7 +448,9 @@ class Session:
             f"- {tools_line}\n"
             "- You share the orchestrator's workspace: write anything large or\n"
             "  durable to files there, at the paths the task assigns.\n"
-            f"- Walls: {walls}. Checkpoint results to the workspace as you go.\n"
+            "- Your step and spend budget are tighter than a top-level session and\n"
+            "  shown in the meter after each cell. Checkpoint results to the\n"
+            "  workspace as you go.\n"
             "- Your final plain-text reply is your REPORT — the only thing the\n"
             "  orchestrator sees. Make it self-contained and condensed: outcome\n"
             "  first, then key findings and decisions, then the workspace paths of\n"
@@ -538,7 +543,7 @@ class Session:
             capabilities=granted,
             audit=self.audit,  # one hash chain for the whole session tree
             workspace_dir=self.workspace.dir,
-            preamble=self._child_preamble(granted, max_steps, limit),
+            preamble=self._child_preamble(granted),
         )
         child.trace.record("spawned_by", parent=self.id, parent_name=self.workspace.root.name)
 
