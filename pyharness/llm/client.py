@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+import time
 from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Callable, Protocol
@@ -99,7 +101,21 @@ class Completion:
 
 
 class LLM(Protocol):
-    def complete(self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...) -> Completion: ...
+    def complete(
+        self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...
+    ) -> Completion: ...
+
+
+# Streaming retry policy. The SDK's `max_retries` only covers failures before
+# the response starts (connect errors, TTFB timeouts, 429/5xx); an exception
+# raised while *iterating* the SSE body — the dominant observed failure, a
+# read timeout on a stream that went silent — escapes it entirely. This wrapper
+# retries the whole streamed completion. Prompt caching (below) makes the
+# resend cheap: the failed attempt's prefill is already in the cache.
+STREAM_ATTEMPTS = 3
+_BACKOFF_BASE_S = 1.0
+_BACKOFF_CAP_S = 8.0
+_RETRYABLE_STATUS = {408, 409, 429, 529}
 
 
 class AnthropicLLM:
@@ -115,13 +131,16 @@ class AnthropicLLM:
         # session indefinitely. It has to clear the worst legitimate quiet gap —
         # prefill over a large context plus adaptive thinking before the first
         # text chunk — or healthy long turns get killed mid-think; 240s covers
-        # that headroom while still catching a truly dead socket. `max_retries`
-        # lets the SDK transparently recover transient drops, which on flaky links
-        # is the difference between a resumed turn and an aborted one.
+        # that headroom while still catching a truly dead socket. SDK
+        # `max_retries` stays low because complete() retries the whole streamed
+        # call (STREAM_ATTEMPTS) — the two layers multiply, and the wrapper is
+        # the one that also covers mid-stream failures the SDK never retries.
         self._client = anthropic.Anthropic(
             timeout=httpx.Timeout(connect=10.0, read=240.0, write=20.0, pool=10.0),
-            max_retries=4,
+            max_retries=2,
         )
+        self._anthropic = anthropic
+        self._httpx = httpx
         self._budget = budget
         self._max_tokens = max_tokens
 
@@ -137,9 +156,25 @@ class AnthropicLLM:
         accounted separately from its parent's."""
         clone = object.__new__(AnthropicLLM)
         clone._client = self._client
+        clone._anthropic = self._anthropic
+        clone._httpx = self._httpx
         clone._budget = budget
         clone._max_tokens = self._max_tokens
         return clone
+
+    def _retryable(self, exc: Exception) -> bool:
+        """Transient failures worth resending: transport-level errors (read
+        timeouts, dropped connections, protocol violations), SDK connection/
+        timeout errors, and retryable HTTP statuses — 529 overloaded and
+        mid-stream `error` SSE events both surface as APIStatusError. 4xx
+        request errors are deterministic and raise immediately."""
+        if isinstance(exc, self._httpx.TransportError):
+            return True
+        if isinstance(exc, self._anthropic.APIConnectionError):  # includes APITimeoutError
+            return True
+        if isinstance(exc, self._anthropic.APIStatusError):
+            return exc.status_code in _RETRYABLE_STATUS or exc.status_code >= 500
+        return False
 
     def complete(
         self,
@@ -175,9 +210,37 @@ class AnthropicLLM:
         if _supports_adaptive_thinking(model):
             kwargs["thinking"] = {"type": "adaptive"}
 
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            try:
+                return self._complete_once(kwargs, model, tier, system, messages, on_token)
+            except Exception as exc:  # noqa: BLE001 — classified below
+                if attempt == STREAM_ATTEMPTS or not self._retryable(exc):
+                    raise
+                if on_token is not None:
+                    # Display-only marker (never part of the completion text):
+                    # without it, the partial text the dead stream already
+                    # emitted looks like the answer restarting on its own.
+                    on_token(
+                        f"\n[stream failed ({type(exc).__name__}); "
+                        f"retry {attempt}/{STREAM_ATTEMPTS - 1}]\n"
+                    )
+                delay = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * 2 ** (attempt - 1))
+                time.sleep(delay + random.uniform(0, 0.5))
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _complete_once(
+        self,
+        kwargs: dict,
+        model: str,
+        tier: str,
+        system: str | None,
+        messages: list[dict],
+        on_token: "Callable[[str], None] | None",
+    ) -> Completion:
         # Stream and reassemble: the SDK refuses non-streaming requests whose
         # max_tokens could exceed its timeout, so streaming is what lets the
-        # large per-tier ceilings above work.
+        # large per-tier ceilings above work. One telemetry span per attempt,
+        # so a retried call shows up as a failed span plus a clean one.
         with telemetry.llm_span(model, tier, system=system, messages=messages):
             with self._client.messages.stream(**kwargs) as stream:
                 if on_token is not None:
@@ -197,8 +260,8 @@ class AnthropicLLM:
                 tier=tier,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
-                cache_read=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
-                cache_create=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+                cache_read=usage.cache_read_tokens,
+                cache_create=usage.cache_creation_tokens,
                 cost_usd=usage.cost_usd,
                 output_text=text,
                 tool_calls=[{"name": tc.name, "input": tc.input} for tc in tool_calls],

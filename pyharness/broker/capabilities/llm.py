@@ -29,8 +29,8 @@ class LLMCapability:
     Python function — `llm()` for a single call, `map_llm()` to fan the same
     kind of call out over many prompts in parallel. Workers are toolless
     text-in/text-out; anything that needs to *act* is `spawn()`'s job.
-    Concurrency, limits, and retries are owned here (the broker), not in
-    agent code.
+    Concurrency and limits are owned here (the broker); transient-failure
+    retries live in the LLM client, shared by every caller.
 
     Two count caps apply: `max_per_call` bounds a single `map_llm` fan-out,
     and `session_cap` bounds the total number of fan-out workers over the
@@ -112,15 +112,15 @@ class LLMCapability:
                 self._reserve()
             except WorkerLimitExceeded as exc:
                 return Result(False, None, repr(exc))
-            last = ""
-            for attempt in range(2):
-                try:
-                    return Result(
-                        True, self._complete(prompt, tier, system or WORKER_SYSTEM, context)
-                    )
-                except Exception as exc:  # noqa: BLE001 - errors become data
-                    last = repr(exc)
-            return Result(False, None, last)
+            # No retry loop here: the LLM client already retries transient
+            # stream failures with backoff, so anything that escapes is
+            # deterministic (bad request, budget) — it becomes data once.
+            try:
+                return Result(
+                    True, self._complete(prompt, tier, system or WORKER_SYSTEM, context)
+                )
+            except Exception as exc:  # noqa: BLE001 - errors become data
+                return Result(False, None, repr(exc))
 
         results: list[Result | None] = [None] * len(prompts)
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:

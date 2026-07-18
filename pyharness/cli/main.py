@@ -292,28 +292,23 @@ def _cmd_repl(args: argparse.Namespace) -> None:
                 break
             if not task:
                 continue
-            # A turn that fails mid-stream must not crash the REPL. Retry once
-            # (the history rollback in Agent.run leaves a clean slate for the
-            # resend), then fall back to the prompt so the next message still works.
+            # A turn that fails must not crash the REPL. Transient stream
+            # failures are already retried with backoff inside the LLM client;
+            # anything surfacing here is either terminal for the turn or
+            # deterministic, so resending the whole turn would just duplicate
+            # cost and side effects. The history rollback in Agent.run leaves a
+            # clean slate for the next prompt.
             answer = None
-            for attempt in (1, 2):
-                try:
-                    answer = session.run(task)
-                    break
-                except BudgetExceeded as exc:
-                    print(f"\n[budget] {exc}")
-                    break
-                except KeyboardInterrupt:
-                    # Ctrl-C aborts the in-flight turn, not the whole session.
-                    # Agent.run has rolled history back to before this turn, so
-                    # the next prompt starts clean. Ctrl-D still exits the REPL.
-                    print("\n[interrupted] turn aborted.")
-                    break
-                except Exception as exc:
-                    if attempt == 1:
-                        print(f"\n[retry] stream failed ({type(exc).__name__}) — resending…")
-                        continue
-                    print(f"\n[error] {type(exc).__name__}: {exc} — turn aborted.")
+            try:
+                answer = session.run(task)
+            except BudgetExceeded as exc:
+                print(f"\n[budget] {exc}")
+            except KeyboardInterrupt:
+                # Ctrl-C aborts the in-flight turn, not the whole session.
+                # Ctrl-D still exits the REPL.
+                print("\n[interrupted] turn aborted.")
+            except Exception as exc:
+                print(f"\n[error] {type(exc).__name__}: {exc} — turn aborted.")
             if answer is None:
                 continue
             # The answer already streamed live via llm_token; just close its line
