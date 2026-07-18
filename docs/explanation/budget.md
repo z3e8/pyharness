@@ -58,6 +58,25 @@ input/output token rates, with cached input tokens billed at a fraction (cache
 reads ~0.1×, cache writes ~1.25×). Rates live in `PRICING` and should be verified
 against current Anthropic pricing.
 
+## Caching and stream reliability
+
+The client (`pyharness/llm/client.py`) sets prompt-cache breakpoints on every
+request: one on the system prompt (which also covers the tool definitions
+rendered before it) and one on the message history — the last message, or, once
+output elision starts rewriting mid-history, the elision frontier the agent
+passes as `cache_anchor`. Repeat prefixes then bill at cache-read rates instead
+of full price, step over step.
+
+Every streamed completion is also retried on transient failure — read timeouts
+on a silent stream, dropped connections, 429/529/5xx — up to 3 attempts with
+exponential backoff (`STREAM_ATTEMPTS`). This covers mid-stream failures the
+SDK's own `max_retries` never sees, and a retry re-reads the prefill the failed
+attempt already cached. Deterministic errors (bad request, auth) raise
+immediately. The agent loop additionally surfaces truncation instead of hiding
+it: a `max_tokens` cutoff mid-tool-call is answered with an error tool_result
+(never executed) so the model retakes the step, and a `refusal` stop ends the
+turn as `(stopped: refusal)`.
+
 ## Seeing spend
 
 Each turn records a budget snapshot to `trace.jsonl` and the CLI prints
