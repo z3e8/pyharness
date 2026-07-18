@@ -587,6 +587,67 @@ def test_web_fetch_falls_back_when_extract_content_declines(tmp_path, monkeypatc
     assert "## LINKS" in out  # affordances unaffected by the content fallback
 
 
+# A JS-rendered shell as fetch sees it: a big nav, an empty mount point, and no
+# body text — the shape the thin-extraction warning exists to flag.
+_NAV_ONLY_HTML = (
+    '<html><head><title>App</title></head><body><nav>'
+    + "".join(f'<a href="/section/{i}">S{i}</a>' for i in range(30))
+    + '</nav><div id="root"></div></body></html>'
+)
+
+# A real article that also carries a large nav: plenty of links, but the body
+# is substantial — must NOT trigger the warning.
+_ARTICLE_HTML = (
+    '<html><head><title>Guide</title></head><body><nav>'
+    + "".join(f'<a href="/topic/{i}">T{i}</a>' for i in range(30))
+    + "</nav><article>"
+    + "".join(
+        f"<p>Paragraph {i}: a full sentence of real body content that carries "
+        "actual information for the reader to use.</p>"
+        for i in range(40)
+    )
+    + "</article></body></html>"
+)
+
+
+def _client_serving(html):
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, method, url, **kwargs):
+            return _FakeResp(text=html, url=url, content_type="text/html")
+
+        def close(self):
+            pass
+
+    return _Client
+
+
+def test_web_fetch_warns_on_thin_extraction(tmp_path, monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", _client_serving(_NAV_ONLY_HTML))
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    out = web.fetch("https://example.com/app")
+    # The warning is the first line, and the page map still rides behind it.
+    assert out.startswith("[warning: extraction looks thin (")
+    assert "30 links" in out and "JS-rendered" in out
+    assert "## LINKS" in out
+
+
+def test_web_fetch_no_thin_warning_on_real_article(tmp_path, monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", _client_serving(_ARTICLE_HTML))
+    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    out = web.fetch("https://example.com/guide")
+    # Same 30-link nav, but a substantial body: a link-heavy good page is not
+    # flagged. This is the false-positive regression test for the heuristic.
+    assert "extraction looks thin" not in out
+    assert "Paragraph 1" in out and "## LINKS" in out
+
+
 def test_sink_redacted_recurses_into_lists():
     from pyharness.security.sink import SecretSink
 

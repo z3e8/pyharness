@@ -7,7 +7,7 @@ from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from . import exa
 from .http import HttpSessionCapability
-from .page import render_page_map
+from .page import render_page_map, thin_extraction_warning
 
 
 class WebCapability:
@@ -97,7 +97,10 @@ class WebCapability:
         if you want to drive HTTP directly instead of reading the markdown.
 
         Only static HTML is parsed — links and forms rendered by JavaScript need
-        the `browser` capability.
+        the `browser` capability. When extraction looks thin (almost no body
+        text but plenty of links — the shape of a JS-rendered shell), the page
+        map starts with a single `[warning: extraction looks thin …]` line;
+        treat the content as suspect and reach for the browser instead.
 
         Pass `save="path"` (or fetch a binary body) and the full content lands in
         the workspace instead; the return is then a note pointing at the file plus
@@ -115,9 +118,14 @@ class WebCapability:
             save=save,
         )
         if result["text"] is not None:
-            return render_page_map(
+            page = render_page_map(
                 result["text"], result["links"], result["forms"], result["title"]
             )
+            # Flag likely JS-rendered shells inline (non-HTML bodies carry no
+            # links, so they can never trigger). The saved-to-disk path below is
+            # exempt: its inline body is empty by design, not thin extraction.
+            warning = thin_extraction_warning(result["text"], result["links"])
+            return f"{warning}\n\n{page}" if warning else page
         note = (
             f"[saved {result['bytes']} bytes to {result['path']} "
             f"({result['content_type']}) — read/parse it from the workspace]"

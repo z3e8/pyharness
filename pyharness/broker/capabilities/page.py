@@ -40,6 +40,30 @@ _HTML_BLOCK_TAGS = frozenset(
 _MAX_DISPLAY_LINKS = 100
 _MAX_SELECT_OPTIONS = 30
 
+# Thin-extraction heuristic: a JS-rendered shell reduces to a pile of nav links
+# with almost no body text, which reads exactly like a good page unless flagged
+# (observed: rtings.com returning 5.5KB of header links, no article). A real
+# article rarely extracts to under ~2KB of prose while carrying 20+ links, so
+# short body + plentiful links is the signal. Heuristic only — a genuinely tiny
+# link-dense page gets a spurious warning line, which costs one line of context.
+_THIN_BODY_CHARS = 2000
+_THIN_MIN_LINKS = 20
+
+
+def thin_extraction_warning(content: str, links: list[dict]) -> str | None:
+    """One warning line when the extracted body looks like a JS-rendered shell
+    (under `_THIN_BODY_CHARS` of text alongside `_THIN_MIN_LINKS`+ links), or
+    None for a healthy page. `web.fetch` prepends it to the page map so the
+    agent sees the signal inline, exactly where it reads the page."""
+    body_chars = len((content or "").strip())
+    if body_chars < _THIN_BODY_CHARS and len(links) >= _THIN_MIN_LINKS:
+        return (
+            f"[warning: extraction looks thin ({body_chars} chars of body, "
+            f"{len(links)} links) — page is likely JS-rendered; use the "
+            "browser capability for this site]"
+        )
+    return None
+
 
 class _TextExtractor(HTMLParser):
     """Collect visible text from an HTML document, dropping script/style/head
