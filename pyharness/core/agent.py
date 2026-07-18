@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import platform
 import time
 from datetime import datetime
@@ -251,6 +252,7 @@ class Agent:
         workspace_root: str | Path | None = None,
         on_event: Callable[[str, str], None] | None = None,
         media=None,
+        media_dir: str | Path | None = None,
         preamble_extra: str = "",
         keep_outputs: int = 8,
     ):
@@ -270,6 +272,9 @@ class Agent:
         # Parent-side outbox a cell's capabilities fill with images (browser.look);
         # drained after each kernel.run into the tool_result's content blocks.
         self.media = media
+        # Where drained images are persisted for the live viewer (<session>/media);
+        # the trace only records that an image was in context, not its bytes.
+        self.media_dir = Path(media_dir) if media_dir is not None else None
 
     def run(self, task: str, messages: list[dict]) -> str:
         messages.append({"role": "user", "content": task})
@@ -356,6 +361,8 @@ class Agent:
                 # tool_result content stays a plain string — unchanged for every
                 # text-only cell; with images it becomes a text block + image blocks.
                 images = self.media.drain() if self.media is not None else []
+                if images and self.media_dir is not None:
+                    self._persist_media(images, step)
                 content = metered if not images else [{"type": "text", "text": metered}, *images]
                 results.append(
                     {"type": "tool_result", "tool_use_id": call.id, "content": content}
@@ -363,6 +370,26 @@ class Agent:
             messages.append({"role": "user", "content": results})
 
         return "(stopped: reached max_steps)"
+
+    def _persist_media(self, images: list[dict], step: int) -> None:
+        """Write drained image blocks to `<session>/media/` and record a `media`
+        trace event per image so the live viewer can show what the model saw
+        (the message-history snapshot elides the bytes). Fail-open: a media
+        write must never break the cell that produced it."""
+        try:
+            self.media_dir.mkdir(parents=True, exist_ok=True)
+            session = self.media_dir.parent.name
+            for i, block in enumerate(images):
+                source = block.get("source") or {}
+                if source.get("type") != "base64":
+                    continue
+                media_type = source.get("media_type", "image/png")
+                ext = media_type.rsplit("/", 1)[-1].replace("jpeg", "jpg")
+                name = f"turn{step:03d}-{i}.{ext}"
+                (self.media_dir / name).write_bytes(base64.b64decode(source["data"]))
+                self.on_event("media", "", src=f"/media/{session}/{name}", media_type=media_type)
+        except Exception:  # noqa: BLE001 — observability, never a blocker
+            pass
 
     def _context_meter(self, usage, step: int) -> str:
         """The status line appended to each cell result. Empty when the client

@@ -356,6 +356,7 @@ class Session:
             workspace_root=self.workspace.dir,
             on_event=on_event_traced,
             media=self.media,
+            media_dir=self.workspace.root / "media",
             preamble_extra=preamble if preamble is not None else self._render_history_preamble(),
             keep_outputs=keep_outputs,
         )

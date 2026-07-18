@@ -140,6 +140,26 @@ def test_sse_streams_live_appends(server):
     assert got[2]["text"] == "done"
 
 
+def test_serves_media_files(server):
+    srv, tmp_path = server
+    media = tmp_path / "run-1" / "media"
+    media.mkdir(parents=True)
+    (media / "turn001-0.png").write_bytes(b"\x89PNGdata")
+
+    resp = httpx.get(srv.url + "/media/run-1/turn001-0.png")
+    assert resp.status_code == 200
+    assert resp.content == b"\x89PNGdata"
+    assert resp.headers["content-type"] == "image/png"
+
+
+def test_media_route_rejects_path_traversal(server):
+    srv, tmp_path = server
+    (tmp_path / "secret.txt").write_text("nope")
+    # Escaping the container (../secret.txt) must 404, not read the file.
+    assert httpx.get(srv.url + "/media/..%2f/secret.txt").status_code == 404
+    assert httpx.get(srv.url + "/media/run-1/missing.png").status_code == 404
+
+
 def test_start_in_thread_falls_back_to_an_ephemeral_port(tmp_path):
     url1 = start_in_thread(tmp_path, port=0)
     assert url1 is not None

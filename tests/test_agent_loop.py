@@ -172,6 +172,31 @@ def test_agent_attaches_image_blocks_from_outbox():
     assert base64.b64decode(content[1]["source"]["data"]) == b"\xff\xd8jpeg"
 
 
+def test_agent_persists_images_and_emits_media_events(tmp_path):
+    import base64
+
+    from pyharness.core.media import MediaOutbox
+
+    outbox = MediaOutbox()
+    events = []
+    llm = ScriptedLLM([_tool_completion("look()"), _text_completion("done")])
+    media_dir = tmp_path / "sess-1" / "media"
+    agent = Agent(
+        llm, _LookKernel(outbox), Budget(),
+        media=outbox, media_dir=media_dir,
+        on_event=lambda k, t, **kw: events.append((k, kw)),
+    )
+
+    agent.run("look at it", [])
+
+    files = sorted(media_dir.glob("*.jpg"))
+    assert len(files) == 1
+    assert files[0].read_bytes() == b"\xff\xd8jpeg"
+    media_events = [kw for (k, kw) in events if k == "media"]
+    assert len(media_events) == 1
+    assert media_events[0]["src"] == f"/media/sess-1/{files[0].name}"
+
+
 def test_agent_tool_result_is_plain_string_without_images():
     # No outbox, no images -> content stays a bare string exactly as before.
     llm = ScriptedLLM([_tool_completion("print('hi')"), _text_completion("done")])
