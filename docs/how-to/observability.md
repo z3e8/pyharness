@@ -8,10 +8,20 @@ second half).*
 
 The primary human view. A small local page (stdlib, no container) that tails
 the session's `trace.jsonl` and renders it **as it happens**: the current turn,
-each code cell and its output, in-flight actions with elapsed time, pending
-approvals (highlighted — the thing the session is waiting on), errors, and
-running spend. Because the JSONL record is written synchronously by the
-session, the view is real-time by construction.
+each code cell and its output (collapsible, with copy), in-flight actions with
+elapsed time, a sticky banner for the pending approval the session is waiting
+on, errors, and running spend. Each `llm_call` also carries a collapsed
+**full-prompt view** (system prompt + every message that pass) so you can see
+exactly what the model saw. A filter/search toolbar hides kinds and finds text.
+Because the JSONL record is written synchronously by the session, the view is
+real-time by construction.
+
+**Sub-agents.** When the session `spawn`s a child, the viewer follows the whole
+session *tree* — the child's own turns stream into a nested, collapsible panel
+opened at its spawn point, with a live status dot and a spent/budget readout,
+and its cost folds into the header total. Screenshots a cell staged
+(`browser.look`) are persisted under `<session>/media/` and rendered inline in
+the owning lane.
 
 It starts automatically with the CLI (`make run` prints
 `[watch] live view → http://127.0.0.1:6061`; disable with
@@ -24,10 +34,11 @@ pyharness-watch .sessions/cli-...   # pin one session
 pyharness-watch --port 7000
 ```
 
-Pointed at a directory of sessions it follows the most recently active one and
-switches automatically when a new session starts. It reads only the trace file,
-so it works on live sessions started elsewhere and on finished ones (the full
-history replays on load).
+Pointed at a directory of sessions it follows the most recently active *root*
+session (plus any sub-agents it spawns) and switches the top-level view only
+when a genuinely new root session starts — a running sub-agent never steals the
+view. It reads only the trace files, so it works on live sessions started
+elsewhere and on finished ones (the full history replays on load).
 
 ## Optional: OTel export (Phoenix)
 
@@ -67,7 +78,9 @@ deny), `approval_pending` before an approval prompt blocks on the human and
 `approval_resolved` after, and `llm_start` before each completion (paired by
 `llm_call`). A start without a matching end *is* the thing currently running —
 or stuck — so a live view (or a `tail -f`) can always answer "what is it doing
-right now, and what is it waiting on".
+right now, and what is it waiting on". A `spawn` (parent side, with the child
+dir name) and `spawned_by` (child side) bracket a sub-agent; a `media` event
+records a screenshot persisted under `<session>/media/`.
 
 ## What controls the OTel export
 
