@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence
 
 from ..obs import telemetry
 from ..budget import Budget
@@ -66,6 +66,28 @@ def _thinking_config(model: str) -> dict | None:
     return None
 
 
+def _cache_marked_system(system: "str | Sequence[str] | None") -> list[dict] | None:
+    """The request's `system` as cache-marked text blocks, or None when empty.
+
+    A single string is one block with a breakpoint at its end. A sequence of
+    segments becomes one block each, every segment boundary a breakpoint — this
+    is how the caller separates the byte-stable static prose from the per-turn
+    dynamic preamble (date, workspace, spawn block). Without the split the whole
+    system is one block whose single end-breakpoint sits *after* the changing
+    preamble, so the ~1,600-word static prefix misses cache on every turn whose
+    clock minute, workspace, or spawn budget differs; splitting lets the static
+    block cache on its own. Empty segments drop out; if nothing survives, None.
+    The caller keeps `system` to two segments so that with the message anchor
+    this stays within the API's 4-breakpoint-per-request limit."""
+    segments = [system] if isinstance(system, str) else list(system or [])
+    blocks = [
+        {"type": "text", "text": seg, "cache_control": {"type": "ephemeral"}}
+        for seg in segments
+        if seg
+    ]
+    return blocks or None
+
+
 def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> list[dict]:
     """The request's message list with one `cache_control` breakpoint added,
     without mutating the caller's history — markers left on history dicts would
@@ -74,9 +96,9 @@ def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> li
     The marker goes on the last content block of `messages[cache_anchor]` when
     given (the caller's newest byte-stable message — see Agent's elision
     frontier), else of the last message (full-history incremental caching:
-    each step's entry extends the previous one). Together with the system
-    breakpoint that is 2 of the 4 allowed markers. Prompts below the model's
-    minimum cacheable prefix silently don't cache — the marker is harmless."""
+    each step's entry extends the previous one). Together with the (up to two)
+    system breakpoints that is at most 3 of the 4 allowed markers. Prompts below
+    the model's minimum cacheable prefix silently don't cache — marker harmless."""
     if not messages:
         return messages
     idx = cache_anchor if cache_anchor is not None and 0 <= cache_anchor < len(messages) else len(messages) - 1
@@ -295,7 +317,7 @@ class AnthropicLLM:
     def complete(
         self,
         *,
-        system: str | None = None,
+        system: str | Sequence[str] | None = None,
         messages: list[dict],
         tier: str = "cheap",
         tools: list[dict] | None = None,
@@ -321,19 +343,20 @@ class AnthropicLLM:
             "max_tokens": max_tokens or TIER_MAX_TOKENS.get(tier, self._max_tokens),
             "messages": _cache_marked_messages(messages, cache_anchor),
         }
-        if system:
-            kwargs["system"] = [
-                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-            ]
+        system_blocks = _cache_marked_system(system)
+        if system_blocks is not None:
+            kwargs["system"] = system_blocks
         if tools:
             kwargs["tools"] = tools
         thinking = _thinking_config(model)
         if thinking is not None:
             kwargs["thinking"] = thinking
 
+        # Telemetry and the trace want the flat prompt, not the cache-marked blocks.
+        system_text = system if isinstance(system, str) else "".join(system or [])
         for attempt in range(1, STREAM_ATTEMPTS + 1):
             try:
-                return self._complete_once(kwargs, model, tier, system, messages, on_token, on_thinking)
+                return self._complete_once(kwargs, model, tier, system_text, messages, on_token, on_thinking)
             except Exception as exc:  # noqa: BLE001 — classified below
                 if attempt == STREAM_ATTEMPTS or not self._retryable(exc):
                     raise

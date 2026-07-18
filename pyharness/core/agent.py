@@ -307,9 +307,18 @@ class Agent:
             raise
 
     def _run_loop(self, messages: list[dict]) -> str:
-        system = f"{SYSTEM_PROMPT}\n\n{render_context(self.workspace_root)}"
+        # Split the system prompt at the static/dynamic seam so the client can
+        # put a cache breakpoint between them: SYSTEM_PROMPT is byte-stable, but
+        # the preamble carries the clock (to the minute), workspace, and spawn
+        # walls, which change turn-to-turn and per-child. As one block the whole
+        # ~1,600-word prefix would miss cache whenever the preamble differs; as
+        # two, the static prose caches on its own. The two segments concatenate
+        # to exactly the old string, so the model sees an identical prompt.
+        dynamic = f"\n\n{render_context(self.workspace_root)}"
         if self.preamble_extra:
-            system = f"{system}\n\n{self.preamble_extra}"
+            dynamic = f"{dynamic}\n\n{self.preamble_extra}"
+        system_segments = [SYSTEM_PROMPT, dynamic]
+        system = SYSTEM_PROMPT + dynamic  # flat form for the trace event below
         for step in range(1, self.max_steps + 1):
             self.budget.check()
             _elide_old_outputs(messages, self.keep_outputs)
@@ -331,7 +340,7 @@ class Agent:
             self.on_event("llm_start", "", tier=self.tier)
             try:
                 completion = self.llm.complete(
-                    system=system,
+                    system=system_segments,
                     messages=messages,
                     tier=self.tier,
                     tools=[RUN_PYTHON_TOOL],

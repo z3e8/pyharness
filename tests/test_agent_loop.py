@@ -66,6 +66,24 @@ def test_agent_defaults_to_mid_tier():
     assert llm.tiers == ["mid"]
 
 
+def test_agent_splits_system_into_static_and_dynamic_segments():
+    from pyharness.core.agent import SYSTEM_PROMPT
+
+    llm = ScriptedLLM([_text_completion("done")])
+    agent = Agent(llm, Kernel({}), Budget())
+    agent.run("answer", [])
+
+    system = llm.systems[0]
+    # Two cache segments: the byte-stable static prose, then the dynamic
+    # preamble. The static segment is exactly SYSTEM_PROMPT so it caches on its
+    # own regardless of the changing preamble; concatenation reproduces the old
+    # single-string prompt.
+    assert isinstance(system, list) and len(system) == 2
+    assert system[0] == SYSTEM_PROMPT
+    assert "## Session" in system[1]
+    assert (system[0] + system[1]).startswith(SYSTEM_PROMPT + "\n\n## Session")
+
+
 class FailingLLM:
     """Raises on complete() to simulate a stream that dies mid-turn."""
 
@@ -136,7 +154,7 @@ def test_dynamic_context_is_appended_to_system_prompt(tmp_path):
 
     agent.run("answer", [])
 
-    system = llm.systems[0]
+    system = "".join(llm.systems[0])  # segmented into static + dynamic blocks
     assert "You are the orchestrator of pyharness." in system  # static contract
     assert "## Session" in system  # dynamic preamble
     assert str(tmp_path) in system

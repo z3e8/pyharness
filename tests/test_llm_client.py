@@ -18,6 +18,7 @@ from pyharness.llm.client import (
     AnthropicLLM,
     StreamStalled,
     _cache_marked_messages,
+    _cache_marked_system,
 )
 
 
@@ -177,6 +178,43 @@ def test_request_carries_cache_markers(monkeypatch):
     # past the API's 4-breakpoint limit.
     assert "cache_control" not in messages[-1]["content"][-1]
     assert messages[0]["content"] == "task"
+
+
+def test_cache_marked_system_segments_get_a_breakpoint_each():
+    # A sequence becomes one block per segment, each with its own breakpoint —
+    # the static prose caches independently of the changing dynamic tail.
+    blocks = _cache_marked_system(["static prose", "\n\ndynamic preamble"])
+    assert blocks == [
+        {"type": "text", "text": "static prose", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "\n\ndynamic preamble", "cache_control": {"type": "ephemeral"}},
+    ]
+
+
+def test_cache_marked_system_string_is_one_block():
+    assert _cache_marked_system("just a string") == [
+        {"type": "text", "text": "just a string", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_cache_marked_system_drops_empties():
+    assert _cache_marked_system(["kept", ""]) == [
+        {"type": "text", "text": "kept", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert _cache_marked_system(None) is None
+    assert _cache_marked_system("") is None
+    assert _cache_marked_system(["", ""]) is None
+
+
+def test_request_carries_split_system_breakpoints(monkeypatch):
+    llm = _llm(monkeypatch, [FakeStream(resp=_response())])
+    llm.complete(
+        system=["static", "\n\ndynamic"],
+        messages=[{"role": "user", "content": "task"}],
+        tier="cheap",
+    )
+    sent = llm._client.messages.calls[0]["system"]
+    assert [b["text"] for b in sent] == ["static", "\n\ndynamic"]
+    assert all(b["cache_control"] == {"type": "ephemeral"} for b in sent)
 
 
 def test_cache_anchor_marks_the_anchor_message(monkeypatch):

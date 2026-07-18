@@ -64,11 +64,18 @@ against current Anthropic pricing.
 ## Caching and stream reliability
 
 The client (`pyharness/llm/client.py`) sets prompt-cache breakpoints on every
-request: one on the system prompt (which also covers the tool definitions
-rendered before it) and one on the message history — the last message, or, once
+request. The system prompt is sent as two segments, each with its own
+breakpoint: the byte-stable static prose (`SYSTEM_PROMPT`, which also covers the
+tool definitions rendered before it) and the dynamic preamble that follows it.
+The split matters because the preamble carries the clock (to the minute), the
+workspace, and — for a spawned child — its capability set, so it changes
+turn-to-turn and per-child; as one block the whole ~1,600-word prefix would miss
+cache whenever any of that differs, but split, the static prose caches on its
+own. A third breakpoint sits on the message history — the last message, or, once
 output elision starts rewriting mid-history, the elision frontier the agent
-passes as `cache_anchor`. Repeat prefixes then bill at cache-read rates instead
-of full price, step over step.
+passes as `cache_anchor`. That is three of the API's four allowed markers. Repeat
+prefixes then bill at cache-read rates instead of full price, step over step and
+across sibling sub-agents.
 
 The client consumes the raw event stream (never the SDK's `text_stream`, which
 drops everything but text deltas): text deltas stream to the display, and
