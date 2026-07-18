@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -17,8 +18,11 @@ class TraceLog:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Spawned children run in parent-side threads and events may funnel into
+        # one file; serialize appends so lines never interleave mid-record.
+        self._lock = threading.Lock()
 
     def record(self, kind: str, text: str = "", **extra: object) -> None:
         entry = {"ts": time.time(), "kind": kind, "text": text, **extra}
-        with self.path.open("a") as f:
+        with self._lock, self.path.open("a") as f:
             f.write(json.dumps(entry, default=str) + "\n")

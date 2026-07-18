@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import threading
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -49,7 +50,9 @@ def child_main(
         if msg[0] == "shutdown":
             return
         if msg[0] == "run":
-            send_json(conn, ("done", _run_cell(conn, namespace, msg[1])))
+            output = _run_cell(conn, namespace, msg[1])
+            with _PIPE_LOCK:  # never interleave with a straggler thread's call frame
+                send_json(conn, ("done", output))
 
 
 def _run_cell(conn, namespace: dict, code: str) -> str:
@@ -65,15 +68,25 @@ def _run_cell(conn, namespace: dict, code: str) -> str:
     return truncate(out.getvalue().rstrip()) or "(no output)"
 
 
+# One pipe, one request/reply in flight at a time. Agent code that calls
+# capabilities from threads would otherwise interleave frames and cross
+# replies — the lock serializes such calls instead of corrupting the protocol.
+# (Parallelism belongs to spawn()/wait(), which fan out parent-side.)
+_PIPE_LOCK = threading.Lock()
+
+
 def _call(conn, op: str, args, kwargs):
     """Send a capability call to the parent and return its result. Arguments
     must be JSON-transferable (the parent never unpickles child data); a
     non-transferable one fails here with a clear error instead of crossing."""
-    try:
-        send_json(conn, ("call", op, args, kwargs))
-    except TypeError as exc:
-        raise TypeError(f"argument to {op!r} is not transferable to the broker: {exc}") from None
-    return _recv_result(conn)
+    with _PIPE_LOCK:
+        try:
+            send_json(conn, ("call", op, args, kwargs))
+        except TypeError as exc:
+            raise TypeError(
+                f"argument to {op!r} is not transferable to the broker: {exc}"
+            ) from None
+        return _recv_result(conn)
 
 
 def _make_proxy(conn, op: str):

@@ -53,7 +53,8 @@ Session(
 
 Four further keyword args (`capabilities`, `audit`, `workspace_dir`, `preamble`)
 exist for the `spawn()` builtin's recursive child sessions — set by
-`Session._spawn_child`, not by callers. A spawned child returns a `SpawnResult`
+`Session._start_child`, not by callers. A spawned child runs in a parent-side
+thread; `spawn()` returns its handle and `wait()` returns its `SpawnResult`
 (`ok`, `report`, `outcome`, `session`, `spent_usd`, `steps`) to the kernel that
 spawned it; see [builtins](builtins.md#delegation).
 

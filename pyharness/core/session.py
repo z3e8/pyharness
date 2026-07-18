@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterable
@@ -27,7 +29,7 @@ from ..broker.capabilities import (
 )
 from ..broker.capabilities.browser import MUTATING_ACTIONS as MUTATING_BROWSER_ACTIONS
 from ..broker.capabilities.http import MUTATING_METHODS
-from ..broker.capabilities.spawn import SpawnCapability, SpawnResult
+from ..broker.capabilities.spawn import ChildRun, SpawnCapability, SpawnResult
 from ..broker.capabilities.tools import unvetted_mcp_call
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
@@ -157,6 +159,19 @@ class Session:
         self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
+        # The raw display callback (the CLI renderer), kept so spawned children
+        # running in background threads can surface progress lines to it.
+        self._display_event = on_event
+        # Spawned children run in parent-side threads, so a child may ask for
+        # approval while the parent (or a sibling) is also prompting — serialize
+        # every prompt behind one lock so the terminal shows one at a time.
+        self._approval_lock = threading.Lock()
+        if approver is not None:
+            inner_approver = approver
+
+            def approver(request, _inner=inner_approver, _lock=self._approval_lock):
+                with _lock:
+                    return _inner(request)
 
         # One event sink shared by the agent loop and any capability that emits
         # events (notify): everything lands in trace.jsonl, then the caller's
@@ -317,9 +332,12 @@ class Session:
         if self._has("notify"):
             core_caps.append(NotifyCapability(on_event=on_event_traced))
         # Real sub-agents — parent sessions only: a child's capability set never
-        # includes spawn, so delegation depth is one by construction.
+        # includes spawn, so delegation depth is one by construction. The ref is
+        # kept so close() can cooperatively stop children still running.
+        self._spawn_cap: SpawnCapability | None = None
         if self._caps is None:
-            core_caps.append(SpawnCapability(self._spawn_child))
+            self._spawn_cap = SpawnCapability(self._start_child)
+            core_caps.append(self._spawn_cap)
         for capability in core_caps:
             self.broker.register(capability)
 
@@ -435,7 +453,7 @@ class Session:
             "  point at files instead."
         )
 
-    def _spawn_child(
+    def _start_child(
         self,
         task: str,
         *,
@@ -443,9 +461,12 @@ class Session:
         budget_usd: float | None,
         max_steps: int,
         tier: str,
-    ) -> SpawnResult:
-        """Build, run, and settle one spawned child session (the working half of
-        the `spawn` builtin — the gated surface lives in SpawnCapability)."""
+    ) -> ChildRun:
+        """Build one spawned child session and start it running in a parent-side
+        thread (the working half of the `spawn` builtin — the gated surface
+        lives in SpawnCapability). The build is synchronous so the handle the
+        caller gets back names a session whose workspace and trace already
+        exist; only the run is asynchronous."""
         granted = frozenset(tools) - CHILD_BODY  # body names are accepted, implied
         unknown = granted - CHILD_GRANTABLE
         if unknown:
@@ -455,6 +476,7 @@ class Session:
 
         self._spawn_seq += 1
         name = f"{self.workspace.root.name}-spawn-{self._spawn_seq:02d}"
+        short = f"spawn-{name.rsplit('-spawn-', 1)[1]}"
         # A sibling session dir, so the index/inspect_session/`pyharness show`
         # all see the child exactly like any other session.
         child_root = self.workspace.root.parent / name
@@ -474,12 +496,27 @@ class Session:
         )
 
         # Approvals bubble to the same human, labeled with the child's name so
-        # the approver can tell whose plan is asking.
+        # the approver can tell whose plan is asking. The parent's approver is
+        # already serialized behind the session approval lock, so concurrent
+        # children prompt one at a time.
         parent_approver = self.broker.approver
         approver = None
         if parent_approver is not None:
-            def approver(request, _name=name):  # noqa: E306
+            def approver(request, _name=short):  # noqa: E306
                 return parent_approver(replace(request, summary=f"[{_name}] {request.summary}"))
+
+        # The child's own events land in its trace (the live viewer lanes them
+        # from there); the milestones additionally surface on the parent's
+        # display stream so the terminal shows background children progressing.
+        def child_display(kind: str, text: str, _name=short) -> None:
+            if self._display_event is None or kind not in (
+                "task", "code", "answer", "error", "notify"
+            ):
+                return
+            brief = " ".join(text.split())
+            brief = brief[:100] + "…" if len(brief) > 100 else brief
+            line = f"[{_name}] {kind}: {brief}" if brief else f"[{_name}] {kind}"
+            self._display_event("spawn_progress", line)
 
         self.trace.record(
             "spawn", task, child=name, tools=sorted(granted),
@@ -492,6 +529,7 @@ class Session:
             vault=self.vault,
             profiles=self.profiles,
             approver=approver,
+            on_event=child_display,
             out_of_process=self._out_of_process,
             skills_dir=self.skills_dir,
             index_db=self.index_db,
@@ -503,26 +541,41 @@ class Session:
             preamble=self._child_preamble(granted, max_steps, limit),
         )
         child.trace.record("spawned_by", parent=self.id, parent_name=self.workspace.root.name)
-        try:
-            report = child.run(task)
-        except Exception as exc:  # noqa: BLE001 — a failed child is data, not a crash
-            report = f"(spawn failed: {exc!r})"
-        finally:
-            child.close()
-            self.budget.absorb(child_budget)
 
-        from ..obs.transcript import session_digest
+        def _run() -> SpawnResult:
+            try:
+                report = child.run(task)
+            except Exception as exc:  # noqa: BLE001 — a failed child is data, not a crash
+                report = f"(spawn failed: {exc!r})"
+            finally:
+                child.close()
+                self.budget.absorb(child_budget)
 
-        digest = session_digest(child_root)
-        outcome = digest["outcome"]
-        return SpawnResult(
-            ok=outcome == "answered",
-            report=report,
-            outcome=outcome,
-            session=name,
-            spent_usd=round(child_budget.spent_usd, 6),
-            steps=digest["steps"],
-        )
+            from ..obs.transcript import session_digest
+
+            digest = session_digest(child_root)
+            outcome = digest["outcome"]
+            return SpawnResult(
+                ok=outcome == "answered",
+                report=report,
+                outcome=outcome,
+                session=name,
+                spent_usd=round(child_budget.spent_usd, 6),
+                steps=digest["steps"],
+            )
+
+        future: Future = Future()
+
+        def _runner() -> None:
+            try:
+                future.set_result(_run())
+            except BaseException as exc:  # noqa: BLE001 — the future is the only report channel
+                future.set_exception(exc)
+
+        # Daemon: an abandoned child must not block interpreter exit; normal
+        # teardown goes through SpawnCapability.shutdown() in close().
+        threading.Thread(target=_runner, name=name, daemon=True).start()
+        return ChildRun(name=name, future=future, budget=child_budget)
 
     def _refresh_index(self) -> None:
         """Bring the session index up to date (all remembered roots plus this
@@ -626,6 +679,13 @@ class Session:
         and any MCP server connections)."""
         if not self._closed:
             self._closed = True
+            if self._spawn_cap is not None:
+                # Cooperatively stop children still running (their budget slice
+                # drops to spent, ending them at the next step boundary) so the
+                # session_end snapshot below includes their settled spend; a
+                # child that outlives the join is abandoned and recorded.
+                for name in self._spawn_cap.shutdown():
+                    self.trace.record("spawn_abandoned", child=name)
             self.trace.record(
                 "session_end",
                 session_id=self.id,

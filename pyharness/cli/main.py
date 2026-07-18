@@ -69,6 +69,12 @@ def _trace(kind: str, text: str) -> None:
         # text emitted before a tool call); llm_start is a trace-pairing marker
         # for the live viewer. Suppress all three to avoid noise.
         return
+    if kind == "spawn_progress":
+        # A background child's milestone (task/code/answer/error), one dim line
+        # so the terminal shows spawned work progressing without drowning the
+        # parent's own stream.
+        print(f"\n\033[2m{text}{_RESET}", flush=True)
+        return
     if kind == "notify":
         # Agent-authored note to the user. Rendered standalone under a fixed
         # prefix, visually distinct from the ⚠ approval prompt, and it never

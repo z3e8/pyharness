@@ -5,6 +5,7 @@ import pickle
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import ModuleType
 
@@ -13,6 +14,10 @@ from ...tools.registry import _public_functions
 from .child import child_main
 from .protocol import RemoteError, RemoteToolSpec, recv_json
 from .sandbox import make_child_executable
+
+# Serializes the set_executable -> Process.start critical section across every
+# RemoteKernel in the process (see _start_locked).
+_START_LOCK = threading.Lock()
 
 
 class RemoteKernel:
@@ -47,10 +52,19 @@ class RemoteKernel:
         self._sbdir = None
 
     def _start(self) -> None:
+        with _START_LOCK:
+            self._start_locked()
+
+    def _start_locked(self) -> None:
         # Launch the child under the OS sandbox when enabled and supported.
-        # set_executable mutates the spawn context's launcher, so we set it just
-        # before each start (sequential) — to the sandbox wrapper, or back to the
-        # real interpreter if sandboxing is off/unsupported.
+        # set_executable mutates the spawn context's launcher — and
+        # mp.get_context("spawn") is a per-method singleton shared by every
+        # RemoteKernel in the process — so the set/start pair is serialized
+        # behind _START_LOCK: spawned children start their kernels from
+        # parent-side threads, and without the lock two concurrent starts could
+        # launch with each other's sandbox wrapper. The executable is set to the
+        # sandbox wrapper, or back to the real interpreter if sandboxing is
+        # off/unsupported.
         exe = None
         workspace_dir = self._workspace.dir if self._workspace is not None else None
         if self.sandbox or self._venv is not None:

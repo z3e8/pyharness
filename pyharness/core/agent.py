@@ -59,19 +59,30 @@ import them. This is the complete list; nothing else is callable by bare name.
         # parallel fan-out of llm() over many prompts; each Result has .ok,
         # .value, .error. Use for bulk transform work — summarize/extract/
         # classify each item — never for anything that must act.
-    spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> SpawnResult
-        # a real sub-agent: a scoped child session (own kernel, own context, own
-        # step/budget walls) that works the task to completion and returns a
-        # distilled report. SpawnResult: .ok, .report (its final message),
-        # .outcome, .session (inspect_session(.session, q) answers follow-ups),
-        # .spent_usd, .steps. tools grants capabilities by name from: web, http,
-        # browser, inbox, packages, shell, secrets, skills, history, obs,
-        # notify. The child shares your workspace but sees none of this
-        # conversation, cannot spawn further, and its approvals route to the
-        # same human. Needs human approval; costs real money — a child runs
-        # many completions. Write the task like a brief to a contractor who
-        # knows nothing: objective, output format, boundaries, and the exact
-        # workspace paths to write results to.
+    spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> str
+        # start a real sub-agent: a scoped child session (own kernel, own
+        # context, own step/budget walls) that works the task to completion in
+        # the BACKGROUND. Returns a handle immediately — collect the report
+        # with wait(). Children run in parallel: start several, keep working,
+        # wait when you need the results. tools grants capabilities by name
+        # from: web, http, browser, inbox, packages, shell, secrets, skills,
+        # history, obs, notify. The child shares your workspace but sees none
+        # of this conversation, cannot spawn further, and its approvals route
+        # to the same human. Needs human approval; costs real money — a child
+        # runs many completions. Write the task like a brief to a contractor
+        # who knows nothing: objective, output format, boundaries, and the
+        # exact workspace paths to write results to.
+    wait(handles=None, timeout=None) -> SpawnResult | list[SpawnResult]
+        # block until spawned children finish and return their reports — a
+        # single SpawnResult for one handle, a list (in order) for a list,
+        # every child so far for None. SpawnResult: .ok, .report (the child's
+        # final message), .outcome, .session (inspect_session(.session, q)
+        # answers follow-ups), .spent_usd, .steps. On timeout (seconds) raises
+        # TimeoutError; the children keep running and a later wait() still
+        # collects them.
+    spawn_status() -> list[dict]
+        # one row per spawned child: session (the handle), state
+        # ("running"/"done"), spent_usd — the cheap glance while children work.
   Tool discovery — find a tool, inspect it, then load and call it:
     search_tools(query="", include_all=False) -> str
         # ranked headers only (name, summary, source/category). Search by what you
@@ -183,6 +194,10 @@ Guidance:
   fetch many pages, triaging a huge log, an isolated experiment — where the
   bulk would otherwise flood your context. Don't spawn what you can do in a
   couple of cells, or work that needs what only this conversation knows.
+  Children run in the background: fan independent chunks out as several
+  spawns in one cell, do your own work, then wait() for the reports. Never
+  use threads to parallelize capability calls — spawn/wait is the parallel
+  path.
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.

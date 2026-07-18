@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+from concurrent.futures import Future
+from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
 
 from ...security.policy import ActionCategory
@@ -32,26 +34,47 @@ class SpawnResult:
     steps: int
 
 
-class SpawnCapability:
-    """Real sub-agents. A spawned child is a full scoped session — own kernel,
-    own context, own step and budget walls, a capability allowlist — that runs
-    one task to completion and hands back a distilled report. Depth is one by
-    construction: a child's capability set never includes spawn.
+@dataclass
+class ChildRun:
+    """One running (or finished) spawned child, tracked parent-side. `future`
+    resolves to the child's `SpawnResult` — the runner converts every failure
+    into a result, so `future.result()` never raises for a failed child.
+    `budget` is the child's own slice, exposed for live status and for the
+    cooperative cancel in `shutdown` (dropping the limit to spent makes the
+    child's next budget check raise, ending it at a step boundary)."""
 
-    The heavy lifting (building the child session) lives on the parent
-    `Session` and is injected as `spawn_session`; this class owns the gated
-    surface, the count cap, and the approval preview."""
+    name: str
+    future: Future
+    budget: object
+
+
+class SpawnCapability:
+    """Real sub-agents, asynchronous. `spawn` builds a full scoped child
+    session — own kernel, own context, own step and budget walls, a capability
+    allowlist — starts it in a parent-side thread, and returns a handle (the
+    child session's name) immediately. `wait` collects distilled reports;
+    `spawn_status` shows what is still running and what it has spent. Depth is
+    one by construction: a child's capability set never includes spawn.
+
+    Handles are plain strings because they must round-trip the child->parent
+    IPC boundary, which carries JSON only.
+
+    The heavy lifting (building and running the child session) lives on the
+    parent `Session` and is injected as `start_child`; this class owns the
+    gated surface, the count cap, the handle registry, and the approval
+    preview."""
 
     name = "spawn"
 
-    def __init__(self, spawn_session, session_cap: int = 16):
-        self._spawn_session = spawn_session
+    def __init__(self, start_child, session_cap: int = 16):
+        self._start_child = start_child
         self.session_cap = session_cap
         self._spawned = 0
         self._lock = threading.Lock()
+        self._children: dict[str, ChildRun] = {}
 
     def exports(self) -> dict:
-        return {"spawn": self.spawn}
+        return {"spawn": self.spawn, "wait": self.wait, "spawn_status": self.spawn_status}
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
         """The approval line shows exactly what the child would be granted —
@@ -86,12 +109,70 @@ class SpawnCapability:
         budget_usd: float | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         tier: str = DEFAULT_TIER,
-    ) -> SpawnResult:
+    ) -> str:
         self._reserve()
-        return self._spawn_session(
+        child = self._start_child(
             task,
             tools=tuple(tools),
             budget_usd=budget_usd,
             max_steps=max_steps,
             tier=tier,
         )
+        self._children[child.name] = child
+        return child.name
+
+    def _resolve(self, handles) -> tuple[list[ChildRun], bool]:
+        """Handles -> tracked children. None = every child spawned so far;
+        a single handle returns single=True so wait() can unwrap its result."""
+        if handles is None:
+            return list(self._children.values()), False
+        single = isinstance(handles, str)
+        names = [handles] if single else list(handles)
+        unknown = [n for n in names if n not in self._children]
+        if unknown:
+            raise ValueError(
+                f"unknown spawn handle(s) {unknown}; known: {sorted(self._children)}"
+            )
+        return [self._children[n] for n in names], single
+
+    def wait(self, handles=None, timeout: float | None = None):
+        """Block until the given spawned children finish and return their
+        reports — a single `SpawnResult` for a single handle, else a list in
+        handle order. `handles=None` waits for every child spawned so far.
+        On `timeout` (seconds) raises TimeoutError; the children keep running
+        and their results stay collectible with a later wait()."""
+        children, single = self._resolve(handles)
+        _, pending = futures_wait([c.future for c in children], timeout=timeout)
+        if pending:
+            still = [c.name for c in children if c.future in pending]
+            raise TimeoutError(
+                f"still running after {timeout}s: {still}; "
+                "results remain collectible with wait()"
+            )
+        results = [c.future.result() for c in children]
+        return results[0] if single else results
+
+    def spawn_status(self) -> list[dict]:
+        """One row per spawned child: handle, state, and spend so far — the
+        cheap glance while children run in the background."""
+        return [
+            {
+                "session": c.name,
+                "state": "done" if c.future.done() else "running",
+                "spent_usd": round(c.budget.spent_usd, 6),
+            }
+            for c in self._children.values()
+        ]
+
+    def shutdown(self, join_timeout_s: float = 10.0) -> list[str]:
+        """Session close: cooperatively stop children still running by dropping
+        each one's budget limit to what it already spent — its next budget
+        check raises and the child settles as `stopped:budget`. Join briefly
+        (a child mid-LLM-call finishes that call first); whatever is still
+        running after the timeout is abandoned (daemon threads — they die with
+        the process) and returned so the caller can record it."""
+        running = [c for c in self._children.values() if not c.future.done()]
+        for child in running:
+            child.budget.limit_usd = child.budget.spent_usd
+        futures_wait([c.future for c in running], timeout=join_timeout_s)
+        return [c.name for c in running if not c.future.done()]

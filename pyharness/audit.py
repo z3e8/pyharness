@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -25,15 +26,20 @@ class AuditLog:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._prev = _last_hash(self.path)
+        # One chain serves the whole session tree, and spawned children run in
+        # parent-side threads — the read-hash/append/advance sequence must be
+        # atomic or concurrent writers fork the chain.
+        self._lock = threading.Lock()
 
     def record(self, **fields: object) -> None:
-        entry = {"ts": time.time(), **fields}
-        payload = json.dumps(entry, default=str, sort_keys=True)
-        entry["prev"] = self._prev
-        entry["hash"] = hashlib.sha256((self._prev + payload).encode()).hexdigest()
-        with self.path.open("a") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
-        self._prev = entry["hash"]
+        with self._lock:
+            entry = {"ts": time.time(), **fields}
+            payload = json.dumps(entry, default=str, sort_keys=True)
+            entry["prev"] = self._prev
+            entry["hash"] = hashlib.sha256((self._prev + payload).encode()).hexdigest()
+            with self.path.open("a") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+            self._prev = entry["hash"]
 
     def tail(self, limit: int = 20, action: str | None = None) -> list[dict]:
         """The most recent audited calls (oldest first), so the agent can reflect

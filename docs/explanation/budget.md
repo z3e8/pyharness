@@ -37,9 +37,12 @@ A **spawned child session** gets its own `Budget` with its own limit — the
 `budget_usd` argument capped by the parent's remaining headroom, defaulting to
 a quarter of it — so a child can never spend past its slice while it runs.
 When the child closes, its spend settles into the parent's accumulator
-(`Budget.absorb`), so the parent's totals cover the whole session tree. Spawns
-carry their own count cap too (16 per session,
-`pyharness/broker/capabilities/spawn.py`).
+(`Budget.absorb`), so the parent's totals cover the whole session tree.
+Children run in parent-side threads (spawning is asynchronous), so the
+accumulator is lock-guarded; the budget slice doubles as the cancel lever —
+closing the parent drops a running child's limit to what it already spent, so
+its next check ends it at a step boundary. Spawns carry their own count cap
+too (16 per session, `pyharness/broker/capabilities/spawn.py`).
 
 ## Tiers and pricing
 

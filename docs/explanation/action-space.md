@@ -108,7 +108,11 @@ The second tier is `spawn()` — a **real sub-agent**. A spawned child is a full
 recursive `Session`: its own kernel, its own message history, its own step and
 budget walls, and a capability allowlist granted at spawn time
 (`spawn(tools=...)`). Unlike an `llm()` worker it can act — fetch, browse, run
-code — so gather-work stays out of the orchestrator's context entirely. The
+code — so gather-work stays out of the orchestrator's context entirely.
+Spawning is **asynchronous**: the call returns a handle immediately and the
+child runs in a parent-side thread, so the orchestrator can start several
+children in one cell, keep working, and `wait()` for the distilled reports
+when it needs them (`spawn_status()` is the cheap glance in between). The
 composition reuses the same machinery everywhere: the child's side effects
 route through its own broker into the *parent's* audit chain, its approvals
 bubble to the same human (labeled), its spend settles into the parent's
