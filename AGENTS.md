@@ -84,11 +84,14 @@ prune stale notes, and move finished or superseded files into `agents/old/`.
 It is committed (so plans survive across machines and sessions), but nothing in
 it is load-bearing for the running code.
 
-Three standing docs anchor it: `README.md` (the index/map — keep current),
-`issues.md` (append-only known-issues log, fixed together later), and
-`decisions.md` (append-only log of autonomous choices agents made and why).
-Plans, handoffs, and reports live flat at the top level. The `orchestrate-workflow`
-skill drives the fan-out-to-sub-agents loop over this backlog.
+Keep it **minimal by design** — a few active files, no scratch buildup. Three
+standing docs anchor it: `README.md` (the index/map — keep current), `issues.md`
+(append-only known-issues log, fixed together later), and `decisions.md`
+(append-only log of autonomous choices agents made and why). Working docs come in
+two types — **plans** (`plan-*.md`) and **reports** (`*-report.md`) — living flat
+at the top level; retire them to `old/` once shipped or superseded. The
+`orchestrate-workflow` skill drives the fan-out-to-sub-agents loop over this
+backlog.
 
 ## Gotchas
 
