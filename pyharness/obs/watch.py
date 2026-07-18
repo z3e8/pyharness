@@ -237,8 +237,12 @@ def main() -> None:
 
 
 # The page. Self-contained (no external assets); renders the SSE stream into a
-# turn-by-turn view with a sticky "now" bar for in-flight work. All trace text
-# lands via textContent, never innerHTML — trace content is untrusted.
+# turn-by-turn view. Each event is tagged with the session it came from: root
+# events land in the main log, a spawned sub-agent's events land in a nested,
+# collapsible panel opened at its spawn point. Sticky top region holds the
+# session/spend header, the filter+search toolbar, a pending-approval banner, and
+# the "now" bar for in-flight work. All trace text lands via textContent, never
+# innerHTML — trace content is untrusted.
 PAGE = r"""<!doctype html>
 <html>
 <head>
@@ -249,29 +253,56 @@ PAGE = r"""<!doctype html>
   * { box-sizing: border-box; }
   body { margin: 0; background: #101216; color: #d6dae2;
          font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
-  header { position: sticky; top: 0; z-index: 2; background: #161a21;
-           border-bottom: 1px solid #262c37; padding: 10px 18px;
-           display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  #top { position: sticky; top: 0; z-index: 3; background: #101216;
+         border-bottom: 1px solid #262c37; }
+  header { padding: 10px 18px 8px; display: flex; gap: 16px;
+           align-items: baseline; flex-wrap: wrap; }
   header .name { font-weight: 600; color: #fff; }
   header .spend { color: #8fd18f; font-variant-numeric: tabular-nums; }
-  #now { position: sticky; top: 45px; z-index: 2; padding: 0 18px; }
+  #toolbar { padding: 0 18px 8px; display: flex; gap: 14px; align-items: center;
+             flex-wrap: wrap; font-size: 12px; color: #9aa3b2; }
+  #toolbar label { cursor: pointer; user-select: none; }
+  #toolbar input[type=search] { background: #171b22; border: 1px solid #2c3548;
+             color: #d6dae2; border-radius: 5px; padding: 3px 8px; width: 200px;
+             font: inherit; }
+  #toolbar button { background: #1d2330; border: 1px solid #2c3548; color: #b9c1cf;
+             border-radius: 5px; padding: 2px 9px; cursor: pointer; font: inherit; }
+  #toolbar button:hover { background: #262d3d; }
+  #banner:empty, #now:empty { display: none; }
+  #banner { padding: 4px 18px 8px; }
+  #banner .approval { background: #3a2d10; border: 1px solid #8a6d1a; color: #ffd977;
+             border-radius: 6px; padding: 8px 12px; display: flex; gap: 10px;
+             align-items: baseline; }
+  #banner .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; }
+  #now { padding: 0 18px 6px; }
   #now .item { background: #1d2330; border: 1px solid #2c3548; border-radius: 6px;
-               padding: 6px 12px; margin: 6px 0; display: flex; gap: 10px;
+               padding: 6px 12px; margin: 4px 0; display: flex; gap: 10px;
                align-items: baseline; }
-  #now .item.approval { background: #3a2d10; border-color: #8a6d1a; color: #ffd977; }
   #now .elapsed { margin-left: auto; color: #7d8697; font-variant-numeric: tabular-nums; }
   #now .spinner { color: #6fa8ff; }
   main { max-width: 980px; margin: 0 auto; padding: 12px 18px 80px; }
-  .task { margin: 26px 0 10px; padding: 10px 14px; background: #1a2130;
+  .task { margin: 22px 0 10px; padding: 10px 14px; background: #1a2130;
           border-left: 3px solid #6fa8ff; border-radius: 4px; color: #eef2f8;
           white-space: pre-wrap; }
   .agent { margin: 10px 0; white-space: pre-wrap; }
   .meta { color: #7d8697; font-size: 12px; margin-left: 8px; }
+  details.cell, details.prompt { margin: 8px 0; }
+  details.cell > summary, details.prompt > summary { cursor: pointer; color: #7d8697;
+          font: 12px ui-monospace, monospace; padding: 2px 0; list-style: none;
+          display: flex; gap: 8px; align-items: center; }
+  details.cell > summary::-webkit-details-marker,
+  details.prompt > summary::-webkit-details-marker { display: none; }
+  summary .tag { color: #5f6b7e; }
+  summary .copy { margin-left: auto; border: 1px solid #2c3548; background: #171b22;
+          color: #9aa3b2; border-radius: 4px; padding: 0 6px; cursor: pointer; font: inherit; }
   pre { background: #171b22; border: 1px solid #232a35; border-radius: 6px;
-        padding: 10px 12px; overflow-x: auto; margin: 8px 0;
-        font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+        padding: 10px 12px; overflow-x: auto; margin: 4px 0;
+        font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
   pre.code { border-left: 3px solid #3f679f; }
-  pre.output { color: #9aa3b2; max-height: 320px; overflow-y: auto; }
+  pre.output { color: #9aa3b2; max-height: 340px; overflow-y: auto; }
+  .prompt pre { max-height: 260px; overflow-y: auto; }
+  .prompt .role { color: #6fa8ff; font: 11px ui-monospace, monospace; margin: 8px 0 2px; }
+  .prompt .sys { color: #c8a6ff; }
   .action { font: 12px ui-monospace, monospace; color: #7d8697; margin: 2px 0 2px 12px; }
   .action.err { color: #ff8484; }
   .row.error { color: #ff8484; white-space: pre-wrap; margin: 8px 0; }
@@ -279,22 +310,60 @@ PAGE = r"""<!doctype html>
   .row.small { color: #7d8697; font-size: 12px; margin: 6px 0; }
   .answer { margin: 14px 0; padding: 10px 14px; background: #16241a;
             border-left: 3px solid #58b368; border-radius: 4px; white-space: pre-wrap; }
+  img.shot { max-width: 100%; border: 1px solid #232a35; border-radius: 6px; margin: 4px 0; }
+  .subagent { margin: 12px 0; border: 1px solid #34405a; border-radius: 8px;
+              background: #12161f; overflow: hidden; }
+  .subagent > summary { cursor: pointer; padding: 8px 12px; list-style: none;
+              display: flex; gap: 10px; align-items: baseline; background: #172033;
+              border-left: 3px solid #8a6dff; }
+  .subagent > summary::-webkit-details-marker { display: none; }
+  .subagent .sub-name { color: #c3b6ff; font-weight: 600; }
+  .subagent .sub-task { color: #9aa3b2; overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; max-width: 40ch; }
+  .subagent .sub-stat { margin-left: auto; color: #7d8697; font-variant-numeric: tabular-nums; }
+  .subagent .dot { width: 8px; height: 8px; border-radius: 50%; background: #6fa8ff; }
+  .subagent .dot.done { background: #58b368; }
+  .subagent .dot.err { background: #ff8484; }
+  .subagent .sub-body { padding: 4px 14px 10px; }
+  body.hide-code .k-code, body.hide-output .k-output,
+  body.hide-action .k-action, body.hide-prompt .k-prompt { display: none; }
+  .search-hide { display: none !important; }
 </style>
 </head>
 <body>
-<header>
-  <span class="name" id="session">waiting for a session…</span>
-  <span class="spend" id="spend"></span>
-  <span class="meta" id="status">connecting…</span>
-</header>
-<div id="now"></div>
+<div id="top">
+  <header>
+    <span class="name" id="session">waiting for a session…</span>
+    <span class="spend" id="spend"></span>
+    <span class="meta" id="steps"></span>
+    <span class="meta" id="clock"></span>
+    <span class="meta" id="status">connecting…</span>
+  </header>
+  <div id="toolbar">
+    <label><input type="checkbox" data-f="code" checked> code</label>
+    <label><input type="checkbox" data-f="output" checked> output</label>
+    <label><input type="checkbox" data-f="action" checked> actions</label>
+    <label><input type="checkbox" data-f="prompt" checked> prompts</label>
+    <input type="search" id="search" placeholder="filter text…">
+    <span id="searchcount"></span>
+    <button id="jump-err">next error</button>
+    <button id="jump-top">top</button>
+    <button id="jump-bot">bottom</button>
+  </div>
+  <div id="banner"></div>
+  <div id="now"></div>
+</div>
 <main id="log"></main>
 <script>
-const logEl = document.getElementById('log');
+const rootLog = document.getElementById('log');
 const nowEl = document.getElementById('now');
-const active = new Map();  // key -> {label, kind, t0}
+const bannerEl = document.getElementById('banner');
+const active = new Map();     // laneKey -> {label, kind, t0, lane}
+const approvals = new Map();  // key -> {label, t0}
+const lanes = new Map();      // session name -> lane
+let rootName = null;
 let followTail = true;
-let spend = 0;
+let sessionStartMs = 0;
 
 addEventListener('scroll', () => {
   followTail = (innerHeight + scrollY) >= document.body.scrollHeight - 60;
@@ -307,48 +376,222 @@ function el(tag, cls, text) {
   if (text !== undefined) n.textContent = text;
   return n;
 }
-function add(node) { logEl.appendChild(node); scrollTail(); }
+function fmtUsd(x) { return '$' + Number(x).toFixed(2); }
 
+// ---- lanes: the root session's log plus one nested panel per sub-agent -------
+function makeLane(name, logEl, isRoot, head) {
+  const lane = { name, logEl, isRoot, head, spend: 0 };
+  lanes.set(name, lane);
+  return lane;
+}
+function laneFor(name) {
+  if (!name || name === rootName) return lanes.get(rootName);
+  return lanes.get(name) || openSubLane(name, null, lanes.get(rootName));
+}
+function openSubLane(name, spawn, parent) {
+  if (lanes.get(name)) return lanes.get(name);
+  const panel = el('details', 'subagent');
+  const sum = el('summary');
+  const dot = el('span', 'dot');
+  sum.appendChild(dot);
+  sum.appendChild(el('span', 'sub-name', name.replace(/^.*-spawn-/, 'spawn-')));
+  if (spawn) {
+    if (spawn.tier) sum.appendChild(el('span', 'tag', spawn.tier));
+    sum.appendChild(el('span', 'sub-task', spawn.text || ''));
+  }
+  const stat = el('span', 'sub-stat', 'running…');
+  sum.appendChild(stat);
+  panel.appendChild(sum);
+  const body = el('div', 'sub-body');
+  panel.appendChild(body);
+  (parent ? parent.logEl : rootLog).appendChild(panel);
+  scrollTail();
+  const lane = makeLane(name, body, false, { dot, stat, budget: spawn && spawn.budget_usd });
+  return lane;
+}
+function laneAdd(lane, node, kindClass) {
+  node.classList.add('item-row');
+  if (kindClass) node.classList.add(kindClass);
+  lane.logEl.appendChild(node);
+  applyRowVisibility(node);
+  scrollTail();
+}
+
+// ---- spend rollup across every lane ------------------------------------------
+function updateSpend() {
+  let total = 0;
+  for (const l of lanes.values()) total += l.spend;
+  document.getElementById('spend').textContent = fmtUsd(total);
+  let steps = 0;
+  for (const r of rootLog.querySelectorAll('.k-code')) steps++;
+  document.getElementById('steps').textContent = steps + ' steps';
+}
+function laneSpent(lane, usd, cumulative) {
+  if (usd == null) return;
+  lane.spend = cumulative ? Math.max(lane.spend, usd) : lane.spend + usd;
+  if (lane.head) lane.head.stat.textContent = fmtUsd(lane.spend)
+      + (lane.head.budget ? ' / ' + fmtUsd(lane.head.budget) : '');
+  updateSpend();
+}
+function laneDone(lane, cls, label) {
+  if (!lane.head) return;
+  lane.head.dot.className = 'dot ' + cls;
+  const base = lane.head.stat.textContent.split(' — ')[0];
+  lane.head.stat.textContent = base + ' — ' + label;
+}
+
+// ---- in-flight "now" bar + approval banner -----------------------------------
 function renderNow() {
   nowEl.replaceChildren();
   for (const [, a] of active) {
-    const item = el('div', 'item' + (a.kind === 'approval' ? ' approval' : ''));
-    item.appendChild(el('span', a.kind === 'approval' ? '' : 'spinner',
-                        a.kind === 'approval' ? '⚠' : '●'));
-    item.appendChild(el('span', '', a.label));
+    const item = el('div', 'item');
+    item.appendChild(el('span', 'spinner', '●'));
+    const lbl = (a.lane && !a.lane.isRoot ? '[' + a.lane.name.replace(/^.*-spawn-/, 'spawn-') + '] ' : '') + a.label;
+    item.appendChild(el('span', '', lbl));
     item.appendChild(el('span', 'elapsed', ''));
     item.dataset.t0 = a.t0;
     nowEl.appendChild(item);
   }
 }
+function renderBanner() {
+  bannerEl.replaceChildren();
+  for (const [, a] of approvals) {
+    const item = el('div', 'approval');
+    item.appendChild(el('span', '', '⚠'));
+    item.appendChild(el('span', '', a.label));
+    item.appendChild(el('span', 'elapsed', ''));
+    item.dataset.t0 = a.t0;
+    bannerEl.appendChild(item);
+  }
+}
 setInterval(() => {
-  for (const item of nowEl.children) {
+  for (const item of [...nowEl.children, ...bannerEl.children]) {
     const s = (Date.now() - Number(item.dataset.t0)) / 1000;
     item.querySelector('.elapsed').textContent = s.toFixed(0) + 's';
   }
+  if (sessionStartMs) {
+    const s = (Date.now() - sessionStartMs) / 1000;
+    const m = Math.floor(s / 60);
+    document.getElementById('clock').textContent = m + 'm' + String(Math.floor(s % 60)).padStart(2, '0') + 's';
+  }
 }, 500);
-
-function startActive(key, label, kind) {
-  active.set(key, { label, kind, t0: Date.now() });
+function startActive(lane, sub, label) {
+  active.set(lane.name + '\x00' + sub, { label, t0: Date.now(), lane });
   renderNow();
 }
-function endActive(key) { active.delete(key); renderNow(); }
+function endActive(lane, sub) { active.delete(lane.name + '\x00' + sub); renderNow(); }
 
-function fmtUsd(x) { return '$' + Number(x).toFixed(2); }
+// ---- collapsible code/output cell with a copy button -------------------------
+function cell(kind, text) {
+  const d = el('details', 'cell k-' + kind); d.open = true;
+  const sum = el('summary');
+  sum.appendChild(el('span', 'tag', kind));
+  const first = (text || '').split('\n', 1)[0].slice(0, 80);
+  sum.appendChild(el('span', '', first));
+  const chars = (text || '').length;
+  sum.appendChild(el('span', 'tag', chars + ' chars'));
+  const copy = el('button', 'copy', 'copy');
+  copy.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation();
+    navigator.clipboard && navigator.clipboard.writeText(text || ''); };
+  sum.appendChild(copy);
+  d.appendChild(sum);
+  d.appendChild(el('pre', kind, text));
+  return d;
+}
+
+// ---- the collapsed "full prompt" view (system + every message this pass) -----
+function promptView(e) {
+  const d = el('details', 'prompt k-prompt');
+  const sum = el('summary');
+  const n = (e.messages || []).length;
+  sum.appendChild(el('span', 'tag', 'prompt'));
+  sum.appendChild(el('span', '', n + ' msgs'
+    + (e.input_tokens ? ' · ' + e.input_tokens + ' tok in' : '')
+    + (e.model ? ' · ' + e.model : '')));
+  d.appendChild(sum);
+  let built = false;
+  d.addEventListener('toggle', () => {  // build lazily on first expand
+    if (!d.open || built) return;
+    built = true;
+    if (e.system) {
+      d.appendChild(el('div', 'role sys', 'system'));
+      d.appendChild(el('pre', '', e.system));
+    }
+    for (const m of e.messages || []) {
+      d.appendChild(el('div', 'role', m.role));
+      if (typeof m.text === 'string') { d.appendChild(el('pre', '', m.text)); continue; }
+      for (const b of m.content || []) {
+        if (b.type === 'text') d.appendChild(el('pre', '', b.text || ''));
+        else if (b.type === 'tool_use') d.appendChild(el('pre', '', '→ ' + (b.name || '')
+             + '\n' + ((b.input && b.input.code) || JSON.stringify(b.input || {}))));
+        else if (b.type === 'tool_result') d.appendChild(el('pre', '', '⟵ result\n'
+             + (typeof b.content === 'string' ? b.content : JSON.stringify(b.content))));
+        else if (b.type === 'image') d.appendChild(el('pre', '', '[image]'));
+        else d.appendChild(el('pre', '', JSON.stringify(b)));
+      }
+    }
+  });
+  return d;
+}
+
+// ---- filters, search, jump ---------------------------------------------------
+let searchTerm = '';
+function applyRowVisibility(node) {
+  if (searchTerm && !node.textContent.toLowerCase().includes(searchTerm))
+    node.classList.add('search-hide');
+  else node.classList.remove('search-hide');
+}
+for (const cb of document.querySelectorAll('#toolbar input[data-f]')) {
+  cb.onchange = () => document.body.classList.toggle('hide-' + cb.dataset.f, !cb.checked);
+}
+document.getElementById('search').oninput = (ev) => {
+  searchTerm = ev.target.value.toLowerCase();
+  let hits = 0;
+  for (const r of rootLog.querySelectorAll('.item-row')) {
+    applyRowVisibility(r);
+    if (searchTerm && !r.classList.contains('search-hide')) hits++;
+  }
+  document.getElementById('searchcount').textContent = searchTerm ? hits + ' match' : '';
+};
+let errIdx = -1;
+document.getElementById('jump-err').onclick = () => {
+  const errs = [...rootLog.querySelectorAll('.row.error, .action.err')];
+  if (!errs.length) return;
+  errIdx = (errIdx + 1) % errs.length;
+  errs[errIdx].scrollIntoView({ block: 'center' });
+};
+document.getElementById('jump-top').onclick = () => { followTail = false; scrollTo(0, 0); };
+document.getElementById('jump-bot').onclick = () => { followTail = true; scrollTail(); };
+
+// ---- event dispatch ----------------------------------------------------------
+function resetAll(name) {
+  rootLog.replaceChildren(); nowEl.replaceChildren(); bannerEl.replaceChildren();
+  active.clear(); approvals.clear(); lanes.clear();
+  rootName = name; sessionStartMs = 0;
+  makeLane(name, rootLog, true, null);
+  document.getElementById('session').textContent = name;
+  updateSpend();
+}
 
 function handle(e) {
   const k = e.kind;
-  if (k === 'watch_session') {
-    document.getElementById('session').textContent = e.session;
-    logEl.replaceChildren(); active.clear(); renderNow(); spend = 0;
+  if (k === 'watch_session') { resetAll(e.session); return; }
+  if (rootName === null) resetAll(e.session || 'session');
+  if (!sessionStartMs) sessionStartMs = Date.now();
+  const lane = laneFor(e.session);
+
+  if (k === 'spawn') {
+    openSubLane(e.child, e, lane);
+  } else if (k === 'spawned_by') {
+    // child->parent link; the panel already carries the relationship
   } else if (k === 'session_start') {
-    add(el('div', 'row small', 'session started — ' + (e.root || '')));
+    laneAdd(lane, el('div', 'row small', 'session started — ' + (e.root || '')));
   } else if (k === 'task') {
-    add(el('div', 'task', e.text));
+    laneAdd(lane, el('div', 'task', e.text));
   } else if (k === 'llm_start') {
-    startActive('llm', 'thinking (' + (e.tier || '?') + ')…', 'llm');
+    startActive(lane, 'llm', 'thinking (' + (e.tier || '?') + ')…');
   } else if (k === 'llm_call') {
-    endActive('llm');
+    endActive(lane, 'llm');
     if (e.text) {
       const n = el('div', 'agent', e.text);
       const bits = [];
@@ -356,45 +599,55 @@ function handle(e) {
       if (e.latency_s) bits.push(e.latency_s + 's');
       if (e.input_tokens) bits.push(e.input_tokens + ' in / ' + (e.output_tokens || 0) + ' out');
       if (bits.length) n.appendChild(el('span', 'meta', ' · ' + bits.join(' · ')));
-      add(n);
+      laneAdd(lane, n);
     }
-    if (e.cost_usd) { spend += e.cost_usd; document.getElementById('spend').textContent = fmtUsd(spend); }
+    laneAdd(lane, promptView(e), 'k-prompt');
+    laneSpent(lane, e.cost_usd, false);
   } else if (k === 'code') {
-    add(el('pre', 'code', e.text));
+    laneAdd(lane, cell('code', e.text), 'k-code'); updateSpend();
   } else if (k === 'output') {
-    add(el('pre', 'output', e.text));
+    laneAdd(lane, cell('output', e.text), 'k-output');
+  } else if (k === 'media') {
+    const img = el('img', 'shot'); img.src = e.src || ''; img.alt = e.text || 'image';
+    laneAdd(lane, img, 'k-output');
   } else if (k === 'action_start') {
-    startActive('a:' + e.text, e.text + (e.args ? '(' + e.args + ')' : ''), 'action');
+    startActive(lane, 'a:' + e.text, e.text + (e.args ? '(' + e.args + ')' : ''));
   } else if (k === 'action_end') {
-    endActive('a:' + e.text);
+    endActive(lane, 'a:' + e.text);
     const ok = e.ok !== false;
     const label = (ok ? '✓ ' : '✗ ') + e.text + ' ' + (e.elapsed_s || 0) + 's'
                   + (e.error ? ' — ' + e.error : '') + (e.decision === 'deny' ? ' — denied by policy' : '');
-    add(el('div', 'action' + (ok ? '' : ' err'), label));
+    laneAdd(lane, el('div', 'action' + (ok ? '' : ' err'), label), 'k-action');
   } else if (k === 'approval_pending') {
-    startActive('ap:' + e.text, 'waiting for approval [' + (e.category || '') + '] ' + e.text
-                + ' — ' + (e.summary || '') + ' (answer in the terminal)', 'approval');
+    const who = lane.isRoot ? '' : '[' + lane.name.replace(/^.*-spawn-/, 'spawn-') + '] ';
+    approvals.set(e.text, { label: who + '[' + (e.category || '') + '] ' + e.text
+      + ' — ' + (e.summary || '') + ' (answer in the terminal)', t0: Date.now() });
+    renderBanner();
   } else if (k === 'approval_resolved') {
-    endActive('ap:' + e.text);
-    add(el('div', 'row small', 'approval ' + e.outcome + ': ' + e.text));
+    approvals.delete(e.text); renderBanner();
+    laneAdd(lane, el('div', 'row small', 'approval ' + e.outcome + ': ' + e.text));
   } else if (k === 'notify') {
-    add(el('div', 'row notify', '[agent note] ' + e.text));
+    laneAdd(lane, el('div', 'row notify', '[agent note] ' + e.text));
   } else if (k === 'error') {
-    endActive('llm');
-    add(el('div', 'row error', e.text));
+    endActive(lane, 'llm');
+    laneAdd(lane, el('div', 'row error', e.text));
+    if (!lane.isRoot) laneDone(lane, 'err', 'error');
   } else if (k === 'answer') {
-    add(el('div', 'answer', e.text));
+    laneAdd(lane, el('div', 'answer', e.text));
+    if (!lane.isRoot) laneDone(lane, 'done', 'answered');
   } else if (k === 'budget') {
-    spend = e.spent_usd || spend;
-    document.getElementById('spend').textContent = fmtUsd(spend) + ' · ' + (e.calls || 0) + ' calls';
+    laneSpent(lane, e.spent_usd, true);
   } else if (k === 'session_end') {
-    active.clear(); renderNow();
-    add(el('div', 'row small', 'session ended — spent ' + fmtUsd(e.spent_usd || 0)
+    endActive(lane, 'llm');
+    laneSpent(lane, e.spent_usd, true);
+    laneAdd(lane, el('div', 'row small', 'session ended — spent ' + fmtUsd(e.spent_usd || 0)
            + ' over ' + (e.calls || 0) + ' calls'));
+    if (!lane.isRoot && lane.head && lane.head.dot.className === 'dot')
+      laneDone(lane, 'done', 'done');
   } else if (k === 'skill_use') {
-    add(el('div', 'row small', 'skill ' + (e.skill || '') + ': ' + (e.outcome || '') + ' ' + (e.note || '')));
+    laneAdd(lane, el('div', 'row small', 'skill ' + (e.skill || '') + ': ' + (e.outcome || '') + ' ' + (e.note || '')));
   } else if (k === 'reflection') {
-    add(el('div', 'row small', 'reflection: ' + (e.text || '')));
+    laneAdd(lane, el('div', 'row small', 'reflection: ' + (e.text || '')));
   } else if (k === 'note') {
     // preamble text duplicated by the llm_call event — skip
   }
