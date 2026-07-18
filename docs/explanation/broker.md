@@ -10,7 +10,7 @@ object: the broker (`pyharness/broker/dispatch.py`).
 For each call the broker runs, in order:
 
 ```
-policy check  →  audit  →  budget (metered actions)  →  execute
+audit intent  →  policy check  →  budget (metered actions)  →  execute  →  audit outcome
 ```
 
 - **Policy** decides allow / deny / require-approval for the action, identified
@@ -22,7 +22,10 @@ policy check  →  audit  →  budget (metered actions)  →  execute
   with `grant_id`) without prompting; the human can mint such a grant by answering
   the prompt. IRREVERSIBLE actions are never grant-covered. See
   [scoped grants](security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
-- **Audit** appends the call to a tamper-evident log.
+- **Audit** appends two chained records per call to a tamper-evident log: an
+  intent record before anything runs and an outcome record on every exit path,
+  so an action killed in flight still exists in the record (see
+  [Security & audit](security-and-audit.md#audit--a-tamper-evident-record)).
 - **Budget** is checked before *metered* actions (`llm`, `agents`, `web`, `obs`)
   so agent-initiated spend fails fast at the limit.
 - **Execute** calls the underlying capability function.
