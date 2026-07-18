@@ -3,6 +3,10 @@ __pycache__/
 
 .venv/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 .sessions/
 
 build/
