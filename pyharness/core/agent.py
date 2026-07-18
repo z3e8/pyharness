@@ -342,8 +342,42 @@ class Agent:
 
             messages.append({"role": "assistant", "content": completion.content})
 
+            if completion.stop_reason == "refusal":
+                # Safety refusal: not retryable with the same prompt; surface
+                # it as this turn's answer rather than pretending it finished.
+                self.on_event("error", "LLM refusal: the model declined to continue")
+                return completion.text or "(stopped: refusal — the model declined this request)"
+
             if not completion.tool_calls:
+                if completion.stop_reason == "max_tokens":
+                    # Truncated answer: say so instead of passing it off whole.
+                    self.on_event("note", "answer truncated at the output-token limit")
+                    if not completion.text:
+                        return "(stopped: max_tokens — empty truncated response)"
+                    return f"{completion.text}\n\n(warning: answer truncated at the output-token limit)"
                 return completion.text
+
+            if completion.stop_reason == "max_tokens":
+                # The response was cut off mid-tool-call, so the call's input may
+                # be truncated mid-code — executing it would run garbage. Every
+                # tool_use still needs a paired tool_result (or the API rejects
+                # the next request), so answer each with an error and let the
+                # model re-issue the work in smaller steps.
+                self.on_event("note", "tool call truncated at the output-token limit — not executed")
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": call.id,
+                            "is_error": True,
+                            "content": "(not executed: the response hit the output-token "
+                                       "limit mid-call — re-issue this work in smaller steps)",
+                        }
+                        for call in completion.tool_calls
+                    ],
+                })
+                continue
 
             if completion.text:
                 self.on_event("note", completion.text)

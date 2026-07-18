@@ -251,6 +251,58 @@ def test_kernel_state_persists_across_cells(tmp_path):
     assert last_user["content"][0]["content"] == "42"
 
 
+def _completion(text="", tool_calls=(), stop_reason="end_turn"):
+    return Completion(text=text, tool_calls=list(tool_calls), content=[{"k": "v"}], stop_reason=stop_reason)
+
+
+class BoomKernel:
+    """A kernel that must never run — for turns whose code must not execute."""
+
+    def run(self, code):
+        raise AssertionError(f"kernel must not execute, got: {code!r}")
+
+
+def test_max_tokens_tool_call_is_not_executed_and_recovers():
+    # A response cut off at max_tokens may carry a truncated tool call —
+    # executing it would run garbage. The loop answers it with an error
+    # tool_result (history stays valid) and the model gets another step.
+    truncated = _completion(
+        tool_calls=[ToolCall(id="t1", name="run_python", input={"code": "print(1)"})],
+        stop_reason="max_tokens",
+    )
+    llm = ScriptedLLM([truncated, _text_completion("recovered")])
+    agent = Agent(llm, BoomKernel(), Budget())
+
+    assert agent.run("go", []) == "recovered"
+
+    followup = llm.calls[1][-1]  # the tool_result message the next call saw
+    block = followup["content"][0]
+    assert block["tool_use_id"] == "t1"
+    assert block["is_error"] is True
+    assert "not executed" in block["content"]
+
+
+def test_max_tokens_text_answer_is_marked_truncated():
+    llm = ScriptedLLM([_completion(text="half an answer", stop_reason="max_tokens")])
+    agent = Agent(llm, Kernel({}), Budget())
+
+    answer = agent.run("go", [])
+
+    assert answer.startswith("half an answer")
+    assert "truncated" in answer
+
+
+def test_refusal_ends_the_turn_with_an_error_event():
+    events = []
+    llm = ScriptedLLM([_completion(stop_reason="refusal")])
+    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+
+    answer = agent.run("go", [])
+
+    assert answer.startswith("(stopped: refusal")
+    assert any(k == "error" and "refusal" in t for k, t in events)
+
+
 def test_cache_anchor_tracks_the_elision_frontier():
     from pyharness.core.agent import _cache_anchor
 
