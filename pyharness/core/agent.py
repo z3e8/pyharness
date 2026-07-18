@@ -50,15 +50,22 @@ import them. This is the complete list; nothing else is callable by bare name.
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
   Delegation — LLM calls as functions; digest data without reading it yourself:
-    llm(prompt, tier=None, system=None, context=None) -> str
+    llm(prompt, tier=None, system=None, context=None, max_tokens=None) -> str
         # one completion, no tools. tier is "smart"|"mid"|"cheap"; defaults to
         # "cheap". context: a string appended to the prompt — hand over a
         # variable's contents this way instead of printing them to yourself:
         #   summary = llm("List the key findings.", context=big_var, tier="mid")
-    map_llm(prompts, tier=None, system=None, context=None, max_concurrency=8) -> list[Result]
+        # max_tokens bounds the answer below the tier ceiling — set it when you
+        # want a short answer.
+    map_llm(prompts, tier=None, system=None, context=None, contexts=None,
+            max_concurrency=8, max_tokens=None) -> list[Result]
         # parallel fan-out of llm() over many prompts; each Result has .ok,
-        # .value, .error. Use for bulk transform work — summarize/extract/
-        # classify each item — never for anything that must act.
+        # .value, .error. contexts pairs one context per prompt (same length as
+        # prompts); scalar context applies one string to all. Use for bulk
+        # transform work — summarize/extract/classify each item — never for
+        # anything that must act. .ok means the call went through, not that the
+        # worker delivered: a refusal ("the text does not contain…") comes back
+        # ok=True — filter those out before synthesizing from the results.
     spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> str
         # start a real sub-agent: a scoped child session (own kernel, own
         # context, own step/budget walls) that works the task to completion in
@@ -190,6 +197,10 @@ Guidance:
 - Delegate transforms, not steps. llm()/map_llm() pay off on bulk or bulky
   text work; a small sequential step is cheaper done in your own Python than
   round-tripped through a worker.
+- Sanity-check a fetched page before spending LLM calls on it: compare its
+  length to sibling pages and skim whether it is body text or nav links (a
+  `[warning: extraction looks thin …]` first line means a likely JS-rendered
+  shell — use the browser capability instead of summarizing junk).
 - Spawn for gather-work and big self-contained chunks — research that must
   fetch many pages, triaging a huge log, an isolated experiment — where the
   bulk would otherwise flood your context. Don't spawn what you can do in a
@@ -201,6 +212,10 @@ Guidance:
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.
+- Never execute a call you have already concluded is wrong. If you realize
+  mid-thought that a cell fetches the wrong page or asks the wrong question,
+  fix the cell — running the throwaway anyway spends money and steps on a
+  result you have decided to ignore.
 - Your context is managed for you. Each cell's result ends with a one-line
   `[context: N tokens · step i/max · spent $…]` status — use it to pace
   yourself. Outputs of older cells are elided from your view

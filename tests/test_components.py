@@ -259,6 +259,57 @@ def test_llm_workers_emit_progress_events():
     assert {e["total"] for _, e in worker} == {3}
 
 
+def _recording_stub_llm(calls):
+    class StubLLM:
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+            from pyharness.llm.client import Completion
+
+            calls.append((messages[0]["content"], max_tokens))
+            return Completion(text="ok", tool_calls=[], content=[])
+
+    return StubLLM()
+
+
+def test_map_llm_pairwise_contexts():
+    from pyharness.broker.capabilities import LLMCapability
+
+    calls: list = []
+    cap = LLMCapability(_recording_stub_llm(calls))
+
+    # contexts pairs one context per prompt, in prompt order.
+    results = cap.map_llm(["a", "b"], contexts=["ctx-a", "ctx-b"])
+    assert all(r.ok for r in results)
+    sent = {content for content, _ in calls}
+    assert sent == {"a\n\nContext:\nctx-a", "b\n\nContext:\nctx-b"}
+
+    # Scalar context keeps working: one string applied to every prompt.
+    calls.clear()
+    cap.map_llm(["a", "b"], context="shared")
+    assert {c for c, _ in calls} == {"a\n\nContext:\nshared", "b\n\nContext:\nshared"}
+
+    # A mispaired or ambiguous call fails fast, before any worker spends money.
+    calls.clear()
+    with pytest.raises(ValueError, match="one-to-one"):
+        cap.map_llm(["a", "b"], contexts=["only-one"])
+    with pytest.raises(ValueError, match="not both"):
+        cap.map_llm(["a"], context="c", contexts=["d"])
+    assert calls == []
+
+
+def test_llm_worker_max_tokens_passthrough():
+    from pyharness.broker.capabilities import LLMCapability
+
+    calls: list = []
+    cap = LLMCapability(_recording_stub_llm(calls))
+
+    # llm() and map_llm() both forward max_tokens to complete(); omitting it
+    # keeps the tier ceiling (None reaches the client, which applies it).
+    cap.run("q", max_tokens=64)
+    cap.run("q")
+    cap.map_llm(["a", "b"], max_tokens=128)
+    assert [mt for _, mt in calls] == [64, None, 128, 128]
+
+
 def test_vault_never_via_namespace(tmp_path):
     # The vault is reachable by trusted code but is not a kernel function.
     broker = _broker(tmp_path)

@@ -86,7 +86,14 @@ class LLMCapability:
                 )
             self._spawned += 1
 
-    def _complete(self, prompt: str, tier: str | None, system: str | None, context: str | None) -> str:
+    def _complete(
+        self,
+        prompt: str,
+        tier: str | None,
+        system: str | None,
+        context: str | None,
+        max_tokens: int | None = None,
+    ) -> str:
         # Fail fast once the session budget is exhausted, so a fan-out can't keep
         # spending past the limit. In map_llm this surfaces as a per-task error
         # (work() turns it into data); in llm() it propagates like any overrun.
@@ -97,6 +104,7 @@ class LLMCapability:
             system=system,
             messages=[{"role": "user", "content": content}],
             tier=tier or self.default_tier,
+            max_tokens=max_tokens,
         )
         return completion.text
 
@@ -106,10 +114,11 @@ class LLMCapability:
         tier: str | None = None,
         system: str | None = None,
         context: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         eff_tier = tier or self.default_tier
         self._emit(f"llm({eff_tier}) — working…", phase="start", tier=eff_tier)
-        result = self._complete(prompt, tier, system, context)
+        result = self._complete(prompt, tier, system, context, max_tokens)
         # No done marker on error: the failure surfaces via the broker's
         # action_end (ok=False) and the cell traceback.
         self._emit(f"llm({eff_tier}) — done", phase="done", tier=eff_tier)
@@ -121,15 +130,32 @@ class LLMCapability:
         tier: str | None = None,
         system: str | None = None,
         context: str | None = None,
+        contexts=None,
         max_concurrency: int = 8,
+        max_tokens: int | None = None,
     ) -> list[Result]:
         prompts = list(prompts)
         if len(prompts) > self.max_per_call:
             raise ValueError(
                 f"{len(prompts)} workers requested; per-call limit is {self.max_per_call}"
             )
+        # `context` is one string for every worker; `contexts` pairs one per
+        # prompt. Validate the pairing up front so a mistake fails before any
+        # worker spends money, not as N confusing per-task errors.
+        if contexts is not None:
+            if context is not None:
+                raise ValueError(
+                    "pass either context (one string for all prompts) or "
+                    "contexts (one per prompt), not both"
+                )
+            contexts = list(contexts)
+            if len(contexts) != len(prompts):
+                raise ValueError(
+                    f"contexts has {len(contexts)} items for {len(prompts)} "
+                    "prompts — they must pair one-to-one"
+                )
 
-        def work(prompt: str) -> Result:
+        def work(prompt: str, ctx: str | None) -> Result:
             try:
                 self._reserve()
             except WorkerLimitExceeded as exc:
@@ -139,7 +165,7 @@ class LLMCapability:
             # deterministic (bad request, budget) — it becomes data once.
             try:
                 return Result(
-                    True, self._complete(prompt, tier, system or WORKER_SYSTEM, context)
+                    True, self._complete(prompt, tier, system or WORKER_SYSTEM, ctx, max_tokens)
                 )
             except Exception as exc:  # noqa: BLE001 - errors become data
                 return Result(False, None, repr(exc))
@@ -153,7 +179,10 @@ class LLMCapability:
 
         results: list[Result | None] = [None] * len(prompts)
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
-            futures = {pool.submit(work, p): i for i, p in enumerate(prompts)}
+            futures = {
+                pool.submit(work, p, contexts[i] if contexts is not None else context): i
+                for i, p in enumerate(prompts)
+            }
             done = 0
             # as_completed runs on this (single) calling thread, so the counter
             # and the emit need no lock — the worker threads only run work().
