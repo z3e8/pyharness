@@ -137,6 +137,25 @@ def test_session_digest_counts_failed_actions(tmp_path):
     assert digest["outcome"] == "aborted"
 
 
+def test_session_digest_counts_two_phase_audit_records(tmp_path):
+    # A two-phase audit log (Broker writes an intent record before execution
+    # and an outcome record after): `actions` counts outcomes only, and a start
+    # with no outcome — an action killed in flight — reports as aborted.
+    d = tmp_path / "s"
+    _write_jsonl(d / "trace.jsonl", [{"ts": 1.0, "kind": "task", "text": "t"}])
+    _write_jsonl(
+        d / "audit.jsonl",
+        [
+            {"ts": 1.0, "action": "files.write", "phase": "start", "args": "'a.txt'"},
+            {"ts": 2.0, "action": "files.write", "phase": "end", "ok": True},
+            {"ts": 3.0, "action": "llm.llm", "phase": "start", "args": "'prompt'"},
+        ],
+    )
+    digest = session_digest(d)
+    assert digest["actions"] == 1  # paired outcomes, not rows — no double count
+    assert digest["aborted_actions"] == 1  # the llm.llm start never ended
+
+
 def test_session_digest_error_outcome(tmp_path):
     d = tmp_path / "s"
     _write_jsonl(

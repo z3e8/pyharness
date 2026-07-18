@@ -97,13 +97,16 @@ def test_audit_tail_returns_recent_calls_stripped(tmp_path):
     audit = AuditLog(tmp_path / "audit.jsonl")
     audit.record(action="files.write", ok=True, args="'a.txt', 'x'")
     audit.record(action="http.request", ok=True, args="'POST', 'http://x'")
+    audit.record(action="llm.llm", phase="start", args="'prompt'")
+    audit.record(action="llm.llm", phase="end", ok=False, error="aborted")
     tail = audit.tail(limit=5)
-    assert [e["action"] for e in tail] == ["files.write", "http.request"]
-    # Internal chain fields never leak to the reflecting agent.
-    assert all("hash" not in e and "prev" not in e for e in tail)
+    # Intent records are skipped — the agent reads outcomes, one entry per call.
+    assert [e["action"] for e in tail] == ["files.write", "http.request", "llm.llm"]
+    # Internal chain fields (and the phase marker) never leak to the reflecting agent.
+    assert all("hash" not in e and "prev" not in e and "phase" not in e for e in tail)
     # Prefix filter narrows to one capability; limit keeps the most recent.
     assert [e["action"] for e in audit.tail(action="http")] == ["http.request"]
-    assert [e["action"] for e in audit.tail(limit=1)] == ["http.request"]
+    assert [e["action"] for e in audit.tail(limit=1)] == ["llm.llm"]
 
 
 def test_history_capability_reads_own_actions(tmp_path):
@@ -119,6 +122,144 @@ def test_history_capability_reads_own_actions(tmp_path):
     # until it returns, so it can't see itself.
     actions = [e["action"] for e in seen]
     assert "files.write" in actions and "history.history" not in actions
+
+
+def test_broker_writes_paired_two_phase_audit_records(tmp_path):
+    import json
+
+    from pyharness.audit import verify_chain
+
+    broker = _broker(tmp_path)
+    broker.register(FilesCapability(Workspace(tmp_path)))
+    broker.namespace()["write"]("a.txt", "x")
+    start, end = [json.loads(line) for line in
+                  (tmp_path / "audit.jsonl").read_text().splitlines()]
+    assert start["action"] == end["action"] == "files.write"
+    assert start["phase"] == "start" and "a.txt" in start["args"]  # intent, pre-execution
+    assert end["phase"] == "end" and end["ok"] is True
+    assert verify_chain(tmp_path / "audit.jsonl")[0]
+
+
+def test_broker_denies_and_failures_still_pair_start_with_end(tmp_path):
+    import json
+
+    from pyharness.audit import verify_chain
+
+    class Boom:
+        name = "boom"
+
+        def exports(self):
+            return {"go": self._go, "interrupt": self._interrupt}
+
+        def _go(self):
+            raise ValueError("kaput")
+
+        def _interrupt(self):
+            raise KeyboardInterrupt
+
+    broker = _broker(
+        tmp_path,
+        policy=Policy(deny={"files.write"}, require_approval={"boom.go"}),
+        approver=lambda req: False,
+    )
+    broker.register(FilesCapability(Workspace(tmp_path)))
+    broker.register(Boom())
+    with pytest.raises(PermissionDenied):
+        broker.call("files", "write", "a.txt", "x")  # policy deny
+    with pytest.raises(PermissionDenied):
+        broker.call("boom", "go")  # refused approval
+    with pytest.raises(KeyboardInterrupt):
+        broker.call("boom", "interrupt")  # a Ctrl-C landing mid-execution
+
+    entries = [json.loads(line) for line in
+               (tmp_path / "audit.jsonl").read_text().splitlines()]
+    phases = [(e["action"], e.get("phase")) for e in entries]
+    assert phases == [
+        ("files.write", "start"), ("files.write", "end"),
+        ("boom.go", "start"), ("boom.go", "end"),
+        ("boom.interrupt", "start"), ("boom.interrupt", "end"),
+    ]
+    deny_end, refusal_end, interrupt_end = entries[1], entries[3], entries[5]
+    assert deny_end["decision"] == "deny" and deny_end["ok"] is False
+    assert refusal_end["approved"] is False and refusal_end["ok"] is False
+    assert "KeyboardInterrupt" in interrupt_end["error"]
+    assert verify_chain(tmp_path / "audit.jsonl")[0]
+
+
+def test_abort_inflight_closes_the_record_of_a_stuck_call(tmp_path):
+    import json
+    import threading
+
+    from pyharness.audit import verify_chain
+
+    gate = threading.Event()
+    running = threading.Event()
+
+    class Stuck:
+        name = "stuck"
+
+        def exports(self):
+            return {"wait": self._wait}
+
+        def _wait(self):
+            running.set()
+            gate.wait(5)
+
+    broker = _broker(tmp_path)
+    broker.register(Stuck())
+    thread = threading.Thread(target=lambda: broker.call("stuck", "wait"), daemon=True)
+    thread.start()
+    assert running.wait(5)
+    try:
+        assert broker.abort_inflight() == ["stuck.wait"]
+        entries = [json.loads(line) for line in
+                   (tmp_path / "audit.jsonl").read_text().splitlines()]
+        # The stuck call exists in the chain: its intent record plus the
+        # teardown-appended outcome record.
+        assert [e.get("phase") for e in entries] == ["start", "end"]
+        assert entries[1]["ok"] is False and entries[1]["error"] == "aborted"
+        assert verify_chain(tmp_path / "audit.jsonl")[0]
+        assert broker.abort_inflight() == []  # drained — nothing recorded twice
+    finally:
+        gate.set()
+        thread.join(5)
+
+
+def test_session_close_records_aborted_inflight_actions(tmp_path):
+    import json
+    import threading
+
+    from pyharness.core.session import Session
+
+    gate = threading.Event()
+    running = threading.Event()
+
+    class Stuck:
+        name = "stuck"
+
+        def exports(self):
+            return {"wait": self._wait}
+
+        def _wait(self):
+            running.set()
+            gate.wait(5)
+
+    session = Session(tmp_path)
+    try:
+        session.broker.register(Stuck())
+        thread = threading.Thread(
+            target=lambda: session.broker.call("stuck", "wait"), daemon=True
+        )
+        thread.start()
+        assert running.wait(5)
+        session.close()
+        entries = [json.loads(line) for line in
+                   (session.workspace.root / "audit.jsonl").read_text().splitlines()]
+        aborted = [e for e in entries if e.get("error") == "aborted"]
+        assert [e["action"] for e in aborted] == ["stuck.wait"]
+    finally:
+        gate.set()
+        session.close()
 
 
 def test_policy_approval(tmp_path):

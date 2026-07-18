@@ -44,10 +44,12 @@ class AuditLog:
     def tail(self, limit: int = 20, action: str | None = None) -> list[dict]:
         """The most recent audited calls (oldest first), so the agent can reflect
         on what it did — what it sent, where, whether it was allowed. The internal
-        chain fields (`hash`/`prev`) are dropped; `action` filters by prefix
-        (`"http"` for every HTTP call). Arguments are already the log-safe
-        summary (secrets are referenced by name), so entries are safe to hand
-        back."""
+        chain fields (`hash`/`prev`) are dropped, as are the `phase: "start"`
+        intent records (each call writes two chained records; the agent reads
+        outcomes, so only completed calls appear here); `action` filters by
+        prefix (`"http"` for every HTTP call). Arguments are already the
+        log-safe summary (secrets are referenced by name), so entries are safe
+        to hand back."""
         if not self.path.exists():
             return []
         entries: list[dict] = []
@@ -61,6 +63,8 @@ class AuditLog:
                 continue
             entry.pop("hash", None)
             entry.pop("prev", None)
+            if entry.pop("phase", None) == "start":
+                continue
             if action and not str(entry.get("action", "")).startswith(action):
                 continue
             entries.append(entry)

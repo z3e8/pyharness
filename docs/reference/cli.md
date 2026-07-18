@@ -69,10 +69,15 @@ pyharness run "TASK" [--dir PATH] [--budget USD] [--json] [--approve-all] [--ref
 - Prints the final answer to stdout (a `[session …]` summary goes to stderr);
   `--json` prints the session digest instead — one JSON object with
   `session, name, outcome, answer, task, tasks, steps, llm_calls, errors,
-  failed_actions, cost_usd, actions, denials, started, ended, trace, audit,
-  workspace`. `errors` counts orchestrator-level turn errors; `failed_actions`
-  counts broker actions that raised (`action_end` with `ok: false` in the
-  trace) — a session can abort with zero `errors` but nonzero `failed_actions`.
+  failed_actions, cost_usd, actions, denials, aborted_actions, started, ended,
+  trace, audit, workspace`. `errors` counts orchestrator-level turn errors;
+  `failed_actions` counts broker actions that raised (`action_end` with
+  `ok: false` in the trace) — a session can abort with zero `errors` but
+  nonzero `failed_actions`. `actions` counts audit outcome records (each call
+  writes an intent + an outcome record — see
+  [Security & audit](../explanation/security-and-audit.md#audit--a-tamper-evident-record));
+  `aborted_actions` counts intent records with no outcome — actions a hard
+  kill left in flight.
 - `--reflect` (or truthy `PYHARNESS_REFLECT`) runs the reflection pass;
   without `--approve-all` its skill writes are denied like any other.
 - The embedded live viewer still starts (`PYHARNESS_WATCH`, URL on stderr).

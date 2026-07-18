@@ -691,6 +691,13 @@ class Session:
                 # child that outlives the join is abandoned and recorded.
                 for name in self._spawn_cap.shutdown():
                     self.trace.record("spawn_abandoned", child=name)
+            # Broker calls still executing in orphaned threads get their audit
+            # outcome record ({ok: false, error: "aborted"}) now, best-effort,
+            # so the chain shows how they ended instead of omitting them.
+            try:
+                self.broker.abort_inflight()
+            except Exception:  # noqa: BLE001 — teardown bookkeeping must never block close
+                pass
             self.trace.record(
                 "session_end",
                 session_id=self.id,

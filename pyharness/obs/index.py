@@ -31,7 +31,7 @@ from .transcript import iter_jsonl, session_digest
 
 DEFAULT_DB = "~/.pyharness/index.db"
 
-_SCHEMA_VERSION = "2"
+_SCHEMA_VERSION = "3"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -51,8 +51,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     failed_actions INTEGER,     -- broker actions that raised (action_end ok=False)
     llm_calls INTEGER,
     cost_usd REAL,
-    actions INTEGER,            -- audited capability calls
+    actions INTEGER,            -- audited capability calls (outcome records)
     denials INTEGER,            -- calls denied or unapproved
+    aborted_actions INTEGER,    -- audit starts with no outcome record (hard kill)
     fingerprint TEXT            -- size/mtime of source files, for incremental skip
 );
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -63,7 +64,7 @@ CREATE TABLE IF NOT EXISTS cells (
     session_id TEXT, ts REAL, code TEXT, output_chars INTEGER
 );
 CREATE TABLE IF NOT EXISTS actions (
-    session_id TEXT, ts REAL, action TEXT, ok INTEGER,
+    session_id TEXT, ts REAL, action TEXT, phase TEXT, ok INTEGER,
     decision TEXT, approved INTEGER, error TEXT, args TEXT
 );
 CREATE TABLE IF NOT EXISTS skill_uses (
@@ -113,13 +114,14 @@ SCHEMA_HELP = """\
 Tables (one row per...):
   sessions(id, name, project, started, ended, task, tasks, outcome, answer,
            steps, errors, failed_actions, llm_calls, cost_usd,
-           actions, denials)                                      -- one session
+           actions, denials, aborted_actions)                     -- one session
       outcome: answered | stopped:max_steps | stopped:budget | error | aborted | empty
   llm_calls(session_id, ts, model, tier, cost_usd, latency_s,
             input_tokens, output_tokens)                          -- one LLM call
   cells(session_id, ts, code, output_chars)                       -- one code cell
-  actions(session_id, ts, action, ok, decision, approved, error, args)
-                                                    -- one audited capability call
+  actions(session_id, ts, action, phase, ok, decision, approved, error, args)
+                  -- one audit record; phase 'start' is the pre-execution intent
+                  -- record, 'end' the outcome (filter phase='end' to count calls)
   skill_uses(session_id, ts, skill, outcome, note)                -- one recorded use
   errors(session_id, ts, text)                                    -- one turn error
   skills(name, verified, uses, worked, failed, last_used, last_outcome, last_note)
@@ -291,8 +293,8 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
         ok = e.get("ok")
         approved = e.get("approved")
         conn.execute(
-            "INSERT INTO actions VALUES (?,?,?,?,?,?,?,?)",
-            (sid, e.get("ts"), e.get("action"),
+            "INSERT INTO actions VALUES (?,?,?,?,?,?,?,?,?)",
+            (sid, e.get("ts"), e.get("action"), e.get("phase"),
              None if ok is None else int(bool(ok)),
              e.get("decision"), None if approved is None else int(bool(approved)),
              _clip(e.get("error")) or None, _clip(e.get("args")) or None),
@@ -302,13 +304,13 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
     # digest (`run --json` / `show`) — one scan there, one set of semantics.
     d = session_digest(session_dir)
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (sid, session_dir.name, _project_of(session_dir), d["started"], d["ended"],
          None if d["task"] is None else _clip(d["task"]),
          d["tasks"], d["outcome"],
          None if d["answer"] is None else _clip(d["answer"]),
          d["steps"], d["errors"], d["failed_actions"], d["llm_calls"],
-         d["cost_usd"], d["actions"], d["denials"], fingerprint),
+         d["cost_usd"], d["actions"], d["denials"], d["aborted_actions"], fingerprint),
     )
     return True
 

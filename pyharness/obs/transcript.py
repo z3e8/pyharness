@@ -137,10 +137,22 @@ def session_digest(session_dir: str | Path) -> dict:
             # spent_usd is cumulative for the session; prefer it over summed calls
             cost = max(cost, e.get("spent_usd") or 0.0)
 
-    actions = denials = 0
+    # The broker writes two chained audit records per action (an intent record
+    # `phase: "start"` before execution, an outcome record `phase: "end"` after
+    # — see Broker.call), so `actions` counts outcomes and an unpaired start is
+    # an action killed too hard for even the teardown record: `aborted_actions`.
+    # A pre-two-phase log has no `phase` fields; fall back to counting rows.
+    actions = denials = starts = ends = 0
     for e in iter_jsonl(audit_path):
         actions += 1
+        phase = e.get("phase")
+        starts += phase == "start"
+        ends += phase == "end"
         denials += e.get("decision") == "deny" or e.get("approved") is False
+    aborted_actions = 0
+    if starts or ends:
+        actions = ends
+        aborted_actions = max(0, starts - ends)
 
     return {
         "session": str(d),
@@ -158,6 +170,7 @@ def session_digest(session_dir: str | Path) -> dict:
         "cost_usd": round(cost, 6),
         "actions": actions,
         "denials": denials,
+        "aborted_actions": aborted_actions,
         "started": started,
         "ended": ended,
         "trace": str(trace_path),

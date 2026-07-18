@@ -76,6 +76,31 @@ def test_index_derives_sessions_and_children(tmp_path):
     assert use["skill"] == "greenhouse" and use["outcome"] == "worked"
 
 
+def test_index_two_phase_audit_records(tmp_path):
+    # New sessions write two chained audit records per action (phase start/end);
+    # the actions table keeps both (phase column), the sessions row counts
+    # outcomes and reports the unpaired start as aborted. The legacy phase-less
+    # fixture in _make_session covers the pre-two-phase fallback above.
+    root = tmp_path / ".sessions"
+    d = root / "cli-2p"
+    _write_jsonl(d / "trace.jsonl", [{"ts": 10.0, "kind": "task", "text": "t"}])
+    _write_jsonl(d / "audit.jsonl", [
+        {"ts": 10.1, "action": "shell.bash", "phase": "start", "args": "'ls'"},
+        {"ts": 10.2, "action": "shell.bash", "phase": "end", "ok": True, "args": "'ls'"},
+        {"ts": 10.3, "action": "llm.llm", "phase": "start", "args": "'prompt'"},
+    ])
+    db = tmp_path / "index.db"
+    update_index(db, [root])
+
+    (session,) = query(db, "SELECT * FROM sessions")
+    assert session["actions"] == 1  # outcome records, not rows
+    assert session["aborted_actions"] == 1  # the llm.llm start never ended
+    rows = query(db, "SELECT action, phase FROM actions ORDER BY ts")
+    assert [(r["action"], r["phase"]) for r in rows] == [
+        ("shell.bash", "start"), ("shell.bash", "end"), ("llm.llm", "start"),
+    ]
+
+
 def test_outcome_classification(tmp_path):
     root = tmp_path / ".sessions"
     _make_session(root, "s-answered", ts=100.0)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -100,6 +101,12 @@ class Broker:
         self.grants = grants or GrantLedger()
         self.metered = metered
         self._ops: dict[tuple[str, str], Callable] = {}
+        # Actions currently executing, by an opaque token -> (action, started).
+        # Spawned children call from parent-side threads, so access is locked.
+        # `abort_inflight` (session teardown) uses this to close the audit
+        # record of anything a killed session left running.
+        self._inflight: dict[object, tuple[str, float]] = {}
+        self._inflight_lock = threading.Lock()
         self._capabilities: dict[str, object] = {}
         self._core: set[str] = set()  # capabilities surfaced as bare-name builtins
         self._hidden: set[tuple[str, str]] = set()  # ops excluded from that surface
@@ -223,16 +230,32 @@ class Broker:
         action = f"{cap}.{op}"
         started = time.perf_counter()
         self._emit("action_start", action, args=summarize_args(args, kwargs))
+        # Two chained audit records per call: this intent record before anything
+        # runs, and an outcome record (`phase: "end"`) on every exit path. An
+        # action killed in flight then still exists in the tamper-evident chain
+        # — as a start closed by `abort_inflight`, or as an unpaired start when
+        # the process died too hard even for that.
+        self.audit.record(action=action, phase="start", args=summarize_args(args, kwargs))
+        token = object()
+        with self._inflight_lock:
+            self._inflight[token] = (action, started)
 
         def _end(**fields) -> None:
             self._emit(
                 "action_end", action, elapsed_s=round(time.perf_counter() - started, 3), **fields
             )
 
+        try:
+            return self._dispatch(cap, op, action, args, kwargs, _end)
+        finally:
+            with self._inflight_lock:
+                self._inflight.pop(token, None)
+
+    def _dispatch(self, cap: str, op: str, action: str, args, kwargs, _end) -> object:
         with telemetry.tool_span(action) as span:
             decision = self.policy.decide(action, args, kwargs)
             if decision is Decision.DENY:
-                self.audit.record(action=action, decision="deny", ok=False)
+                self.audit.record(action=action, phase="end", decision="deny", ok=False)
                 telemetry.record_tool(span, action=action, decision="deny", ok=False)
                 _end(ok=False, decision="deny")
                 raise PermissionDenied(f"policy denied {action}")
@@ -282,6 +305,10 @@ class Broker:
                             "target": minted.scope.target,
                             "expires_at": minted.expires_at,
                         }
+                    if outcome is ApprovalOutcome.DENY:
+                        # A refused approval ends the action: its decision record
+                        # doubles as the outcome record.
+                        fields.update(phase="end", ok=False)
                     self.audit.record(**fields)
                     if outcome is ApprovalOutcome.DENY:
                         telemetry.record_tool(span, action=action, decision="approve", ok=False)
@@ -294,14 +321,36 @@ class Broker:
             func = self._ops[(cap, op)]
             try:
                 result = func(*args, **kwargs)
-            except Exception as exc:
-                self.audit.record(action=action, ok=False, error=repr(exc))
+            except BaseException as exc:  # incl. KeyboardInterrupt — record, then re-raise
+                self.audit.record(action=action, phase="end", ok=False, error=repr(exc))
                 telemetry.record_tool(
                     span, action=action, decision="allow", ok=False, error=repr(exc)
                 )
                 _end(ok=False, error=repr(exc))
                 raise
-            self.audit.record(action=action, ok=True, args=summarize_args(args, kwargs))
+            self.audit.record(
+                action=action, phase="end", ok=True, args=summarize_args(args, kwargs)
+            )
             telemetry.record_tool(span, action=action, decision="allow", ok=True)
             _end(ok=True)
             return result
+
+    def abort_inflight(self) -> list[str]:
+        """Close the audit record of every action still executing — called on
+        session teardown, when in-flight calls (e.g. a broker call stuck in a
+        thread the abort orphaned) would otherwise vanish between their start
+        record and never-written outcome. Appends `{phase: "end", ok: False,
+        error: "aborted"}` per action, best-effort, and returns their names."""
+        with self._inflight_lock:
+            pending = list(self._inflight.values())
+            self._inflight.clear()
+        for action, started in pending:
+            self.audit.record(action=action, phase="end", ok=False, error="aborted")
+            self._emit(
+                "action_end",
+                action,
+                elapsed_s=round(time.perf_counter() - started, 3),
+                ok=False,
+                error="aborted",
+            )
+        return [action for action, _ in pending]

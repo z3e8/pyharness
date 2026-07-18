@@ -366,8 +366,21 @@ chain: each entry stores `hash = sha256(prev_hash + entry)` and a `prev` pointer
 Any later edit, deletion, or reordering breaks the chain, so the log is
 verifiable — which matters once it's shipped off-box.
 
-Secrets are never arguments to capabilities (they're referenced by name and
-injected in the parent), so logged arguments are safe to persist.
+Each call writes **two chained records**, not one: an *intent* record
+(`phase: "start"`, the action plus its summarized args) before anything runs —
+before even the policy check, so denials and refused approvals carry it too —
+and an *outcome* record (`phase: "end"`) on every exit path: success, capability
+error, policy deny, refused approval. Approval decisions that let the call
+proceed (a human's yes, or a covering grant) sit between the two as their own
+records, as before. The point of the split is actions that never complete: an
+action killed mid-flight used to vanish from the log entirely (it could run for
+minutes and spend real money, unrecorded); now its start is already in the
+chain, and session teardown best-effort appends the outcome record
+(`ok: false, error: "aborted"`) for anything still executing. A start with no
+outcome record at all means the process died too hard even for that — the
+digest reports it as `aborted_actions`. Chain verification is unaffected: the
+verifier checks the hash chain, not record pairing, so both records verify like
+any others.
 
 The same record is the agent's own reflection surface. `audit.jsonl` sits at the
 session root, outside the workspace the file builtins are confined to, so agent
