@@ -83,7 +83,11 @@ deny), `approval_pending` before an approval prompt blocks on the human and
 or stuck — so a live view (or a `tail -f`) can always answer "what is it doing
 right now, and what is it waiting on". `llm_thinking` events carry the
 completion's summarized adaptive thinking (batched chunks, streamed by the
-viewer). A `spawn` (parent side, with the child dir name) and `spawned_by`
+viewer). `worker` events are the progress heartbeat of an `llm()`/`map_llm`
+call — a start/done pair for a single completion, and throttled `N/total done`
+lines through a fan-out — so a slow worker call shows movement instead of
+reading as a hang (the broker's `action_start` spinner alone can't show
+progress *within* the one call). A `spawn` (parent side, with the child dir name) and `spawned_by`
 (child side) bracket a sub-agent, and `spawn_abandoned` marks a child still
 running when the parent closed and outlived the cooperative stop; a `media`
 event records a screenshot persisted under `<session>/media/`.

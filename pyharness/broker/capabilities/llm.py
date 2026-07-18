@@ -45,11 +45,20 @@ class LLMCapability:
         max_per_call: int = 64,
         session_cap: int = 256,
         budget=None,
+        on_event=None,
     ):
         self.llm = llm
         self.default_tier = default_tier
         self.max_per_call = max_per_call
         self.session_cap = session_cap
+        # Progress heartbeat sink (the session's traced event stream). Workers run
+        # parent-side inside one broker call, so without this a slow completion —
+        # or a long map_llm fan-out — shows only the broker's opaque action spinner
+        # in the viewer and nothing at all in the interactive CLI, reading as a
+        # hang. We emit `worker` events instead of streaming tokens: map_llm's
+        # concurrent workers would interleave into garbage, and reusing the main
+        # loop's llm_* stream events would corrupt the viewer's per-lane state.
+        self._on_event = on_event or (lambda kind, text="", **extra: None)
         # Shared session Budget, checked before each worker completion. The
         # broker's metered gate checks once at the start of the fan-out; without a
         # per-task check a single map_llm call could run up to max_per_call x
@@ -61,6 +70,13 @@ class LLMCapability:
 
     def exports(self) -> dict:
         return {"llm": self.run, "map_llm": self.map_llm}
+
+    def _emit(self, text: str, **extra) -> None:
+        # Observability must never break a worker call.
+        try:
+            self._on_event("worker", text, **extra)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _reserve(self) -> None:
         with self._lock:
@@ -91,7 +107,13 @@ class LLMCapability:
         system: str | None = None,
         context: str | None = None,
     ) -> str:
-        return self._complete(prompt, tier, system, context)
+        eff_tier = tier or self.default_tier
+        self._emit(f"llm({eff_tier}) — working…", phase="start", tier=eff_tier)
+        result = self._complete(prompt, tier, system, context)
+        # No done marker on error: the failure surfaces via the broker's
+        # action_end (ok=False) and the cell traceback.
+        self._emit(f"llm({eff_tier}) — done", phase="done", tier=eff_tier)
+        return result
 
     def map_llm(
         self,
@@ -122,9 +144,28 @@ class LLMCapability:
             except Exception as exc:  # noqa: BLE001 - errors become data
                 return Result(False, None, repr(exc))
 
+        n = len(prompts)
+        eff_tier = tier or self.default_tier
+        self._emit(f"map_llm — 0/{n} done", phase="start", done=0, total=n, tier=eff_tier)
+        # Throttle to ~10 progress lines regardless of fan-out size, so a large
+        # batch shows steady movement without flooding either surface.
+        step = max(1, n // 10)
+
         results: list[Result | None] = [None] * len(prompts)
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             futures = {pool.submit(work, p): i for i, p in enumerate(prompts)}
+            done = 0
+            # as_completed runs on this (single) calling thread, so the counter
+            # and the emit need no lock — the worker threads only run work().
             for fut in as_completed(futures):
                 results[futures[fut]] = fut.result()
+                done += 1
+                if done == n or done % step == 0:
+                    self._emit(
+                        f"map_llm — {done}/{n} done",
+                        phase="progress",
+                        done=done,
+                        total=n,
+                        tier=eff_tier,
+                    )
         return results  # type: ignore[return-value]

@@ -699,6 +699,10 @@ function handle(e) {
     laneAdd(lane, el('div', 'row small', 'skill ' + (e.skill || '') + ': ' + (e.outcome || '') + ' ' + (e.note || '')));
   } else if (k === 'reflection') {
     laneAdd(lane, el('div', 'row small', 'reflection: ' + (e.text || '')));
+  } else if (k === 'worker') {
+    // llm()/map_llm progress heartbeat — the broker's action spinner shows the
+    // call is live, this shows fan-out progress within it.
+    laneAdd(lane, el('div', 'row small', e.text || ''));
   } else if (k === 'note') {
     // preamble text duplicated by the llm_call event — skip
   }

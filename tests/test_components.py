@@ -229,6 +229,36 @@ def test_llm_worker_session_cap():
     assert cap.run("one more") == "ok"
 
 
+def test_llm_workers_emit_progress_events():
+    from pyharness.broker.capabilities import LLMCapability
+
+    class StubLLM:
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+            from pyharness.llm.client import Completion
+
+            return Completion(text="ok", tool_calls=[], content=[])
+
+    events = []
+    cap = LLMCapability(StubLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+
+    # A single llm() brackets the call with a start and a done heartbeat, so the
+    # otherwise-silent CLI shows the worker running.
+    cap.run("q", tier="mid")
+    phases = [e["phase"] for k, _, e in events if k == "worker"]
+    assert phases == ["start", "done"]
+    assert all(e["tier"] == "mid" for k, _, e in events if k == "worker")
+
+    # map_llm reports fan-out progress: a start line plus a final N/N line, each
+    # carrying done/total so a viewer can show movement within the one broker call.
+    events.clear()
+    cap.map_llm(["a", "b", "c"])
+    worker = [(t, e) for k, t, e in events if k == "worker"]
+    assert worker[0] == ("map_llm — 0/3 done", {"phase": "start", "done": 0, "total": 3, "tier": "cheap"})
+    assert worker[-1][0] == "map_llm — 3/3 done"
+    assert worker[-1][1]["done"] == 3 and worker[-1][1]["phase"] == "progress"
+    assert {e["total"] for _, e in worker} == {3}
+
+
 def test_vault_never_via_namespace(tmp_path):
     # The vault is reachable by trusted code but is not a kernel function.
     broker = _broker(tmp_path)

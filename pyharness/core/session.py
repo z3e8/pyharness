@@ -301,7 +301,7 @@ class Session:
         core_caps: list = [
             FilesCapability(self.workspace),
             SearchCapability(self.workspace),
-            LLMCapability(self.llm, budget=self.budget),
+            LLMCapability(self.llm, budget=self.budget, on_event=on_event_traced),
         ]
         if self._has("shell"):
             # bash and the child kernel run on the minimal allowlist environment

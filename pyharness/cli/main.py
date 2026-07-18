@@ -75,6 +75,12 @@ def _trace(kind: str, text: str) -> None:
         # parent's own stream.
         print(f"\n\033[2m{text}{_RESET}", flush=True)
         return
+    if kind == "worker":
+        # An llm()/map_llm worker heartbeat, one dim line — the CLI is otherwise
+        # blind to parent-side worker calls (the broker's action spinner is
+        # viewer-only), so a slow completion or fan-out reads as a hang.
+        print(f"\n\033[2m[{text}]{_RESET}", flush=True)
+        return
     if kind == "notify":
         # Agent-authored note to the user. Rendered standalone under a fixed
         # prefix, visually distinct from the ⚠ approval prompt, and it never
