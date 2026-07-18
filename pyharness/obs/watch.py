@@ -8,10 +8,12 @@ JSONL record is written synchronously by the session, so this view is
 real-time by construction — no collector, no container, no refresh.
 
 Stdlib only. The server binds 127.0.0.1 and serves two routes: `/` (the page)
-and `/events` (Server-Sent Events: each trace entry as one JSON `data:` line).
-Watch one session (a dir containing `trace.jsonl`) or a container of sessions
-(e.g. `.sessions/`), where it follows the most recently active session and
-switches automatically when a new one starts.
+and `/events` (Server-Sent Events: each trace entry as one JSON `data:` line,
+tagged with the session it came from). Watch one session (a dir containing
+`trace.jsonl`) or a container of sessions (e.g. `.sessions/`). It follows a whole
+session *tree* — the root session plus any sub-agents it spawns
+(`{root}-spawn-*`) — and switches the top-level view only when a genuinely new
+*root* session starts, so a running sub-agent never steals the view.
 
 Two entry points: `main()` (the `pyharness-watch` console script) and
 `start_in_thread()` (the CLI embeds the viewer in the agent process — fail-open,
@@ -23,64 +25,118 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-from .transcript import latest_session
 
 log = logging.getLogger("pyharness.watch")
 
 _POLL_S = 0.25
 _KEEPALIVE_POLLS = 20  # one SSE comment every ~5s so dead clients are noticed
 
+# A spawned child's dir is named `{parent}-spawn-NN` (see Session._spawn_child).
+# We match the suffix to tell root sessions from children without opening files.
+_SPAWN_RE = re.compile(r"-spawn-\d+")
+
+
+def _pick_root(target: Path) -> Path | None:
+    """The *root* session dir to follow: `target` itself when it holds a
+    trace.jsonl, else the most recently modified top-level session under it —
+    excluding spawn children so a running sub-agent never steals the top view."""
+    target = Path(target)
+    if (target / "trace.jsonl").exists():
+        return target
+    dirs = [p.parent for p in target.glob("*/trace.jsonl") if p.is_file()]
+    if not dirs:
+        return None
+    roots = [d for d in dirs if not _SPAWN_RE.search(d.name)]
+    pool = roots or dirs  # a container of only spawn dirs still shows something
+    return max(pool, key=lambda d: (d / "trace.jsonl").stat().st_mtime)
+
 
 def _pick_trace(target: Path) -> Path | None:
-    """The trace file to follow: `target/trace.jsonl` when target is itself a
-    session root, else the most recently modified `*/trace.jsonl` under it."""
-    session = latest_session(target)
-    return None if session is None else session / "trace.jsonl"
+    """The trace file for the root session (kept for callers/tests that want the
+    single followed file); the live viewer streams the whole tree via `Tail`."""
+    root = _pick_root(target)
+    return None if root is None else root / "trace.jsonl"
 
 
-class Tail:
-    """Incremental, non-blocking reader over the followed trace. Each `poll()`
-    returns the trace entries appended since the last call — plus a synthetic
-    `watch_session` event whenever the followed file changes (a new session
-    started under a container target)."""
+class _FileTail:
+    """Incremental, non-blocking reader over one trace.jsonl. Each `poll()`
+    returns the complete entries appended since the last call (partial trailing
+    lines are held back until their newline arrives)."""
 
-    def __init__(self, target: Path):
-        self.target = Path(target)
-        self.path: Path | None = None
+    def __init__(self, path: Path):
+        self.path = Path(path)
         self.offset = 0
 
     def poll(self) -> list[dict]:
-        events: list[dict] = []
-        current = _pick_trace(self.target)
-        if current != self.path:
-            self.path = current
-            self.offset = 0
-            if current is not None:
-                events.append({"kind": "watch_session", "session": current.parent.name})
-        if self.path is None:
-            return events
         try:
             with self.path.open("rb") as f:
                 f.seek(self.offset)
                 chunk = f.read()
         except OSError:
-            return events
+            return []
         end = chunk.rfind(b"\n")
         if end == -1:
-            return events  # no complete new line yet
+            return []  # no complete new line yet
+        out: list[dict] = []
         for raw in chunk[: end + 1].splitlines():
             try:
                 entry = json.loads(raw)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             if isinstance(entry, dict):
-                events.append(entry)
+                out.append(entry)
         self.offset += end + 1
+        return out
+
+
+class Tail:
+    """Follows a whole session *tree* — the root session plus every spawned
+    child (`{root}-spawn-*`) — and interleaves their appended entries. Each
+    entry is tagged with the `session` (dir name) it came from so the viewer can
+    route it to the right lane. A synthetic `watch_session` event is emitted only
+    when the *root* changes (a genuinely new top-level session), never when a
+    sub-agent starts — that just opens a new lane under the current root."""
+
+    def __init__(self, target: Path):
+        self.target = Path(target)
+        self.root: Path | None = None
+        self.files: dict[str, _FileTail] = {}  # session dir name -> reader
+
+    def _sessions(self) -> list[Path]:
+        """The root followed by its spawn descendants, in a stable order (root
+        first, children by name) so a parent's `spawn` row is read before the
+        child events it introduces."""
+        if self.root is None:
+            return []
+        out = [self.root]
+        for p in sorted(self.root.parent.glob(self.root.name + "-spawn-*")):
+            if (p / "trace.jsonl").is_file():
+                out.append(p)
+        return out
+
+    def poll(self) -> list[dict]:
+        events: list[dict] = []
+        root = _pick_root(self.target)
+        if root != self.root:
+            self.root = root
+            self.files = {}
+            if root is not None:
+                events.append({"kind": "watch_session", "session": root.name})
+        if self.root is None:
+            return events
+        for d in self._sessions():
+            name = d.name
+            reader = self.files.get(name)
+            if reader is None:
+                reader = self.files[name] = _FileTail(d / "trace.jsonl")
+            for entry in reader.poll():
+                entry.setdefault("session", name)
+                events.append(entry)
         return events
 
 

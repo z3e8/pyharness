@@ -71,6 +71,39 @@ def test_tail_switches_to_a_newer_session(tmp_path):
     assert events[1]["text"] == "new"
 
 
+def test_pick_root_ignores_spawn_children(tmp_path):
+    import os
+
+    _write(tmp_path / "run-1" / "trace.jsonl", {"kind": "task", "text": "parent"})
+    _write(tmp_path / "run-1-spawn-01" / "trace.jsonl", {"kind": "task", "text": "child"})
+    # The child is the most recently modified, but the root view must stay on the parent.
+    os.utime(tmp_path / "run-1" / "trace.jsonl", (1, 1))
+    assert _pick_trace(tmp_path) == tmp_path / "run-1" / "trace.jsonl"
+
+
+def test_tail_follows_spawn_children_and_tags_events(tmp_path):
+    import os
+
+    parent = tmp_path / "run-1" / "trace.jsonl"
+    _write(parent, {"kind": "task", "text": "parent"})
+    tail = Tail(tmp_path)
+    first = tail.poll()
+    assert first[0] == {"kind": "watch_session", "session": "run-1"}
+    assert first[1]["session"] == "run-1"
+
+    # A sub-agent starts: newest file, but must NOT flip the root view.
+    child = tmp_path / "run-1-spawn-01" / "trace.jsonl"
+    _write(parent, {"kind": "spawn", "text": "sub task", "child": "run-1-spawn-01"})
+    _write(child, {"kind": "task", "text": "sub task"})
+    os.utime(parent, (1, 1))
+
+    events = tail.poll()
+    assert all(e["kind"] != "watch_session" for e in events)  # no clobber
+    kinds = {(e["kind"], e["session"]) for e in events}
+    assert ("spawn", "run-1") in kinds
+    assert ("task", "run-1-spawn-01") in kinds
+
+
 @pytest.fixture
 def server(tmp_path):
     srv = WatchServer(tmp_path, port=0)
