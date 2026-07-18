@@ -296,7 +296,7 @@ def _cmd_show(args: argparse.Namespace) -> None:
         print(json.dumps(digest))
         return
     for key in ("name", "outcome", "task", "tasks", "steps", "llm_calls", "errors",
-                "actions", "denials", "cost_usd"):
+                "failed_actions", "actions", "denials", "cost_usd"):
         print(f"{key}: {digest[key]}")
     answer = digest["answer"]
     if answer is not None:

@@ -31,7 +31,7 @@ from .transcript import iter_jsonl, session_digest
 
 DEFAULT_DB = "~/.pyharness/index.db"
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     answer TEXT,                -- final answer (truncated)
     steps INTEGER,              -- code cells run
     errors INTEGER,
+    failed_actions INTEGER,     -- broker actions that raised (action_end ok=False)
     llm_calls INTEGER,
     cost_usd REAL,
     actions INTEGER,            -- audited capability calls
@@ -111,7 +112,8 @@ CREATE VIEW IF NOT EXISTS session_costs AS
 SCHEMA_HELP = """\
 Tables (one row per...):
   sessions(id, name, project, started, ended, task, tasks, outcome, answer,
-           steps, errors, llm_calls, cost_usd, actions, denials)  -- one session
+           steps, errors, failed_actions, llm_calls, cost_usd,
+           actions, denials)                                      -- one session
       outcome: answered | stopped:max_steps | stopped:budget | error | aborted | empty
   llm_calls(session_id, ts, model, tier, cost_usd, latency_s,
             input_tokens, output_tokens)                          -- one LLM call
@@ -300,12 +302,12 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
     # digest (`run --json` / `show`) — one scan there, one set of semantics.
     d = session_digest(session_dir)
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (sid, session_dir.name, _project_of(session_dir), d["started"], d["ended"],
          None if d["task"] is None else _clip(d["task"]),
          d["tasks"], d["outcome"],
          None if d["answer"] is None else _clip(d["answer"]),
-         d["steps"], d["errors"], d["llm_calls"],
+         d["steps"], d["errors"], d["failed_actions"], d["llm_calls"],
          d["cost_usd"], d["actions"], d["denials"], fingerprint),
     )
     return True

@@ -107,7 +107,7 @@ def session_digest(session_dir: str | Path) -> dict:
 
     started = ended = None
     task = answer = None
-    tasks = steps = errors = llm_calls = 0
+    tasks = steps = errors = failed_actions = llm_calls = 0
     cost = 0.0
     stopped_budget = False
     for e in iter_jsonl(trace_path):
@@ -127,6 +127,10 @@ def session_digest(session_dir: str | Path) -> dict:
             errors += 1
             text = str(e.get("text") or "")
             stopped_budget = stopped_budget or text.startswith("BudgetExceeded")
+        elif kind == "action_end":
+            # Broker actions that raised (`ok: False`) — invisible to `errors`,
+            # which counts orchestrator-level turn errors only.
+            failed_actions += e.get("ok") is False
         elif kind == "answer":
             answer = str(e.get("text") or "")
         elif kind in ("budget", "session_end"):
@@ -150,6 +154,7 @@ def session_digest(session_dir: str | Path) -> dict:
         "steps": steps,
         "llm_calls": llm_calls,
         "errors": errors,
+        "failed_actions": failed_actions,
         "cost_usd": round(cost, 6),
         "actions": actions,
         "denials": denials,

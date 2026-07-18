@@ -32,6 +32,7 @@ def _seed_session(root, name):
              "system": "SECRET-PROMPT", "messages": [{"role": "user", "text": "hidden"}]},
             {"ts": 3.0, "kind": "code", "text": "print('x')"},
             {"ts": 4.0, "kind": "output", "text": "x"},
+            {"ts": 4.5, "kind": "action_end", "text": "files.write", "ok": True},
             {"ts": 5.0, "kind": "answer", "text": "done"},
             {"ts": 6.0, "kind": "budget", "spent_usd": 0.05},
         ],
@@ -99,6 +100,7 @@ def test_session_digest_envelope(tmp_path):
     assert digest["task"] == "apply to job"
     assert digest["answer"] == "done"
     assert (digest["tasks"], digest["steps"], digest["llm_calls"], digest["errors"]) == (1, 1, 1, 0)
+    assert digest["failed_actions"] == 0  # the ok=True action_end doesn't count
     # cumulative budget beats the summed per-call costs
     assert digest["cost_usd"] == 0.05
     assert (digest["actions"], digest["denials"]) == (2, 1)
@@ -112,6 +114,27 @@ def test_session_digest_empty_dir(tmp_path):
     assert digest["outcome"] == "empty"
     assert digest["answer"] is None and digest["task"] is None
     assert digest["cost_usd"] == 0.0 and digest["actions"] == 0
+
+
+def test_session_digest_counts_failed_actions(tmp_path):
+    # Broker action failures (`action_end` with ok=False) are counted separately
+    # from `errors` (orchestrator-level), and don't change the outcome vocabulary:
+    # a no-answer session with only failed actions still classifies as aborted.
+    d = tmp_path / "s"
+    _write_jsonl(
+        d / "trace.jsonl",
+        [
+            {"ts": 1.0, "kind": "task", "text": "t"},
+            {"ts": 2.0, "kind": "action_start", "text": "llm.llm"},
+            {"ts": 3.0, "kind": "action_end", "text": "llm.llm", "ok": False,
+             "error": "StreamStalled('silence')", "elapsed_s": 620.0},
+            {"ts": 4.0, "kind": "action_end", "text": "files.write", "ok": True},
+        ],
+    )
+    digest = session_digest(d)
+    assert digest["failed_actions"] == 1
+    assert digest["errors"] == 0
+    assert digest["outcome"] == "aborted"
 
 
 def test_session_digest_error_outcome(tmp_path):

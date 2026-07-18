@@ -28,6 +28,8 @@ def _make_session(root, name, *, ts=1700000000.0, answer="done", errors=(), skil
          "tier": "mid", "cost_usd": 0.01, "latency_s": 2.5, "input_tokens": 900, "output_tokens": 80},
         {"ts": ts + 3, "kind": "code", "text": "print('hi')"},
         {"ts": ts + 4, "kind": "output", "text": "hi"},
+        {"ts": ts + 4.5, "kind": "action_end", "text": "llm.llm", "ok": False,
+         "error": "StreamStalled('silence')", "elapsed_s": 240.0},
     ]
     for err in errors:
         trace.append({"ts": ts + 5, "kind": "error", "text": err})
@@ -59,6 +61,7 @@ def test_index_derives_sessions_and_children(tmp_path):
     assert session["task"] == "apply to the job"
     assert session["outcome"] == "answered"
     assert session["steps"] == 1
+    assert session["failed_actions"] == 1  # the ok=False action_end above
     assert session["llm_calls"] == 1
     assert session["cost_usd"] == pytest.approx(0.02)  # session_end totals win
     assert session["actions"] == 2
