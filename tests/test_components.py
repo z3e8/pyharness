@@ -2444,3 +2444,39 @@ def test_map_llm_attempt_events_carry_worker_index():
     assert all(r.ok for r in cap.map_llm(["a", "b"]))
     retries = sorted(t for k, t, _ in events if k == "worker" and "retry" in t)
     assert retries == ["map_llm[0] — retry 2/3", "map_llm[1] — retry 2/3"]
+
+
+def test_session_close_runs_every_teardown_step_despite_failures(tmp_path, caplog):
+    # One failing teardown step (a wedged kernel) must not leak the rest: the
+    # HTTP clients, browser contexts, and MCP connections still close, and the
+    # failure is logged — never raised, never silently swallowed.
+    from pyharness.core.session import Session
+
+    session = Session(tmp_path, unsafe_in_process=True)
+    closed = []
+
+    def boom():
+        raise RuntimeError("kernel wedged")
+
+    session.kernel = SimpleNamespace(close=boom)
+    session.http.close_all = lambda: closed.append("http")
+    session.browser.close_all = lambda: closed.append("browser")
+    session.registry.close = lambda: closed.append("registry")
+    with caplog.at_level("WARNING", logger="pyharness.session"):
+        session.close()  # must not raise
+    assert closed == ["http", "browser", "registry"]
+    assert any("kernel" in r.getMessage() for r in caplog.records)
+
+
+def test_session_close_is_idempotent(tmp_path):
+    # close() runs exactly once even when called again (the abandoning parent
+    # and the child's own thread can both reach a child session's close).
+    from pyharness.core.session import Session
+
+    session = Session(tmp_path, unsafe_in_process=True)
+    closed = []
+    session.registry.close = lambda: closed.append("registry")
+    session.close()
+    session.close()
+    assert closed == ["registry"]
+    assert (tmp_path / "trace.jsonl").read_text().count('"session_end"') == 1

@@ -305,13 +305,144 @@ def test_shutdown_cancels_running_children_cooperatively(tmp_path):
     try:
         handle = parent.broker.call("spawn", "spawn", "long task")
         abandoned = parent._spawn_cap.shutdown(join_timeout_s=0.05)
-        assert abandoned == [handle]  # still pinned at the gate
+        assert [c.name for c in abandoned] == [handle]  # still pinned at the gate
         gate.set()
         result = parent.broker.call("spawn", "wait", handle)
         assert not result.ok  # ended by the zeroed budget slice, not an answer
     finally:
         gate.set()
         parent.close()
+
+
+def test_children_registry_survives_concurrent_spawn_and_iteration():
+    # spawn() inserts into _children from caller threads while spawn_status()/
+    # _resolve()/shutdown() iterate it (e.g. close() during an in-flight
+    # spawn). All access is lock-guarded via a snapshot, so concurrent
+    # mutation must never raise "dictionary changed size during iteration".
+    from concurrent.futures import Future
+
+    from pyharness.broker.capabilities.spawn import ChildRun, SpawnCapability
+
+    def start_child(task, **kwargs):
+        future: Future = Future()
+        future.set_result(None)
+        return ChildRun(name=f"c-{task}", future=future, budget=Budget())
+
+    cap = SpawnCapability(start_child, session_cap=10_000)
+    errors: list[Exception] = []
+    stop = threading.Event()
+
+    def spawner(base: int) -> None:
+        try:
+            for i in range(300):
+                cap.spawn(f"{base}-{i}")
+        except Exception as exc:  # noqa: BLE001 — collected for the assertion
+            errors.append(exc)
+
+    def reader() -> None:
+        try:
+            while not stop.is_set():
+                cap.spawn_status()
+                cap._resolve(None)
+                cap.shutdown(join_timeout_s=0)
+        except Exception as exc:  # noqa: BLE001 — collected for the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=spawner, args=(n,)) for n in range(4)]
+    threads += [threading.Thread(target=reader) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads[:4]:
+        t.join(timeout=30)
+    stop.set()
+    for t in threads[4:]:
+        t.join(timeout=30)
+    assert errors == []
+    assert len(cap.spawn_status()) == 1200
+
+
+def test_abandoned_child_settles_before_snapshot_and_never_after(tmp_path):
+    # A child still running when the parent closes is force-settled *before*
+    # the session_end snapshot: its spend-so-far lands in the final numbers,
+    # and nothing it does afterwards can touch the parent's budget or append
+    # to the audit chain.
+    import json
+
+    gate = threading.Event()
+    entered = threading.Event()
+
+    class EnteredGatedLLM(GatedLLM):
+        def complete(self, **kwargs):
+            entered.set()  # the child is provably pinned mid-completion
+            return super().complete(**kwargs)
+
+    llm = EnteredGatedLLM([_text("late report")], gate)
+    parent = _session(tmp_path, llm, approver=lambda req: True)
+    try:
+        handle = parent.broker.call("spawn", "spawn", "slow task")
+        run = parent._spawn_cap._children[handle]
+        assert entered.wait(5.0)
+        llm.child_budget.record("m", 0.5)  # child spend before abandonment
+        # close() joins abandoned children for 10s by default — too slow here.
+        orig_shutdown = parent._spawn_cap.shutdown
+        parent._spawn_cap.shutdown = lambda: orig_shutdown(join_timeout_s=0.05)
+        parent.close()  # child pinned at the gate -> abandoned + force-settled
+
+        # Settled into the parent before the snapshot; snapshot carries it.
+        assert parent.budget.spent_usd == 0.5
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "s" / "trace.jsonl").read_text().splitlines()
+        ]
+        assert any(r["kind"] == "spawn_abandoned" and r["child"] == handle for r in records)
+        end = next(r for r in records if r["kind"] == "session_end")
+        assert end["spent_usd"] == 0.5
+
+        audit_at_close = (tmp_path / "s" / "audit.jsonl").read_bytes()
+        # The abandoned child spends more, then finishes after the snapshot.
+        llm.child_budget.record("m", 9.9)
+        gate.set()
+        run.future.result(timeout=10)
+        # No second absorb, no post-snapshot audit appends.
+        assert parent.budget.spent_usd == 0.5
+        assert (tmp_path / "s" / "audit.jsonl").read_bytes() == audit_at_close
+    finally:
+        gate.set()
+        parent.close()  # idempotent — already closed above
+
+
+def test_display_callback_is_serialized_across_threads(tmp_path):
+    # The parent loop and N child threads all call the display callback; the
+    # session wraps it in a lock so a renderer's multi-print sequence (and its
+    # cross-call state, e.g. the CLI's open-thinking marker) never interleaves.
+    import time as _time
+
+    overlaps = []
+    active = [0]
+
+    def renderer(kind: str, text: str) -> None:
+        active[0] += 1
+        if active[0] > 1:
+            overlaps.append(active[0])
+        _time.sleep(0.001)
+        active[0] -= 1
+
+    session = _session(tmp_path, ScriptedLLM([]), on_event=renderer)
+    try:
+        emit = session._display_event
+
+        def hammer() -> None:
+            for _ in range(50):
+                emit("note", "x")
+
+        threads = [threading.Thread(target=hammer) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+    finally:
+        session.close()
+    assert overlaps == []
 
 
 def test_concurrent_children_keep_the_audit_chain_intact(tmp_path):

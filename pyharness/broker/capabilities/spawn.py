@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future
 from concurrent.futures import wait as futures_wait
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...security.policy import ActionCategory
 
@@ -41,11 +42,16 @@ class ChildRun:
     into a result, so `future.result()` never raises for a failed child.
     `budget` is the child's own slice, exposed for live status and for the
     cooperative cancel in `shutdown` (dropping the limit to spent makes the
-    child's next budget check raise, ending it at a step boundary)."""
+    child's next budget check raise, ending it at a step boundary). `abandon`
+    is the parent-side force-stop for a child that outlives the shutdown join:
+    it closes the child session and settles its spend into the parent exactly
+    once, so a straggler can never mutate the parent's budget or audit after
+    the parent's session_end snapshot."""
 
     name: str
     future: Future
     budget: object
+    abandon: Callable[[], None] | None = field(default=None, compare=False)
 
 
 class SpawnCapability:
@@ -118,22 +124,32 @@ class SpawnCapability:
             max_steps=max_steps,
             tier=tier,
         )
-        self._children[child.name] = child
+        with self._lock:
+            self._children[child.name] = child
         return child.name
+
+    def _snapshot(self) -> dict[str, ChildRun]:
+        """A point-in-time copy of the registry. Every reader iterates a
+        snapshot taken under the lock — never the live dict — because spawn()
+        inserts from other threads (an in-flight spawn during close() would
+        otherwise crash iteration with 'dict changed size')."""
+        with self._lock:
+            return dict(self._children)
 
     def _resolve(self, handles) -> tuple[list[ChildRun], bool]:
         """Handles -> tracked children. None = every child spawned so far;
         a single handle returns single=True so wait() can unwrap its result."""
+        children = self._snapshot()
         if handles is None:
-            return list(self._children.values()), False
+            return list(children.values()), False
         single = isinstance(handles, str)
         names = [handles] if single else list(handles)
-        unknown = [n for n in names if n not in self._children]
+        unknown = [n for n in names if n not in children]
         if unknown:
             raise ValueError(
-                f"unknown spawn handle(s) {unknown}; known: {sorted(self._children)}"
+                f"unknown spawn handle(s) {unknown}; known: {sorted(children)}"
             )
-        return [self._children[n] for n in names], single
+        return [children[n] for n in names], single
 
     def wait(self, handles=None, timeout: float | None = None):
         """Block until the given spawned children finish and return their
@@ -161,18 +177,19 @@ class SpawnCapability:
                 "state": "done" if c.future.done() else "running",
                 "spent_usd": round(c.budget.spent_usd, 6),
             }
-            for c in self._children.values()
+            for c in self._snapshot().values()
         ]
 
-    def shutdown(self, join_timeout_s: float = 10.0) -> list[str]:
+    def shutdown(self, join_timeout_s: float = 10.0) -> list[ChildRun]:
         """Session close: cooperatively stop children still running by dropping
         each one's budget limit to what it already spent — its next budget
         check raises and the child settles as `stopped:budget`. Join briefly
         (a child mid-LLM-call finishes that call first); whatever is still
         running after the timeout is abandoned (daemon threads — they die with
-        the process) and returned so the caller can record it."""
-        running = [c for c in self._children.values() if not c.future.done()]
+        the process) and returned so the caller can record it and force-settle
+        it via `ChildRun.abandon`."""
+        running = [c for c in self._snapshot().values() if not c.future.done()]
         for child in running:
             child.budget.limit_usd = child.budget.spent_usd
         futures_wait([c.future for c in running], timeout=join_timeout_s)
-        return [c.name for c in running if not c.future.done()]
+        return [c for c in running if not c.future.done()]

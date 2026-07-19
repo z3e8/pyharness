@@ -94,8 +94,9 @@ long or stalling worker calls — so a slow worker call shows movement instead
 of reading as a hang (the broker's `action_start` spinner alone can't show
 progress *within* the one call). A `spawn` (parent side, with the child dir name) and `spawned_by`
 (child side) bracket a sub-agent, and `spawn_abandoned` marks a child still
-running when the parent closed and outlived the cooperative stop; a `media`
-event records a screenshot persisted under `<session>/media/`.
+running when the parent closed and outlived the cooperative stop (it is then
+force-closed, with its spend-so-far settled into the parent's final numbers);
+a `media` event records a screenshot persisted under `<session>/media/`.
 
 ## What controls the OTel export
 

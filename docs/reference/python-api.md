@@ -68,6 +68,8 @@ spawned it; see [builtins](builtins.md#delegation).
 - **`close()`** — write the `session_end` trace line and fold the session into
   the index (when configured), then tear down the child process (if
   out-of-process), any MCP connections, and any open HTTP/browser sessions.
+  Idempotent, and each teardown step is isolated: one failing step is logged
+  and the rest still run.
 
 ```python
 from pyharness import Session, Budget

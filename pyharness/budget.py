@@ -37,11 +37,16 @@ class Budget:
     def absorb(self, other: "Budget") -> None:
         """Fold another budget's spend into this one — how a spawned child
         session's slice settles into its parent when the child closes. `other`
-        is a settled child (its thread is done), so only this side locks."""
+        may still be recording (an abandoned child force-settled at parent
+        close), so snapshot its fields under its own lock first. Lock order is
+        fixed — other, then self — and nothing acquires them in reverse, so
+        there is no deadlock."""
+        with other._lock:
+            spent, calls, by_model = other.spent_usd, other.calls, dict(other.by_model)
         with self._lock:
-            self.spent_usd += other.spent_usd
-            self.calls += other.calls
-            for model, cost in other.by_model.items():
+            self.spent_usd += spent
+            self.calls += calls
+            for model, cost in by_model.items():
                 self.by_model[model] = self.by_model.get(model, 0.0) + cost
 
     def remaining(self) -> float:

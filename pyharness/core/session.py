@@ -162,6 +162,21 @@ class Session:
         self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
+        # Serialize the display callback: the parent agent loop and N spawned
+        # child threads all call it, and renderers keep cross-call state (the
+        # CLI's open-thinking marker) and print in multiple writes — so
+        # concurrent calls would interleave mid-line. One lock makes each
+        # event's full render atomic. (A child session wraps its own callback
+        # too; that inner callback funnels into the parent's locked one, so
+        # the parent lock is where the whole tree serializes.)
+        if on_event is not None:
+            _raw_on_event = on_event
+            _display_lock = threading.Lock()
+
+            def on_event(kind: str, text: str, _inner=_raw_on_event, _lock=_display_lock):
+                with _lock:
+                    _inner(kind, text)
+
         # The raw display callback (the CLI renderer), kept so spawned children
         # running in background threads can surface progress lines to it.
         self._display_event = on_event
@@ -410,7 +425,10 @@ class Session:
             keep_outputs=keep_outputs,
         )
         self.messages: list[dict] = []
+        # close() must run exactly once even when called concurrently — the
+        # owner's thread and an abandoning parent can both reach it.
         self._closed = False
+        self._close_lock = threading.Lock()
         self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
 
     def _has(self, name: str) -> bool:
@@ -556,6 +574,31 @@ class Session:
         )
         child.trace.record("spawned_by", parent=self.id, parent_name=self.workspace.root.name)
 
+        # The child's slice settles into the parent exactly once — normally
+        # below when the child thread finishes, or parent-side via _abandon()
+        # when close() gives up on a straggler. Whoever gets there first wins;
+        # the loser's call is a no-op, so a child that finishes after the
+        # parent's session_end snapshot can never mutate the parent's budget.
+        _settle_lock = threading.Lock()
+        _settled = False
+
+        def _settle() -> None:
+            nonlocal _settled
+            with _settle_lock:
+                if _settled:
+                    return
+                _settled = True
+            self.budget.absorb(child_budget)
+
+        def _abandon() -> None:
+            """Parent-side force-stop for a child that outlived the shutdown
+            join: close the child session now (its kernel process is killed via
+            the reap escalation, and in-flight broker calls get their aborted
+            audit outcome before the parent's session_end) and settle its
+            spend as of this moment."""
+            child.close()
+            _settle()
+
         def _run() -> SpawnResult:
             try:
                 report = child.run(task)
@@ -563,7 +606,7 @@ class Session:
                 report = f"(spawn failed: {exc!r})"
             finally:
                 child.close()
-                self.budget.absorb(child_budget)
+                _settle()
 
             from ..obs.transcript import session_digest
 
@@ -589,7 +632,7 @@ class Session:
         # Daemon: an abandoned child must not block interpreter exit; normal
         # teardown goes through SpawnCapability.shutdown() in close().
         threading.Thread(target=_runner, name=name, daemon=True).start()
-        return ChildRun(name=name, future=future, budget=child_budget)
+        return ChildRun(name=name, future=future, budget=child_budget, abandon=_abandon)
 
     def _refresh_index(self) -> None:
         """Bring the session index up to date (all remembered roots plus this
@@ -690,33 +733,55 @@ class Session:
 
     def close(self) -> None:
         """Tear down session resources (the child process, if out-of-process,
-        and any MCP server connections)."""
-        if not self._closed:
+        and any MCP server connections). Idempotent and step-isolated: each
+        teardown step runs in its own try/except so one failure cannot skip
+        the rest — failures are logged, never raised or silently dropped."""
+        with self._close_lock:
+            if self._closed:
+                return
             self._closed = True
-            if self._spawn_cap is not None:
-                # Cooperatively stop children still running (their budget slice
-                # drops to spent, ending them at the next step boundary) so the
-                # session_end snapshot below includes their settled spend; a
-                # child that outlives the join is abandoned and recorded.
-                for name in self._spawn_cap.shutdown():
-                    self.trace.record("spawn_abandoned", child=name)
-            # Broker calls still executing in orphaned threads get their audit
-            # outcome record ({ok: false, error: "aborted"}) now, best-effort,
-            # so the chain shows how they ended instead of omitting them.
+        import logging
+
+        log = logging.getLogger("pyharness.session")
+
+        def step(name: str, fn) -> None:
             try:
-                self.broker.abort_inflight()
-            except Exception:  # noqa: BLE001 — teardown bookkeeping must never block close
-                pass
-            self.trace.record(
+                fn()
+            except Exception:  # noqa: BLE001 — every remaining step must still run
+                log.warning("close: %s failed", name, exc_info=True)
+
+        if self._spawn_cap is not None:
+            # Cooperatively stop children still running (their budget slice
+            # drops to spent, ending them at the next step boundary) so the
+            # session_end snapshot below includes their settled spend. A child
+            # that outlives the join is abandoned: record it and force-settle
+            # it NOW — before the snapshot — so nothing mutates the parent
+            # budget or appends child-close audit records after session_end.
+            def shutdown_children() -> None:
+                for run in self._spawn_cap.shutdown():
+                    self.trace.record("spawn_abandoned", child=run.name)
+                    if run.abandon is not None:
+                        step(f"abandon child {run.name}", run.abandon)
+
+            step("spawn shutdown", shutdown_children)
+        # Broker calls still executing in orphaned threads get their audit
+        # outcome record ({ok: false, error: "aborted"}) now, best-effort,
+        # so the chain shows how they ended instead of omitting them.
+        step("abort in-flight actions", self.broker.abort_inflight)
+        step(
+            "session_end snapshot",
+            lambda: self.trace.record(
                 "session_end",
                 session_id=self.id,
                 spent_usd=self.budget.spent_usd,
                 calls=self.budget.calls,
                 by_model=self.budget.by_model,
-            )
-            self._refresh_index()  # fold this session into the index for the next one
+            ),
+        )
+        # Fold this session into the index for the next one.
+        step("index refresh", self._refresh_index)
         if hasattr(self.kernel, "close"):
-            self.kernel.close()
-        self.http.close_all()
-        self.browser.close_all()
-        self.registry.close()
+            step("kernel", self.kernel.close)
+        step("http sessions", self.http.close_all)
+        step("browser sessions", self.browser.close_all)
+        step("tool registry", self.registry.close)
