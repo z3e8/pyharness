@@ -560,7 +560,7 @@ def test_child_session_is_host_scoped(tmp_path):
             child.broker.call("web", "fetch", "https://attacker.example.net/")
         # Web search would carry the query to the provider, outside the scope.
         with pytest.raises(EgressBlocked):
-            child.broker.call("web", "search_results", "anything")
+            child.broker.call("web", "search", "anything")
     finally:
         child.close()
 

@@ -163,7 +163,7 @@ installation, MCP servers, and learned skills. None are in scope automatically. 
 read its functions with describe_tool(name), load it with use_tool(name), then
 call its functions on the returned module. Each call is gated
 (policy/audit/approval) exactly as a builtin would be. Some worth knowing:
-  search_tools("web")       # web -> search_results/fetch; http -> stateful sessions,
+  search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element
                             #   refs/click/fill by ref/look — a screenshot you

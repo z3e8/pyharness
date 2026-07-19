@@ -109,7 +109,7 @@ environment. See [the sandbox](../explanation/security-and-audit.md#the-out-of-p
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `EXA_API_KEY` | — | Exa API key for `web.search_results` (the raw ranked-list search). `web.fetch` doesn't need it. Held parent-side and scrubbed from the child sandbox like the LLM keys; never reaches agent code. |
+| `EXA_API_KEY` | — | Exa API key for `web.search` (the raw ranked-list search). `web.fetch` doesn't need it. Held parent-side and scrubbed from the child sandbox like the LLM keys; never reaches agent code. |
 
 ## Email inbox
 

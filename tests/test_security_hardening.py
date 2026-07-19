@@ -613,7 +613,7 @@ def test_web_search_unavailable_under_host_scope(tmp_path):
         )
     )
     with pytest.raises(EgressBlocked):
-        web.search_results("anything")
+        web.search("anything")
 
 
 # --- IMAP command injection --------------------------------------------------

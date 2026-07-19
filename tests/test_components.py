@@ -2159,7 +2159,7 @@ def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):
     assert "home=/" in out  # the allowlisted basics survive
 
 
-# --- web.search_results (Exa raw-results search) ---------------------------
+# --- web.search (Exa raw-results search) ------------------------------------
 
 
 class _FakeExaClient:
@@ -2197,7 +2197,7 @@ def _patch_exa(monkeypatch, *, body=None, status=200):
     return _FakeExaClient
 
 
-def test_web_search_results_queries_exa_and_parses(monkeypatch):
+def test_web_search_queries_exa_and_parses(monkeypatch):
     fake = _patch_exa(
         monkeypatch,
         body={
@@ -2216,7 +2216,7 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
     monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
     web = WebCapability(http=None)
 
-    out = web.search_results("harrington jackets", num_results=5)
+    out = web.search("harrington jackets", num_results=5)
 
     call = fake.calls[-1]
     assert call["method"] == "POST"
@@ -2242,24 +2242,24 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
     assert "EXA-SECRET" not in repr(out)  # the key never rides back on the result
 
 
-def test_web_search_results_clamps_num_results(monkeypatch):
+def test_web_search_clamps_num_results(monkeypatch):
     fake = _patch_exa(monkeypatch)
     monkeypatch.setenv("EXA_API_KEY", "k")
     web = WebCapability(http=None)
 
-    web.search_results("q", num_results=0)
-    web.search_results("q", num_results=500)
+    web.search("q", num_results=0)
+    web.search("q", num_results=500)
 
     assert [c["json"]["numResults"] for c in fake.calls] == [1, 100]
 
 
-def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
+def test_web_search_tolerates_sparse_and_empty(monkeypatch):
     # A result missing highlights/score/date/author parses to None/"" (no KeyError),
     # and a response with no "results" key yields [].
     _patch_exa(monkeypatch, body={"results": [{"url": "https://x.example"}]})
     monkeypatch.setenv("EXA_API_KEY", "k")
     web = WebCapability(http=None)
-    assert web.search_results("q") == [
+    assert web.search("q") == [
         {
             "title": None,
             "url": "https://x.example",
@@ -2271,25 +2271,25 @@ def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
     ]
 
     _patch_exa(monkeypatch, body={})
-    assert web.search_results("q") == []
+    assert web.search("q") == []
 
 
-def test_web_search_results_raises_without_leaking_key(monkeypatch):
+def test_web_search_raises_without_leaking_key(monkeypatch):
     _patch_exa(monkeypatch, status=429)
     monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
     web = WebCapability(http=None)
 
     with pytest.raises(RuntimeError) as exc:
-        web.search_results("q")
+        web.search("q")
     assert "429" in str(exc.value)
     assert "EXA-SECRET" not in str(exc.value)
 
 
-def test_web_search_results_requires_key(monkeypatch):
+def test_web_search_requires_key(monkeypatch):
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     web = WebCapability(http=None)
     with pytest.raises(RuntimeError, match="EXA_API_KEY not set"):
-        web.search_results("q")
+        web.search("q")
 
 
 def test_exa_key_is_scrubbed_from_child():
@@ -2847,19 +2847,19 @@ def test_session_close_is_idempotent(tmp_path):
 
 
 def test_remote_module_unknown_function_lists_available():
-    # A typo'd function name (web.search vs search_results) should point the
+    # A typo'd function name (web.query vs search/fetch) should point the
     # agent at the real functions instead of a bare AttributeError, so the next
     # cell self-corrects rather than blindly re-guessing.
     from pyharness.broker.remote.child import _RemoteModule
     from pyharness.broker.remote.protocol import RemoteToolSpec
 
-    mod = _RemoteModule(None, RemoteToolSpec("web", ("fetch", "search_results")))
+    mod = _RemoteModule(None, RemoteToolSpec("web", ("fetch", "search")))
 
     with pytest.raises(AttributeError) as exc:
-        _ = mod.search
+        _ = mod.query
     msg = str(exc.value)
-    assert "web" in msg and "search" in msg
-    assert "fetch" in msg and "search_results" in msg
+    assert "web" in msg and "query" in msg
+    assert "fetch" in msg and "search" in msg
 
     # Private/dunder lookups (copy protocol, IPython probes) stay bare so the
     # proxy still behaves as a normal object.

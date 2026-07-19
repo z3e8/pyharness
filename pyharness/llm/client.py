@@ -28,7 +28,7 @@ PROVIDER_SECRET_ENV = (
     "GROQ_API_KEY",
     "MISTRAL_API_KEY",
     "COHERE_API_KEY",
-    "EXA_API_KEY",  # web.search_results (Exa) — held parent-side like the LLM keys
+    "EXA_API_KEY",  # web.search (Exa) — held parent-side like the LLM keys
 )
 
 # Tiers let the agent reason about cost/capability instead of model strings.

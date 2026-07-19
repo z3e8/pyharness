@@ -266,7 +266,7 @@ guard. Scope entries match a host and its subdomains (`github.com` covers
 by the spawning agent and shown to the human, unlike approval grants, which
 stay exact-match because they are minted from an observed concrete host.
 
-Under a host scope, `web.search_results` is refused: the query itself travels
+Under a host scope, `web.search` is refused: the query itself travels
 to the search provider (outside any scope), and a free-text query is a classic
 exfiltration channel. The scope also does not pre-grant anything: mutating or
 secret-carrying calls to in-scope hosts still prompt the human exactly as

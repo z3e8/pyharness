@@ -19,7 +19,7 @@ class WebCapability:
 
     def exports(self) -> dict:
         return {
-            "search_results": self.search_results,
+            "search": self.search,
             "fetch": self.fetch,
         }
 
@@ -56,7 +56,7 @@ class WebCapability:
         host = urlsplit(url).hostname if url else None
         return GrantScope("http", host.lower()) if host else None
 
-    def search_results(self, query: str, num_results: int = 10) -> list[dict]:
+    def search(self, query: str, num_results: int = 10) -> list[dict]:
         """Search the web and return a *raw ranked list* to fan out over — each
         item a dict `{title, url, snippet, published_date, author, score}`. Use
         this for research: fetch the URLs with `web.fetch`/`http.request` and rank
@@ -85,9 +85,7 @@ class WebCapability:
             )
         api_key = os.environ.get("EXA_API_KEY")
         if not api_key:
-            raise RuntimeError(
-                "EXA_API_KEY not set — add it to .env to use web.search_results"
-            )
+            raise RuntimeError("EXA_API_KEY not set — add it to .env to use web.search")
         return exa.search(query, api_key=api_key, num_results=num_results)
 
     def fetch(

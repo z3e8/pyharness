@@ -404,7 +404,7 @@ class Session:
         tool_caps = [
             (
                 WebCapability(http=self.http),
-                "Read the web: search_results (a raw ranked list to fan out over), and fetch a single URL.",
+                "Read the web: search (a raw ranked list to fan out over), and fetch a single URL.",
                 "web",
                 (
                     "web",
