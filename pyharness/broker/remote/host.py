@@ -22,6 +22,31 @@ from .sandbox import check_unsandboxed_platform, make_child_executable
 # RemoteKernel in the process (see _start_locked).
 _START_LOCK = threading.Lock()
 
+# Best-effort reaper of pyharness-sb-* temp dirs left by a previous run that
+# crashed hard (close() removes them on a clean exit). Age-gated well past any
+# realistic session length so a concurrently running session's dir is never
+# swept; the sweep runs once per process.
+_SANDBOX_DIR_MAX_AGE_S = 24 * 3600
+_reaped_stale_sandboxes = False
+
+
+def _reap_stale_sandbox_dirs() -> None:
+    global _reaped_stale_sandboxes
+    if _reaped_stale_sandboxes:
+        return
+    _reaped_stale_sandboxes = True
+    cutoff = time.time() - _SANDBOX_DIR_MAX_AGE_S
+    try:
+        for entry in Path(tempfile.gettempdir()).glob("pyharness-sb-*"):
+            try:
+                if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
 # How long a resync waits for an interrupted cell to report done before giving
 # up and killing the child (_resync_after_abort).
 _DRAIN_DEADLINE_S = 5.0
@@ -76,6 +101,7 @@ class RemoteKernel:
         self._sbdir = None
 
     def _start(self) -> None:
+        _reap_stale_sandbox_dirs()  # once per process: clear dirs a hard crash leaked
         with _START_LOCK:
             self._start_locked()
 
