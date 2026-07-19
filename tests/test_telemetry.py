@@ -198,3 +198,26 @@ def test_explicit_false_wins_over_endpoint(monkeypatch):
     telemetry._enabled = False
     assert telemetry.setup_telemetry() is False
     assert telemetry.is_enabled() is False
+
+
+def test_unreachable_endpoint_degrades_to_off(monkeypatch):
+    # Telemetry deliberately on, but the collector isn't up (port 1 is refused
+    # immediately). Rather than wire an OTLP exporter that can only loop
+    # "Connection refused" into the REPL, setup pre-flights and stays off.
+    monkeypatch.setenv("PYHARNESS_TELEMETRY_ENABLED", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
+    telemetry._enabled = False
+    assert telemetry.setup_telemetry() is False
+    assert telemetry.is_enabled() is False
+
+
+def test_endpoint_target_parses_scheme_and_bare_host(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.local:4318")
+    assert telemetry._endpoint_target() == ("collector.local", 4318)
+    # A bare host:port (no scheme) still resolves; a traces-specific override wins.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "otel:9999")
+    assert telemetry._endpoint_target() == ("otel", 9999)
+    # Unset falls back to the OTLP gRPC default the exporter itself would use.
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    assert telemetry._endpoint_target() == ("localhost", 4317)

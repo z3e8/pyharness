@@ -97,9 +97,12 @@ event records a screenshot persisted under `<session>/media/`.
 Telemetry is **opt-in** and **fail-open** (it can never break the agent). It's on
 when `PYHARNESS_TELEMETRY_ENABLED` is truthy; an explicit value wins, so setting
 it `false` keeps telemetry off even with an endpoint configured. Only when the
-switch is left unset does the mere presence of an OTLP endpoint enable it. The
-durable record is always `audit.jsonl` / `trace.jsonl`; this layer is a queryable
-view on top. Relevant `.env` keys (full list in
+switch is left unset does the mere presence of an OTLP endpoint enable it. Even
+when on, telemetry pre-flights the collector endpoint at startup: if nothing is
+listening (e.g. you set the switch true but haven't run `make up`), it logs one
+warning and stays off for the session instead of looping export errors into your
+console. The durable record is always `audit.jsonl` / `trace.jsonl`; this layer
+is a queryable view on top. Relevant `.env` keys (full list in
 [Configuration](../reference/configuration.md)):
 
 | Key | Effect |

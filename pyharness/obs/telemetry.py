@@ -58,6 +58,35 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _endpoint_target() -> tuple[str, int]:
+    """Host/port the OTLP gRPC exporter would dial. Falls back to the OTLP gRPC
+    default (localhost:4317) when the endpoint is unset — matching the exporter's
+    own default, so the pre-flight checks the same address export will use."""
+    from urllib.parse import urlparse
+
+    raw = (
+        os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+        or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        or "http://localhost:4317"
+    )
+    # urlparse populates hostname/port only with an authority; add a `//` when a
+    # bare `host:port` was given (no scheme).
+    parsed = urlparse(raw if "//" in raw else f"//{raw}", scheme="http")
+    return parsed.hostname or "localhost", parsed.port or 4317
+
+
+def _endpoint_reachable(host: str, port: int, timeout: float = 0.5) -> bool:
+    """A fast TCP connect to decide whether the collector is up. A closed port
+    refuses immediately; the short timeout bounds the unreachable-host case."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def is_enabled() -> bool:
     return _enabled
 
@@ -92,6 +121,29 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
     if not want:
         _enabled = False
         return False
+
+    # Telemetry is a non-critical sidecar. If the collector isn't up, the OTLP
+    # BatchSpanProcessor loops "Connection refused" to stderr (corrupting the
+    # interactive REPL, even splicing into streamed output) and blocks the
+    # atexit flush on shutdown. Pre-flight the endpoint and, when it's
+    # unreachable, degrade to off — one warning, no spam — rather than wire an
+    # exporter that can only fail. A restart picks it up once `make up` is live.
+    # This is what the module's fail-open contract promises.
+    host, port = _endpoint_target()
+    if not _endpoint_reachable(host, port):
+        log.warning(
+            "telemetry endpoint unreachable at %s:%s; traces off this session "
+            "(run `make up` to start the collector)",
+            host,
+            port,
+        )
+        _enabled = False
+        return False
+
+    # Belt-and-suspenders for a backend that dies mid-session (the pre-flight
+    # above only covers "never came up"): keep the OTLP exporter's own export
+    # retry/failure logging below the console so it can't flood the REPL.
+    logging.getLogger("opentelemetry.exporter.otlp").setLevel(logging.CRITICAL)
 
     # The OTLP exporter uses gRPC, whose C-core logs noisy "FD from fork parent
     # still in poll list" lines when the process forks with a live channel — which
