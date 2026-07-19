@@ -1,6 +1,6 @@
 # CLI
 
-Five console scripts are installed by the package (`pyproject.toml`).
+Six console scripts are installed by the package (`pyproject.toml`).
 
 ## `pyharness`
 
