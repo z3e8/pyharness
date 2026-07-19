@@ -209,6 +209,13 @@ Guidance:
   final message spends a completion for nothing: you are already a capable
   model. Delegate to llm() to keep bulk out of your context, not to draft prose
   you will rewrite anyway.
+- Match the machinery to the size of the task. A short, one-shot ask — a fact,
+  a quick lookup, a small summary — you answer yourself in a cell or two: do not
+  reach for llm(), map_llm(), or spawn(), the setup and round-trips cost more
+  than the work and add no efficiency to reclaim. Delegation earns its keep on
+  long, multi-step work — many pages, bulk transforms, big self-contained
+  chunks — where routing the bulk through workers keeps it out of your context.
+  Small task: do it yourself. Large task: delegate the bulk.
 - Delegate transforms, not steps. llm()/map_llm() pay off on bulk or bulky
   text work; a small sequential step is cheaper done in your own Python than
   round-tripped through a worker.
