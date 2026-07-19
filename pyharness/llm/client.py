@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import random
 import threading
 import time
@@ -128,6 +129,9 @@ class Usage:
     cost_usd: float
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # True for a failed attempt metered from its streamed bytes: the API bills
+    # it, but the exact output count never arrived, so it's estimated.
+    estimated: bool = False
 
     @property
     def context_tokens(self) -> int:
@@ -135,9 +139,18 @@ class Usage:
         return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
     @classmethod
-    def from_response(cls, usage: object, model: str) -> "Usage":
+    def from_response(
+        cls,
+        usage: object,
+        model: str,
+        output_tokens: int | None = None,
+        estimated: bool = False,
+    ) -> "Usage":
+        """Usage from the API's usage object. For a killed attempt the exact
+        output count never arrived, so the caller passes its own
+        `output_tokens` estimate and marks the record `estimated`."""
         in_tok = getattr(usage, "input_tokens", 0) or 0
-        out_tok = getattr(usage, "output_tokens", 0) or 0
+        out_tok = output_tokens if output_tokens is not None else (getattr(usage, "output_tokens", 0) or 0)
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         in_rate, out_rate = PRICING.get(model, (0.0, 0.0))
@@ -147,7 +160,7 @@ class Usage:
             + cache_read * 0.1 * in_rate
             + out_tok * out_rate
         )
-        return cls(model, in_tok, out_tok, cost, cache_read, cache_create)
+        return cls(model, in_tok, out_tok, cost, cache_read, cache_create, estimated)
 
 
 @dataclass(frozen=True)
@@ -169,7 +182,7 @@ class Completion:
 class LLM(Protocol):
     def complete(
         self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...,
-        on_thinking=..., cache_anchor=...
+        on_thinking=..., on_attempt=..., cache_anchor=..., total_deadline_s=...
     ) -> Completion: ...
 
 
@@ -182,75 +195,68 @@ class LLM(Protocol):
 STREAM_ATTEMPTS = 3
 _BACKOFF_BASE_S = 1.0
 _BACKOFF_CAP_S = 8.0
+# A retry only launches if this much of the caller's total deadline is left —
+# a sliver would just burn money to fail again.
+_MIN_RETRY_HEADROOM_S = 30.0
 _RETRYABLE_STATUS = {408, 409, 429, 529}
 
-# Client-side stall detection. The httpx read timeout is a byte-gap bound that
-# SSE ping events reset, so it cannot catch a wedged-but-pinging stream; and it
-# fires on healthy quiet gaps (long adaptive thinking, cold prefill) exactly at
-# the setting. The watchdog instead measures gaps between *stream events* and
-# total attempt wall clock, and closes the response when either bound is
-# breached — surfacing as a retryable `StreamStalled`. The deadline is a
-# runaway backstop only: a legitimate 32k-token completion streams for 10+
-# minutes, so it must sit well above that.
+# Client-side stall detection: a reader thread iterates the stream and feeds a
+# queue; the consuming thread — never blocked in a socket read — enforces three
+# clocks, each with its own failure name:
+#
+#   silence  — byte-level liveness. The SDK drops SSE `ping` events at every
+#              layer (`anthropic._streaming` skips them before yielding), so
+#              the one place pings still register is the transport: they are
+#              bytes, and bytes reset the httpx `read` timeout. Setting that
+#              timeout to SILENCE_TIMEOUT_S makes the reader's blocking read
+#              raise within 60s of true wire silence — the dead-connection
+#              detector, down from the old 240s.
+#   stall    — semantic progress, enforced by the consumer. If no stream
+#              *events* arrive for STALL_TIMEOUT_S while bytes still flow
+#              (else silence fires first at its lower bound), the server is
+#              provably alive but generation is wedged.
+#   deadline — runaway backstop, scaled to the request: an 8k-token worker
+#              call may not legally run as long as a 32k smart call.
+#
+# All three surface as a retryable `StreamStalled` naming the clock that fired.
+SILENCE_TIMEOUT_S = 60.0
 STALL_TIMEOUT_S = 180.0
-ATTEMPT_DEADLINE_S = 1500.0
+ATTEMPT_DEADLINE_BASE_S = 120.0
+ATTEMPT_DEADLINE_PER_TOKEN_S = 0.03
+ATTEMPT_DEADLINE_CAP_S = 1500.0
+# Estimated chars per output token when metering a killed attempt (D2): the
+# API reports exact output_tokens only at message_delta/end-of-stream, so a
+# stream that died mid-generation is billed from what it streamed.
+_CHARS_PER_TOKEN_EST = 4
+
+
+def _attempt_deadline_s(max_tokens: int) -> float:
+    return min(
+        ATTEMPT_DEADLINE_CAP_S,
+        ATTEMPT_DEADLINE_BASE_S + max_tokens * ATTEMPT_DEADLINE_PER_TOKEN_S,
+    )
 
 
 class StreamStalled(Exception):
-    """A stream the watchdog killed: no events for STALL_TIMEOUT_S, or the
-    whole attempt ran past ATTEMPT_DEADLINE_S. Transient by definition —
-    the retry loop resends, and prompt caching makes the resend cheap."""
-
-
-class _Watchdog:
-    """Closes a streaming response when it stops making progress.
-
-    `progress()` is called for every stream event; a checker thread closes the
-    underlying httpx response when the event gap or the total attempt exceeds
-    its bound, which makes the consuming iterator raise promptly. `fired` then
-    tells the consumer the failure was watchdog-initiated so it can raise
-    `StreamStalled` instead of the incidental close error."""
+    """A stream the supervisor killed, naming which clock fired ("silence",
+    "stall", "deadline", "truncated", or "total_deadline") plus what the
+    attempt had streamed. Transient by definition — the retry loop resends,
+    and prompt caching makes the resend cheap."""
 
     def __init__(
         self,
-        response,
-        stall_timeout_s: float | None = None,
-        deadline_s: float | None = None,
+        message: str,
+        *,
+        clock: str = "stall",
+        events: int = 0,
+        output_tokens: int = 0,
+        elapsed_s: float = 0.0,
     ):
-        self._response = response
-        # Resolved at call time (not def time) so tests can shrink the module
-        # constants; the tick scales down with them to keep detection prompt.
-        self._stall_s = STALL_TIMEOUT_S if stall_timeout_s is None else stall_timeout_s
-        self._deadline_s = ATTEMPT_DEADLINE_S if deadline_s is None else deadline_s
-        self._tick = max(0.01, min(1.0, self._stall_s / 4, self._deadline_s / 4))
-        self._start = time.monotonic()
-        self._last = self._start
-        self._done = threading.Event()
-        self.fired: str | None = None  # "stalled" | "deadline"
-        self._thread = threading.Thread(target=self._run, name="llm-watchdog", daemon=True)
-        self._thread.start()
-
-    def progress(self) -> None:
-        self._last = time.monotonic()
-
-    def stop(self) -> None:
-        self._done.set()
-
-    def _run(self) -> None:
-        while not self._done.wait(self._tick):
-            now = time.monotonic()
-            if now - self._last >= self._stall_s:
-                self.fired = "stalled"
-            elif now - self._start >= self._deadline_s:
-                self.fired = "deadline"
-            else:
-                continue
-            try:
-                if self._response is not None:
-                    self._response.close()
-            except Exception:  # noqa: BLE001 — the close is best-effort; the consumer errors either way
-                pass
-            return
+        super().__init__(message)
+        self.clock = clock
+        self.events = events
+        self.output_tokens = output_tokens
+        self.elapsed_s = elapsed_s
 
 
 class AnthropicLLM:
@@ -261,27 +267,35 @@ class AnthropicLLM:
     def __init__(self, budget: Budget | None = None, max_tokens: int = 8000):
         anthropic = import_module("anthropic")
         httpx = import_module("httpx")
-        # Stall detection is layered. The authoritative detector is the
-        # `_Watchdog` in `_complete_once`: it counts stream *events* (which SSE
-        # pings cannot reset) and the attempt's total wall clock. This `read`
-        # timeout is only the transport backstop for full byte-silence — a dead
-        # socket that sends nothing at all — and sits above the watchdog's
-        # stall bound so the watchdog classifies first. SDK `max_retries` stays
-        # low because complete() retries the whole streamed call
-        # (STREAM_ATTEMPTS) — the two layers multiply, and the wrapper is the
-        # one that also covers mid-stream failures the SDK never retries.
+        # The `read` timeout IS the silence clock (see the constants above):
+        # SSE pings are bytes, so a healthy-but-quiet stream keeps resetting
+        # it, and true wire silence surfaces in the reader thread within
+        # SILENCE_TIMEOUT_S. It also reaps reader threads abandoned after a
+        # stall/deadline kill. SDK `max_retries` stays low because complete()
+        # retries the whole streamed call (STREAM_ATTEMPTS) — the wrapper is
+        # the layer that also covers mid-stream failures the SDK never retries.
         self._client = anthropic.Anthropic(
-            timeout=httpx.Timeout(connect=10.0, read=240.0, write=20.0, pool=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0),
             max_retries=2,
         )
         self._anthropic = anthropic
         self._httpx = httpx
+        self._accumulate = import_module("anthropic.lib.streaming._messages").accumulate_event
         self._budget = budget
         self._max_tokens = max_tokens
 
-    def _record(self, usage: object, model: str) -> Usage:
-        u = Usage.from_response(usage, model)
+    def _record(
+        self,
+        usage: object,
+        model: str,
+        *,
+        output_tokens: int | None = None,
+        estimated: bool = False,
+    ) -> Usage:
+        u = Usage.from_response(usage, model, output_tokens=output_tokens, estimated=estimated)
         if self._budget is not None:
+            # Estimated (failed-attempt) spend counts too: the API billed it,
+            # so excluding it would let a stall-heavy session overrun its cap.
             self._budget.record(u.model, u.cost_usd)
         return u
 
@@ -293,6 +307,7 @@ class AnthropicLLM:
         clone._client = self._client
         clone._anthropic = self._anthropic
         clone._httpx = self._httpx
+        clone._accumulate = self._accumulate
         clone._budget = budget
         clone._max_tokens = self._max_tokens
         return clone
@@ -324,7 +339,9 @@ class AnthropicLLM:
         max_tokens: int | None = None,
         on_token: "Callable[[str], None] | None" = None,
         on_thinking: "Callable[[str], None] | None" = None,
+        on_attempt: "Callable[[dict], None] | None" = None,
         cache_anchor: int | None = None,
+        total_deadline_s: float | None = None,
     ) -> Completion:
         # A tier names a cost/capability band, never a raw model id. Resolving an
         # unknown tier to the literal string (the old `TIERS.get(tier, tier)`) let
@@ -354,12 +371,69 @@ class AnthropicLLM:
 
         # Telemetry and the trace want the flat prompt, not the cache-marked blocks.
         system_text = system if isinstance(system, str) else "".join(system or [])
-        for attempt in range(1, STREAM_ATTEMPTS + 1):
+        attempt_deadline = _attempt_deadline_s(kwargs["max_tokens"])
+        started = time.monotonic()
+        history: list[dict] = []  # one summary dict per finished attempt
+
+        def fire(outcome: str, attempt: int, **extra) -> None:
+            # Observability must never break the call itself.
+            if on_attempt is None:
+                return
             try:
-                return self._complete_once(kwargs, model, tier, system_text, messages, on_token, on_thinking)
+                on_attempt({"attempt": attempt, "attempts": STREAM_ATTEMPTS, "outcome": outcome, **extra})
+            except Exception:  # noqa: BLE001
+                pass
+
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            deadline = attempt_deadline
+            if total_deadline_s is not None:
+                deadline = min(deadline, total_deadline_s - (time.monotonic() - started))
+            fire("start", attempt)
+            stats = {"events": 0, "output_chars": 0, "output_tokens": 0}
+            t0 = time.monotonic()
+            try:
+                completion = self._complete_once(
+                    kwargs, model, tier, system_text, messages,
+                    on_token, on_thinking, deadline, stats, fire, attempt,
+                )
+                fire(
+                    "ok", attempt, elapsed_s=round(time.monotonic() - t0, 1),
+                    events=stats["events"], output_tokens=stats["output_tokens"],
+                )
+                return completion
             except Exception as exc:  # noqa: BLE001 — classified below
+                elapsed = time.monotonic() - t0
+                summary = {
+                    "attempt": attempt,
+                    "error": type(exc).__name__,
+                    "clock_fired": getattr(exc, "clock", None),
+                    "elapsed_s": round(elapsed, 1),
+                    "events": stats["events"],
+                    "output_tokens": stats["output_tokens"],
+                }
+                history.append(summary)
+                fire("failed", attempt, **{k: v for k, v in summary.items() if k != "attempt"})
                 if attempt == STREAM_ATTEMPTS or not self._retryable(exc):
-                    raise
+                    wrapped = self._with_history(exc, history)
+                    if wrapped is exc:
+                        raise
+                    raise wrapped from exc
+                delay = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * 2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                if total_deadline_s is not None:
+                    # Stop when the next attempt cannot meaningfully fit: the
+                    # caller bounded this whole call, and a sliver of leftover
+                    # deadline would just burn money to fail again.
+                    remaining = total_deadline_s - (time.monotonic() - started) - delay
+                    if remaining < _MIN_RETRY_HEADROOM_S:
+                        raise StreamStalled(
+                            f"llm call gave up after {attempt} of {STREAM_ATTEMPTS} attempts: "
+                            f"total deadline {total_deadline_s:.0f}s cannot fit another attempt"
+                            f"\n{self._history_lines(history)}",
+                            clock="total_deadline",
+                            events=stats["events"],
+                            output_tokens=stats["output_tokens"],
+                            elapsed_s=elapsed,
+                        ) from exc
                 if on_token is not None:
                     # Display-only marker (never part of the completion text):
                     # without it, the partial text the dead stream already
@@ -368,9 +442,30 @@ class AnthropicLLM:
                         f"\n[stream failed ({type(exc).__name__}); "
                         f"retry {attempt}/{STREAM_ATTEMPTS - 1}]\n"
                     )
-                delay = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * 2 ** (attempt - 1))
-                time.sleep(delay + random.uniform(0, 0.5))
+                time.sleep(delay)
         raise AssertionError("unreachable")  # pragma: no cover
+
+    @staticmethod
+    def _history_lines(history: list[dict]) -> str:
+        return "\n".join(
+            f"  attempt {h['attempt']}: {h['clock_fired'] or h['error']} "
+            f"after {h['elapsed_s']}s ({h['events']} events, ~{h['output_tokens']} tokens out)"
+            for h in history
+        )
+
+    def _with_history(self, exc: Exception, history: list[dict]) -> Exception:
+        """The final failure, with the per-attempt summary appended when the
+        exception is ours to shape — so 'what did the retries actually do'
+        never needs a debugger again. Foreign exception types re-raise as-is."""
+        if isinstance(exc, StreamStalled) and len(history) > 1:
+            return StreamStalled(
+                f"{exc}\n{self._history_lines(history)}",
+                clock=exc.clock,
+                events=exc.events,
+                output_tokens=exc.output_tokens,
+                elapsed_s=exc.elapsed_s,
+            )
+        return exc
 
     def _complete_once(
         self,
@@ -381,42 +476,129 @@ class AnthropicLLM:
         messages: list[dict],
         on_token: "Callable[[str], None] | None",
         on_thinking: "Callable[[str], None] | None",
+        deadline_s: float,
+        stats: dict,
+        fire: "Callable[..., None]",
+        attempt: int,
     ) -> Completion:
         # Stream and reassemble: the SDK refuses non-streaming requests whose
         # max_tokens could exceed its timeout, so streaming is what lets the
-        # large per-tier ceilings above work. The raw event stream is consumed
-        # (never `text_stream`, which silently drops everything but text
-        # deltas): thinking deltas reach `on_thinking` so adaptive-thinking
-        # spans are visible instead of reading as a hang, and every event feeds
-        # the watchdog as proof of progress. One telemetry span per attempt, so
-        # a retried call shows up as a failed span plus a clean one.
+        # large per-tier ceilings above work. A daemon reader thread iterates
+        # the raw event stream and feeds a queue; this (consuming) thread is
+        # therefore never blocked in a socket read and enforces the stall and
+        # deadline clocks precisely — the silence clock lives in the transport
+        # read timeout and surfaces here through the reader (see the constants
+        # above). The raw stream is consumed (never `text_stream`): thinking
+        # deltas reach `on_thinking` so adaptive-thinking spans are visible
+        # instead of reading as a hang. One telemetry span per attempt, so a
+        # retried call shows up as a failed span plus a clean one.
         with telemetry.llm_span(model, tier, system=system, messages=messages):
-            with self._client.messages.stream(**kwargs) as stream:
-                watchdog = _Watchdog(getattr(stream, "response", None))
+            raw = self._client.messages.create(**kwargs, stream=True)
+            events: queue.Queue = queue.Queue()  # unbounded: an abandoned reader must never block on put
+            abandoned = threading.Event()
+
+            def _read() -> None:
                 try:
-                    for event in stream:
-                        watchdog.progress()
-                        if event.type != "content_block_delta":
-                            continue
-                        delta = event.delta
-                        if delta.type == "text_delta" and on_token is not None:
-                            on_token(delta.text)
-                        elif delta.type == "thinking_delta" and on_thinking is not None:
-                            if delta.thinking:
-                                on_thinking(delta.thinking)
-                    resp = stream.get_final_message()
-                except Exception as exc:
-                    if watchdog.fired is not None:
-                        # The consumer error is just the closed-response fallout;
-                        # the real failure is the stall the watchdog detected.
+                    for ev in raw:
+                        events.put(("event", ev))
+                        if abandoned.is_set():
+                            return
+                    events.put(("end", None))
+                except BaseException as exc:  # noqa: BLE001 — handed to the consumer to classify
+                    events.put(("error", exc))
+
+            threading.Thread(target=_read, name="llm-stream-reader", daemon=True).start()
+
+            snapshot = None
+            start = last_event = last_beat = time.monotonic()
+            try:
+                while True:
+                    now = time.monotonic()
+                    if now - start >= deadline_s:
                         raise StreamStalled(
-                            f"stream {watchdog.fired}: no progress within "
-                            f"{STALL_TIMEOUT_S:.0f}s or attempt over "
-                            f"{ATTEMPT_DEADLINE_S:.0f}s"
-                        ) from exc
-                    raise
-                finally:
-                    watchdog.stop()
+                            f"stream deadline: attempt still running after {deadline_s:.0f}s",
+                            clock="deadline", events=stats["events"],
+                            output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                        )
+                    if now - last_event >= STALL_TIMEOUT_S:
+                        # Bytes are still flowing (wire silence would have hit the
+                        # transport read timeout first, at its lower bound), so the
+                        # server is alive but generation has wedged.
+                        raise StreamStalled(
+                            f"stream stall: connection alive but no events for {STALL_TIMEOUT_S:.0f}s",
+                            clock="stall", events=stats["events"],
+                            output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                        )
+                    if now - last_beat >= 30.0:
+                        last_beat = now
+                        fire(
+                            "streaming", attempt, elapsed_s=round(now - start, 1),
+                            events=stats["events"], output_tokens=stats["output_tokens"],
+                        )
+                    try:
+                        kind, payload = events.get(timeout=1.0)
+                    except queue.Empty:
+                        continue
+                    if kind == "error":
+                        if isinstance(payload, self._httpx.ReadTimeout):
+                            now = time.monotonic()
+                            raise StreamStalled(
+                                f"stream silence: no bytes on the wire for {SILENCE_TIMEOUT_S:.0f}s "
+                                "(SSE pings included) — connection is dead",
+                                clock="silence", events=stats["events"],
+                                output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                            ) from payload
+                        raise payload
+                    if kind == "end":
+                        if snapshot is None or snapshot.stop_reason is None:
+                            # The server closed the stream without finishing the
+                            # message — a half answer must not pass for a whole one.
+                            raise StreamStalled(
+                                "stream truncated: ended before message completion",
+                                clock="truncated", events=stats["events"],
+                                output_tokens=stats["output_tokens"],
+                                elapsed_s=time.monotonic() - start,
+                            )
+                        break
+                    ev = payload
+                    last_event = time.monotonic()
+                    snapshot = self._accumulate(event=ev, current_snapshot=snapshot)
+                    stats["events"] += 1
+                    if ev.type == "content_block_delta":
+                        delta = ev.delta
+                        if delta.type == "text_delta":
+                            stats["output_chars"] += len(delta.text)
+                            if on_token is not None:
+                                on_token(delta.text)
+                        elif delta.type == "thinking_delta" and delta.thinking:
+                            # Thinking is billed output too — count it toward the
+                            # failed-attempt estimate.
+                            stats["output_chars"] += len(delta.thinking)
+                            if on_thinking is not None:
+                                on_thinking(delta.thinking)
+                    if ev.type == "message_delta":
+                        stats["output_tokens"] = getattr(snapshot.usage, "output_tokens", 0) or 0
+                    else:
+                        stats["output_tokens"] = max(
+                            stats["output_tokens"], stats["output_chars"] // _CHARS_PER_TOKEN_EST
+                        )
+            except BaseException:
+                abandoned.set()
+                try:
+                    raw.close()
+                except Exception:  # noqa: BLE001 — best-effort; the reader dies on its own read timeout
+                    pass
+                # A killed attempt still spent real money: meter what the API
+                # already processed (prompt from message_start, output estimated
+                # from streamed bytes) so Budget and by_model stay truthful.
+                if snapshot is not None:
+                    self._record(
+                        snapshot.usage, model,
+                        output_tokens=stats["output_tokens"], estimated=True,
+                    )
+                raise
+
+            resp = snapshot
             usage = self._record(resp.usage, model)
 
             text = "".join(b.text for b in resp.content if b.type == "text")

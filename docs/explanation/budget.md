@@ -80,20 +80,37 @@ across sibling sub-agents.
 The client consumes the raw event stream (never the SDK's `text_stream`, which
 drops everything but text deltas): text deltas stream to the display, and
 summarized adaptive-thinking deltas stream as `llm_thinking` events — so a
-thinking span shows as the model working, not dead air. A per-attempt watchdog
-supervises the stream: no event within `STALL_TIMEOUT_S`, or a whole attempt
-running past `ATTEMPT_DEADLINE_S`, closes the connection and raises a
-retryable `StreamStalled`. This is the authoritative stall detector — the
-httpx read timeout only bounds byte gaps, which SSE pings reset, so it can
-neither catch a wedged-but-pinging stream nor tell a healthy quiet gap from a
-dead one.
+thinking span shows as the model working, not dead air. A reader thread feeds
+the events to a queue; the consuming thread — never blocked in a socket read —
+supervises each attempt with three clocks, each named in the retryable
+`StreamStalled` it raises:
 
-Every streamed completion is also retried on transient failure — watchdog
-stalls, read timeouts on a fully silent stream, dropped connections,
-429/529/5xx — up to 3 attempts with exponential backoff (`STREAM_ATTEMPTS`).
-This covers mid-stream failures the SDK's own `max_retries` never sees, and a
-retry re-reads the prefill the failed attempt already cached. Deterministic
-errors (bad request, auth) raise immediately. The agent loop additionally surfaces truncation instead of hiding
+- **silence** (`SILENCE_TIMEOUT_S`, 60s) — byte-level liveness. SSE pings are
+  bytes even though the SDK never surfaces them as events, so the httpx read
+  timeout doubles as the dead-connection detector: 60s of true wire silence
+  kills the attempt.
+- **stall** (`STALL_TIMEOUT_S`, 180s) — semantic progress. If bytes still flow
+  but no events arrive, the server is alive and generation has wedged.
+- **deadline** — runaway backstop, scaled to the request
+  (`ATTEMPT_DEADLINE_BASE_S + max_tokens × ATTEMPT_DEADLINE_PER_TOKEN_S`,
+  capped at `ATTEMPT_DEADLINE_CAP_S`), so a small worker call cannot legally
+  run as long as a 32k smart call.
+
+Every streamed completion is also retried on transient failure — stalled
+streams, dropped connections, 429/529/5xx — up to 3 attempts with exponential
+backoff (`STREAM_ATTEMPTS`). Callers can bound the whole call with
+`total_deadline_s`; a retry only launches if it can meaningfully fit, and the
+final error carries a per-attempt summary (which clock fired, events seen,
+tokens streamed). This covers mid-stream failures the SDK's own `max_retries`
+never sees, and a retry re-reads the prefill the failed attempt already
+cached. Deterministic errors (bad request, auth) raise immediately.
+
+A killed attempt still spent real money: the client meters it from what
+streamed before death — prompt tokens from `message_start`, output estimated
+from streamed characters — and records it to the budget (`Usage.estimated`
+marks these records). Burned spend therefore counts toward the budget limit
+and shows up in `by_model`, so a stall-heavy session cannot silently overrun
+its cap. The agent loop additionally surfaces truncation instead of hiding
 it: a `max_tokens` cutoff mid-tool-call is answered with an error tool_result
 (never executed) so the model retakes the step, and a `refusal` stop ends the
 turn as `(stopped: refusal)`.
