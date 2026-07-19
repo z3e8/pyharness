@@ -2844,3 +2844,24 @@ def test_session_close_is_idempotent(tmp_path):
     session.close()
     assert closed == ["registry"]
     assert (tmp_path / "trace.jsonl").read_text().count('"session_end"') == 1
+
+
+def test_remote_module_unknown_function_lists_available():
+    # A typo'd function name (web.search vs search_results) should point the
+    # agent at the real functions instead of a bare AttributeError, so the next
+    # cell self-corrects rather than blindly re-guessing.
+    from pyharness.broker.remote.child import _RemoteModule
+    from pyharness.broker.remote.protocol import RemoteToolSpec
+
+    mod = _RemoteModule(None, RemoteToolSpec("web", ("fetch", "search_results")))
+
+    with pytest.raises(AttributeError) as exc:
+        _ = mod.search
+    msg = str(exc.value)
+    assert "web" in msg and "search" in msg
+    assert "fetch" in msg and "search_results" in msg
+
+    # Private/dunder lookups (copy protocol, IPython probes) stay bare so the
+    # proxy still behaves as a normal object.
+    with pytest.raises(AttributeError):
+        _ = mod._private

@@ -130,8 +130,13 @@ class _RemoteModule:
         self._functions = frozenset(spec.functions)
 
     def __getattr__(self, attr: str):
-        if attr.startswith("_") or attr not in self._functions:
+        if attr.startswith("_"):
             raise AttributeError(attr)
+        if attr not in self._functions:
+            raise AttributeError(
+                f"tool {self._name!r} has no function {attr!r}; "
+                f"available: {', '.join(sorted(self._functions))}"
+            )
 
         def call(*args, **kwargs):
             return _call(self._conn, "invoke", (self._name, attr, args, kwargs), {})
