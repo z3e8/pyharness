@@ -15,6 +15,11 @@ dist/
 
 .env
 
+# Active MCP config: not tracked so a fresh checkout never auto-mounts (and
+# `pnpm dlx`-executes) a third-party server on `make run`. Copy the tracked
+# `.mcp.json.example` to `.mcp.json`, or use `pyharness-mcp add`, to activate one.
+.mcp.json
+
 
 personal-old/
 .tmp-session/

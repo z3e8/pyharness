@@ -79,6 +79,12 @@ Three ways in, same result — one lazily-connected tool module per server:
    }
    ```
 
+   The repo ships this exact config as `.mcp.json.example` (copy it to
+   `.mcp.json` to activate). `.mcp.json` itself is **gitignored** so a fresh
+   checkout never auto-mounts a server on startup: the `weather` entry above is
+   an unverified third-party npm package run via `pnpm dlx` — an illustrative
+   example, not a vetted dependency. Review any server you mount.
+
    Local servers use `command`/`args`; remote ones use `url` (+ `headers`).
    Optional `summary`/`keywords`/`category`/`featured` feed `search_tools`
    ranking — worth setting, since a lazy server is otherwise findable only by
