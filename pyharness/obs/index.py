@@ -27,6 +27,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from ..util import ensure_private_dir
 from .transcript import iter_jsonl, session_digest
 
 DEFAULT_DB = "~/.pyharness/index.db"
@@ -158,8 +159,17 @@ def _project_of(session_dir: Path) -> str:
 
 def open_db(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)  # ~/.pyharness (0700): the index is not world-readable
+    new_db = not path.exists()
     conn = sqlite3.connect(path)
+    if new_db:
+        # The index can hold session args/answers — keep it owner-only (0644 by
+        # default umask would leave it world-readable). Only on create: don't
+        # fight a mode a user deliberately set on an existing db.
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
     # Parallel sessions each open this one shared index. Without these two
     # pragmas a concurrent writer hits "database is locked", the fail-open
     # caller swallows it, and that session silently never indexes. WAL lets a

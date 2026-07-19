@@ -20,6 +20,8 @@ import re
 import time
 from pathlib import Path
 
+from .util import ensure_private_dir
+
 DEFAULT_PATH = "~/.pyharness/lessons.json"
 
 ESTABLISHED_AT = 2  # distinct sessions that must observe a lesson before it surfaces
@@ -47,7 +49,7 @@ def _save(path: Path, lessons: list[dict]) -> None:
     if len(lessons) > _MAX_LESSONS:
         lessons = sorted(lessons, key=lambda e: (-e["count"], -e["last_at"]))[:_MAX_LESSONS]
         lessons.sort(key=lambda e: e["first_at"])
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)  # ~/.pyharness (0700)
     path.write_text(json.dumps({"lessons": lessons}, indent=2) + "\n")
 
 

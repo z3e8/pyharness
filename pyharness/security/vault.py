@@ -7,6 +7,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from ..util import ensure_private_dir
+
 # scrypt KDF parameters (interactive-login class; ~tens of ms to derive).
 _SCRYPT_N = 16384
 _SCRYPT_R = 8
@@ -73,7 +75,7 @@ class EncryptedFile:
         # Write to a sibling temp file created 0o600, then atomically replace: a
         # crash mid-write leaves the previous file intact, and the plaintext-key
         # material is never briefly world-readable under a permissive umask.
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.path.parent)  # ~/.pyharness (0700) — holds vault + profiles
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=self.path.name, suffix=".tmp")
         try:
             os.fchmod(fd, 0o600)

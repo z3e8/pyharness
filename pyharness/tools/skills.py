@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
+from ..util import ensure_private_dir
 from .registry import Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -189,7 +190,7 @@ def write_skill(
     can rest on something verifiable instead of the runner's impression."""
     validate_skill_name(name)
     skill_dir = Path(skills_dir) / name
-    skill_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(skill_dir)  # under ~/.pyharness/skills (0700)
     # A skill is exactly its last save: drop bundled .py from a prior version so a
     # renamed/removed helper can't linger and get imported.
     for stale in skill_dir.glob("*.py"):

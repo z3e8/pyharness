@@ -2,8 +2,28 @@ from __future__ import annotations
 
 import io
 from collections import deque
+from pathlib import Path
 
 MAX_OUTPUT = 10_000
+
+
+def ensure_private_dir(path: str | Path) -> Path:
+    """`mkdir -p path`, then tighten it to 0700 (owner-only).
+
+    `~/.pyharness` and its subdirs hold private material — the encrypted vault,
+    browser login profiles, the cross-project session index, saved skills — none
+    of it world-readable. A bare `mkdir` inherits the process umask (commonly
+    0755, world-readable), so the mode is set explicitly. Re-asserted on every
+    call, so a directory another subsystem (or an older version) created
+    world-readable converges to private the next time it's touched. Best-effort:
+    a chmod the OS refuses (odd filesystem) must not break the caller."""
+    p = Path(path).expanduser()
+    p.mkdir(parents=True, exist_ok=True)
+    try:
+        p.chmod(0o700)
+    except OSError:
+        pass
+    return p
 
 # Hard ceiling on how much a single cell's captured stdout/stderr may hold in
 # memory before `truncate` ever runs. A runaway `print` (megabytes to gigabytes
