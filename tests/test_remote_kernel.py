@@ -231,25 +231,30 @@ def test_sandbox_allows_workspace_writes_but_denies_escape(kernel_factory, tmp_p
 
 
 @requires_sandbox
-def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path):
+def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path, monkeypatch):
     # The read jail hides the user's personal files: a file under $HOME the agent
     # was never handed is unreadable, even though the child can still read its
     # workspace, the interpreter, and its own package source (or it couldn't import
     # pyharness to start at all).
-    probe = Path.home() / ".pyharness_readjail_probe"
+    #
+    # The jail is built over Path.home(), so we point $HOME at a throwaway tmp dir:
+    # the probe stays inside the jail (proving the deny) but a crash never leaves a
+    # file in the developer's real home. The workspace is a *sibling* of the fake
+    # home, not a parent, so the workspace read-allow can't re-expose the probe.
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    probe = fake_home / ".pyharness_readjail_probe"
     probe.write_text("secret")
-    try:
-        ws = Workspace(tmp_path)
-        kernel = kernel_factory(_broker(tmp_path), workspace=ws)
-        out = kernel.run(
-            f"try:\n"
-            f"    print('READ', open({str(probe)!r}).read())\n"
-            f"except OSError:\n"
-            f"    print('denied')\n"
-        )
-        assert out == "denied"
-    finally:
-        probe.unlink(missing_ok=True)
+    ws = Workspace(tmp_path / "ws")
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        f"try:\n"
+        f"    print('READ', open({str(probe)!r}).read())\n"
+        f"except OSError:\n"
+        f"    print('denied')\n"
+    )
+    assert out == "denied"
 
 
 @requires_sandbox
@@ -290,14 +295,20 @@ def test_sandbox_read_jail_allows_package_but_not_repo_neighbours(
 
 @requires_sandbox
 @pytest.mark.parametrize("where", ["home", "temp"])
-def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where):
+def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where, monkeypatch):
     # The child reaches around the broker and writes straight to disk. The OS
     # sandbox denies *every* write — both a sensitive user path (home) and an
     # ephemeral one (temp). The temp case matters most: such a file would be
     # invisible to the agent and the human and bypass the broker, so it is denied
     # deliberately rather than waved through as "just scratch".
+    #
+    # $HOME is redirected to a throwaway tmp dir so the "home" probe never lands in
+    # the real home dir on a crash. There is no workspace here, so the profile
+    # denies every write regardless of where the target sits.
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
     kernel = kernel_factory(_broker(tmp_path))
-    # tmp_path lives under the OS temp root (/var/folders); home is a real file.
     escape = (
         (Path.home() / ".pyharness_sandbox_escape_test")
         if where == "home"

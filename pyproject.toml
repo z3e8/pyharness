@@ -111,20 +111,18 @@ ignore = ["E501"]
 "pyharness/broker/capabilities/__init__.py" = ["I001"]
 
 [tool.mypy]
-# Lenient by design. The codebase is large and largely untyped; a strict pass is
-# out of scope (see agents/issues.md for the type-debt path). This config just
-# lets `mypy` run cleanly enough to catch obvious mistakes without a wall of
-# missing-annotation noise, and it is a non-blocking check in CI.
+# Lenient by design and NON-BLOCKING in CI. The codebase is large and largely
+# untyped; a strict pass is out of scope (see agents/issues.md for the remaining
+# type-debt path — ~100 findings today). This config drops the missing-import and
+# missing-annotation noise so `mypy` runs and surfaces obvious mistakes, without
+# the task turning into a typing project.
 python_version = "3.11"
+files = ["pyharness"]
 ignore_missing_imports = true
 warn_unused_configs = true
 namespace_packages = true
 explicit_package_bases = true
 # No disallow_untyped_defs / strict — annotations are added opportunistically.
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true
 
 [tool.pytest.ini_options]
 # Test discovery + defaults. The autouse egress-DNS stub lives in
