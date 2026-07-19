@@ -25,10 +25,18 @@ class SessionVenv:
     def site_packages(self) -> Path | None:
         if self.dir is None:
             return None
-        result = subprocess.run(
-            [str(self.dir / "bin" / "python"), "-c",
-             "import sysconfig; print(sysconfig.get_path('purelib'))"],
-            capture_output=True,
-            text=True,
-        )
+        # Bounded: this runs on the kernel-start path, so a hung venv python
+        # (a wedged interpreter, a stuck NFS mount) would otherwise block the
+        # session from ever starting. A timeout degrades to "no venv path"
+        # instead of hanging forever.
+        try:
+            result = subprocess.run(
+                [str(self.dir / "bin" / "python"), "-c",
+                 "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
         return Path(result.stdout.strip()) if result.returncode == 0 else None
