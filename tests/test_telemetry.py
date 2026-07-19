@@ -168,6 +168,26 @@ def test_body_exception_propagates_through_span(tmp_path):
         telemetry._enabled = False
 
 
+def test_llm_span_records_failure_on_throw(tmp_path):
+    # The throw path must mark the span as an error before it ends — the `finally`
+    # calling cm.__exit__(None, None, None) must not leave the span looking
+    # successful. `_fail` records the exception + ERROR status on the way out, and
+    # the errors metric fires.
+    from opentelemetry.trace import StatusCode
+
+    exporter, reader = _enable_in_memory()
+    try:
+        with pytest.raises(RuntimeError):
+            with telemetry.llm_span("m", "cheap"):
+                raise RuntimeError("stream blew up")
+        span = exporter.get_finished_spans()[0]
+        assert span.status.status_code == StatusCode.ERROR
+        assert any(e.name == "exception" for e in span.events)
+        assert "pyharness.errors" in _metric_names(reader)
+    finally:
+        telemetry._enabled = False
+
+
 def test_helpers_are_noops_when_disabled():
     telemetry._enabled = False
     with telemetry.turn_span("t", "s") as span:
