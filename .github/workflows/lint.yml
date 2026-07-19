@@ -1,0 +1,40 @@
+# Lint + format gate (ruff) plus a non-blocking type pass (mypy). Config for all
+# three lives in pyproject.toml under [tool.ruff] / [tool.mypy].
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: ruff (check + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: uv sync --group dev
+      - run: uv run ruff check pyharness tests
+      - run: uv run ruff format --check pyharness tests
+
+  mypy:
+    # Non-blocking on purpose: the type pass is lenient and still surfaces ~100
+    # findings (the type-debt path is logged in agents/issues.md). It runs for
+    # signal, not to gate merges — hence continue-on-error.
+    name: mypy (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: uv sync --group dev
+      - run: uv run mypy

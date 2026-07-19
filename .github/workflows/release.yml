@@ -1,0 +1,48 @@
+# Tag-triggered PyPI release via Trusted Publishing (OIDC) — no long-lived token
+# is stored anywhere; PyPI mints short-lived credentials from GitHub's OIDC token
+# because the `publish` job requests `id-token: write`.
+#
+# NOTE: this workflow is correct in shape but will NOT succeed yet. Two things
+# must land first (both parked for a maintainer, see agents/plan-*.md):
+#   1. The PyPI package rename — `pyharness` is taken, so the project name in
+#      pyproject.toml has to change before anything can be published.
+#   2. A Trusted Publisher configured on the PyPI project pointing at this repo,
+#      workflow filename (`release.yml`), and the `pypi` environment below.
+# Until then a tag push will build fine and fail at the publish step. No
+# credentials are invented here — do not add a token; wire up Trusted Publishing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI (Trusted Publishing)
+    needs: build
+    runs-on: ubuntu-latest
+    # A GitHub Environment named `pypi` is the recommended scope for the Trusted
+    # Publisher and lets a maintainer add release protection rules.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyharness
+    permissions:
+      id-token: write  # OIDC token for Trusted Publishing — the only credential
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
