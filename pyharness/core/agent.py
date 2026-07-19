@@ -219,6 +219,10 @@ Guidance:
 - Delegate transforms, not steps. llm()/map_llm() pay off on bulk or bulky
   text work; a small sequential step is cheaper done in your own Python than
   round-tripped through a worker.
+- Check what you already have before fetching more. web.search's snippets are
+  often enough to answer directly — a fact you're about to re-derive by
+  fetching a page is a wasted round trip. Fetch when the snippets don't cover
+  what you need, not by default for every promising result.
 - Sanity-check a fetched page before spending LLM calls on it: compare its
   length to sibling pages and skim whether it is body text or nav links (a
   `[warning: extraction looks thin …]` first line means a likely JS-rendered
