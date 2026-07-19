@@ -33,11 +33,11 @@ setup: .env install
 	@cp .env.example .env
 	@echo "✓ created .env from .env.example"
 
-## install: create the venv and install pyharness (editable) + pytest
+## install: create the venv and install pyharness (editable) + the dev toolchain
 .PHONY: install
 install:
 	uv venv
-	uv pip install -e . pytest
+	uv pip install -e . --group dev
 
 ## dev: run the agent with its built-in live viewer — the daily command
 .PHONY: dev
@@ -95,6 +95,23 @@ run: .env
 .PHONY: test
 test:
 	uv run pytest -q
+
+## lint: check formatting and lints without changing files (what CI enforces)
+.PHONY: lint
+lint:
+	uv run ruff check pyharness tests
+	uv run ruff format --check pyharness tests
+
+## format: auto-format and apply autofixable lints
+.PHONY: format
+format:
+	uv run ruff format pyharness tests
+	uv run ruff check --fix pyharness tests
+
+## typecheck: run mypy (lenient, non-blocking — see pyproject [tool.mypy])
+.PHONY: typecheck
+typecheck:
+	uv run mypy
 
 ## verify-audit: check a session's audit log hash chain (DIR=.sessions/<name>)
 .PHONY: verify-audit
