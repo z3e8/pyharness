@@ -35,6 +35,7 @@ from anthropic.types.raw_message_delta_event import Delta
 from pyharness.budget import Budget
 from pyharness.llm.client import (
     STREAM_ATTEMPTS,
+    TIER_MAX_TOKENS,
     AnthropicLLM,
     StreamStalled,
     Usage,
@@ -288,6 +289,42 @@ def test_unknown_tier_fails_closed(monkeypatch):
     llm = _llm(monkeypatch, [])
     with pytest.raises(ValueError, match="unknown tier"):
         llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8")
+
+
+def test_max_tokens_nonpositive_is_rejected(monkeypatch):
+    # 0/negative used to fall through to the tier ceiling silently (and pin the
+    # attempt deadline at its minimum); now it fails closed before any API call.
+    llm = _llm(monkeypatch, [])
+    for bad in (0, -5):
+        with pytest.raises(ValueError, match="positive integer"):
+            llm.complete(
+                messages=[{"role": "user", "content": "hi"}], tier="cheap", max_tokens=bad
+            )
+    assert llm._client.messages.calls == []  # never reached the transport
+
+
+def test_max_tokens_above_tier_ceiling_is_rejected(monkeypatch):
+    # Above the tier ceiling used to pass straight through to a deterministic
+    # API 400; reject locally with a clear message instead.
+    llm = _llm(monkeypatch, [])
+    with pytest.raises(ValueError, match="exceeds the 'cheap' tier"):
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}],
+            tier="cheap",
+            max_tokens=TIER_MAX_TOKENS["cheap"] + 1,
+        )
+    assert llm._client.messages.calls == []
+
+
+def test_max_tokens_at_ceiling_is_accepted(monkeypatch):
+    llm = _llm(monkeypatch, [FakeRawStream(events=_ok_events())])
+    completion = llm.complete(
+        messages=[{"role": "user", "content": "hi"}],
+        tier="cheap",
+        max_tokens=TIER_MAX_TOKENS["cheap"],
+    )
+    assert completion.text == "ok"
+    assert llm._client.messages.calls[0]["max_tokens"] == TIER_MAX_TOKENS["cheap"]
 
 
 # ---- IPv4 transport pin with v6-only fallback --------------------------------

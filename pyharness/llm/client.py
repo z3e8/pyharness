@@ -397,9 +397,28 @@ class AnthropicLLM:
                 f"unknown tier {tier!r}; choose one of {sorted(TIERS)} "
                 "(a tier names a cost/capability band, not a model id)"
             )
+        # Validate max_tokens against the tier's output ceiling. Left unchecked,
+        # max_tokens=0/negative silently fell through to the ceiling (and, after
+        # the supervisor rewrite, pinned the attempt deadline at its minimum while
+        # streaming at the full ceiling), and a value above the model's real
+        # output limit produced a deterministic API 400. The tier ceiling is the
+        # authoritative bound (well under every model's hard output cap), so a
+        # positive request at or below it is honored and anything else is a clear
+        # ValueError that surfaces straight to agent code via llm()/map_llm.
+        ceiling = TIER_MAX_TOKENS.get(tier, self._max_tokens)
+        if max_tokens is not None:
+            if max_tokens <= 0:
+                raise ValueError(
+                    f"max_tokens must be a positive integer, got {max_tokens!r}"
+                )
+            if max_tokens > ceiling:
+                raise ValueError(
+                    f"max_tokens {max_tokens} exceeds the {tier!r} tier's output "
+                    f"ceiling of {ceiling}; use a higher tier for more room"
+                )
         kwargs: dict = {
             "model": model,
-            "max_tokens": max_tokens or TIER_MAX_TOKENS.get(tier, self._max_tokens),
+            "max_tokens": max_tokens or ceiling,
             "messages": _cache_marked_messages(messages, cache_anchor),
         }
         system_blocks = _cache_marked_system(system)
