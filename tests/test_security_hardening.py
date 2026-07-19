@@ -5,6 +5,7 @@ class it guards (see agents/security-hardening-2026-07.md).
 """
 from __future__ import annotations
 
+import os
 from types import ModuleType, SimpleNamespace
 from urllib.parse import quote
 
@@ -294,6 +295,81 @@ def test_egress_private_ranges_gated_by_strict_flag(monkeypatch):
         check_url("http://127.0.0.1:8080/")
     with pytest.raises(EgressBlocked):
         check_url("http://10.0.0.5/")
+
+
+def test_egress_dns_failure_fails_closed(monkeypatch):
+    # A name that will not resolve must be refused, not waved through: fail-open
+    # (M7) let an unresolvable/intermittent name past the guard unchecked.
+    import socket
+
+    from pyharness.security import egress
+
+    def _boom(host):
+        raise socket.gaierror(8, "nodename nor servname provided")
+
+    monkeypatch.setattr(egress, "_resolve_host", _boom)
+    with pytest.raises(EgressBlocked):
+        check_url("https://does-not-resolve.invalid/")
+    # An IP literal never resolves — it stays allowed even with DNS "down".
+    assert check_url("https://8.8.8.8/") == "https://8.8.8.8/"
+
+
+def test_remote_mcp_url_is_egress_checked_at_mount(monkeypatch):
+    # A `.mcp.json` (or add_mcp_server) entry pointing at an internal endpoint
+    # must be refused before any request goes out — else the parent forwards
+    # `secret:` creds in headers to a chosen-internal target.
+    from pyharness.tools.mcp.transport import HttpTransport
+
+    with pytest.raises(EgressBlocked):
+        HttpTransport("http://169.254.169.254/mcp")  # cloud metadata (link-local)
+
+    registry = Registry()
+    with pytest.raises(EgressBlocked):
+        registry.add_mcp_server("evil", url="http://169.254.169.254/mcp")
+
+
+def test_packages_install_runs_with_a_scrubbed_env(monkeypatch, tmp_path):
+    # A malicious package's setup.py runs at install time; pip must not inherit
+    # the parent env or it could read ANTHROPIC_API_KEY / PYHARNESS_SECRET_*.
+    import subprocess
+
+    from pyharness.broker.capabilities.packages import PackagesCapability
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("PYHARNESS_SECRET_TOKEN", "tok-should-not-leak")
+
+    venv = SimpleNamespace(
+        dir=tmp_path,
+        site_packages=lambda: tmp_path / "site",
+    )
+    seen = {}
+
+    def _fake_run(argv, **kwargs):
+        seen["env"] = kwargs.get("env")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    PackagesCapability(venv).install("requests")
+
+    env = seen["env"]
+    assert env is not None, "pip must run with an explicit scrubbed env"
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "PYHARNESS_SECRET_TOKEN" not in env
+    assert "PATH" in env  # ...but pip still gets what it legitimately needs
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_index_dir_and_db_are_owner_only(tmp_path):
+    # ~/.pyharness holds the vault, profiles, and the session index — none of it
+    # world-readable. The dir must be 0700 and the index db 0600 (both default to
+    # world-readable under the common umask otherwise).
+    from pyharness.obs.index import open_db
+
+    db = tmp_path / "home" / ".pyharness" / "index.db"
+    conn = open_db(db)
+    conn.close()
+    assert (db.parent.stat().st_mode & 0o777) == 0o700
+    assert (db.stat().st_mode & 0o777) == 0o600
 
 
 # --- SSRF via redirect: every hop is re-vetted, not just the initial url ------
