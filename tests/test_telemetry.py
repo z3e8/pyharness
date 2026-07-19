@@ -188,3 +188,13 @@ def test_setup_is_opt_in(monkeypatch):
     telemetry._enabled = False
     assert telemetry.setup_telemetry() is False
     assert telemetry.is_enabled() is False
+
+
+def test_explicit_false_wins_over_endpoint(monkeypatch):
+    # A deliberate PYHARNESS_TELEMETRY_ENABLED=false must not be overridden by a
+    # leftover endpoint pointing at a backend that isn't running.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("PYHARNESS_TELEMETRY_ENABLED", "false")
+    telemetry._enabled = False
+    assert telemetry.setup_telemetry() is False
+    assert telemetry.is_enabled() is False

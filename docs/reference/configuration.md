@@ -34,8 +34,8 @@ Off unless enabled. See [Run with observability](../how-to/observability.md).
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `PYHARNESS_TELEMETRY_ENABLED` | `false` | Opt-in flag for the OTel export (the live viewer needs none of this). Telemetry is also enabled if an OTLP endpoint is set. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | Collector endpoint (its presence alone enables telemetry). |
+| `PYHARNESS_TELEMETRY_ENABLED` | `false` | Master switch for the OTel export (the live viewer needs none of this). An explicit value wins: `false` keeps telemetry off even with an endpoint set. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | Collector endpoint. Enables telemetry on its own only when `PYHARNESS_TELEMETRY_ENABLED` is left unset. |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `true` | Plaintext gRPC (local only). Read verbatim by the OTel SDK — keep on its own line, no inline comment. |
 | `OTEL_SERVICE_NAME` | `pyharness` | `service.name` on emitted spans. |
 | `PYHARNESS_TELEMETRY_CAPTURE_CONTENT` | `true` | Attach full prompt/code/output text to spans. Set `false` to redact. |

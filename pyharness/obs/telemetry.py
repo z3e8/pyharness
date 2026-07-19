@@ -72,8 +72,9 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
     safe to call on every session. Returns whether telemetry is active.
 
     Env:
-      PYHARNESS_TELEMETRY_ENABLED       opt-in flag (or set the endpoint below)
-      OTEL_EXPORTER_OTLP_ENDPOINT       collector endpoint (presence ⇒ enabled)
+      PYHARNESS_TELEMETRY_ENABLED       master switch; an explicit value wins
+      OTEL_EXPORTER_OTLP_ENDPOINT       collector endpoint (presence ⇒ enabled
+                                        only when the switch is unset)
       OTEL_SERVICE_NAME                 service.name (default "pyharness")
       PYHARNESS_TELEMETRY_CAPTURE_CONTENT  attach prompt/output text (default on)
     """
@@ -81,8 +82,13 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
     if _enabled and not force:
         return True
 
+    # An explicit PYHARNESS_TELEMETRY_ENABLED wins outright, so a deliberate
+    # `false` is never overridden by a leftover endpoint pointing at a backend
+    # that isn't running (which otherwise loops "Connection refused" from the
+    # OTLP exporter). Endpoint-presence only enables when the switch is unset.
+    flag = os.environ.get("PYHARNESS_TELEMETRY_ENABLED", "").strip()
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-    want = _truthy(os.environ.get("PYHARNESS_TELEMETRY_ENABLED", "")) or bool(endpoint)
+    want = _truthy(flag) if flag else bool(endpoint)
     if not want:
         _enabled = False
         return False

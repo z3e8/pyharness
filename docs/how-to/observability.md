@@ -95,7 +95,9 @@ event records a screenshot persisted under `<session>/media/`.
 ## What controls the OTel export
 
 Telemetry is **opt-in** and **fail-open** (it can never break the agent). It's on
-when `PYHARNESS_TELEMETRY_ENABLED` is truthy *or* an OTLP endpoint is set. The
+when `PYHARNESS_TELEMETRY_ENABLED` is truthy; an explicit value wins, so setting
+it `false` keeps telemetry off even with an endpoint configured. Only when the
+switch is left unset does the mere presence of an OTLP endpoint enable it. The
 durable record is always `audit.jsonl` / `trace.jsonl`; this layer is a queryable
 view on top. Relevant `.env` keys (full list in
 [Configuration](../reference/configuration.md)):
