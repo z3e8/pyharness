@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import random
 import threading
@@ -274,10 +275,21 @@ class AnthropicLLM:
         # stall/deadline kill. SDK `max_retries` stays low because complete()
         # retries the whole streamed call (STREAM_ATTEMPTS) — the wrapper is
         # the layer that also covers mid-stream failures the SDK never retries.
-        self._client = anthropic.Anthropic(
-            timeout=httpx.Timeout(connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0),
-            max_retries=2,
-        )
+        #
+        # The transport binds to IPv4. `api.anthropic.com` is dual-stack and
+        # this SDK's httpx has no happy-eyeballs, so it commits to whichever
+        # family DNS lists first — and the 2026-07-18 D8 probe showed the IPv6
+        # path silently dropping live streams (4/4 v6 attempts dead mid-stream,
+        # 2/2 v4 clean, same network and minute). PYHARNESS_LLM_IPV6=true opts
+        # back into default family selection (e.g. on a v6-only network).
+        timeout = httpx.Timeout(connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0)
+        client_kwargs: dict = {"timeout": timeout, "max_retries": 2}
+        if os.environ.get("PYHARNESS_LLM_IPV6", "").lower() not in ("1", "true", "yes"):
+            client_kwargs["http_client"] = httpx.Client(
+                transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+                timeout=timeout,
+            )
+        self._client = anthropic.Anthropic(**client_kwargs)
         self._anthropic = anthropic
         self._httpx = httpx
         self._accumulate = import_module("anthropic.lib.streaming._messages").accumulate_event

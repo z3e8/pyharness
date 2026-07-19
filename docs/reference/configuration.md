@@ -64,6 +64,12 @@ environment, **not** committed to `.env` if sensitive.
 | `PYHARNESS_SECRET_<NAME>` | — | An env-backed secret the agent can reference as `<name>` (lowercased). |
 | `PYHARNESS_PROFILES_DIR` | `~/.pyharness/profiles` | Directory holding encrypted browser login profiles (`<name>.enc`), sealed with `PYHARNESS_VAULT_PASSPHRASE`. See [site profiles](../how-to/site-profiles.md). |
 
+## LLM transport
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_LLM_IPV6` | unset (IPv4-only) | The Anthropic client binds to IPv4: `api.anthropic.com` is dual-stack, the HTTP client has no happy-eyeballs (it commits to whichever address family DNS lists first), and a flaky IPv6 path silently kills live streams mid-generation. Set `true`/`1`/`yes` to opt back into default family selection — needed on an IPv6-only network. |
+
 ## Network egress
 
 Outbound requests (`web.fetch` / `http.request` / `browser.goto`) always refuse
