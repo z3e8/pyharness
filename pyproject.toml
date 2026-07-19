@@ -53,6 +53,16 @@ dependencies = [
 # pyharness[browser]`. Lazy-imported, so core install and the tests never need it.
 browser = ["playwright>=1.61"]
 
+# Developer toolchain (PEP 735 group; `uv sync` installs it by default, or
+# `uv pip install -e . --group dev`). One command gets a contributor set up to
+# run the tests, linter/formatter, and type-checker exactly as CI does.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.15",
+    "mypy>=2.3",
+]
+
 [project.urls]
 Homepage = "https://github.com/z3e8/pyharness"
 Repository = "https://github.com/z3e8/pyharness"
@@ -72,3 +82,55 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pyharness"]
+
+# --- Developer tooling ---------------------------------------------------------
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+# A pragmatic default set: pyflakes (F) + a slice of pycodestyle (E/W), import
+# sorting (I), pyupgrade (UP), and flake8-bugbear (B). E501 (line-too-long) is
+# deliberately not enforced by the linter — the formatter owns code line length,
+# and long strings/comments that it cannot reflow are left alone rather than
+# papered over with noqas.
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# The remote-kernel and IPC tests deliberately assert against broad exceptions
+# (`pytest.raises(Exception)`) to prove a decode/reconstruct path fails at all —
+# narrowing the type is not the point of those assertions.
+"tests/*" = ["B017"]
+# These two package inits order imports by hand to break an import cycle
+# (capabilities import core.workspace, which re-enters the top package): the
+# `SpawnResult`/`.core` imports MUST stay in their documented position, so import
+# sorting is disabled here rather than allowed to reintroduce the cycle.
+"pyharness/__init__.py" = ["I001"]
+"pyharness/broker/capabilities/__init__.py" = ["I001"]
+
+[tool.mypy]
+# Lenient by design. The codebase is large and largely untyped; a strict pass is
+# out of scope (see agents/issues.md for the type-debt path). This config just
+# lets `mypy` run cleanly enough to catch obvious mistakes without a wall of
+# missing-annotation noise, and it is a non-blocking check in CI.
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_configs = true
+namespace_packages = true
+explicit_package_bases = true
+# No disallow_untyped_defs / strict — annotations are added opportunistically.
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+# Test discovery + defaults. The autouse egress-DNS stub lives in
+# tests/conftest.py (kept there, not duplicated here). Coverage is intentionally
+# NOT wired into addopts: running under pytest-cov re-execs the sandbox child in
+# a way that cannot find `_pytest`, which reddens 6 sandbox tests — use a
+# dedicated coverage invocation if you need it.
+testpaths = ["tests"]
+addopts = "-q"
