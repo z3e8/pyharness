@@ -172,7 +172,7 @@ def test_secret_carrying_read_is_grantable_per_host(tmp_path):
     # a plain unauthenticated GET is free, so it needs no grant scope
     assert http.scope("request", (None, "GET", "https://api.example.com/x"), {}) is None
 
-    web = WebCapability(llm=None, http=http)
+    web = WebCapability(http=http)
     s = web.scope("fetch", ("https://api.example.com/x", "k"), {})
     assert s is not None and s.action_class == "http" and s.target == "api.example.com"
     assert web.scope("fetch", ("https://api.example.com/x",), {}) is None

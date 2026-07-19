@@ -371,7 +371,7 @@ class Session:
         # learned skills. One coherent, discoverable surface for everything
         # external; gating is identical to a builtin's.
         tool_caps = [
-            (WebCapability(self.llm, http=self.http),
+            (WebCapability(http=self.http),
              "Read the web: search_results (a raw ranked list to fan out over), and fetch a single URL.",
              "web", ("web", "http", "fetch", "search", "results", "url", "download", "browse", "internet")),
             (self.http,

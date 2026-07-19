@@ -13,10 +13,8 @@ from .page import render_page_map, thin_extraction_warning
 class WebCapability:
     name = "web"
 
-    def __init__(self, llm, http: HttpSessionCapability, tier: str = "cheap"):
-        self.llm = llm
+    def __init__(self, http: HttpSessionCapability):
         self.http = http
-        self.tier = tier
 
     def exports(self) -> dict:
         return {

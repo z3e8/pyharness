@@ -604,7 +604,7 @@ def fake_httpx(monkeypatch):
 
 def test_web_fetch_injects_auth_parent_side(tmp_path, fake_httpx):
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
-    web = WebCapability(llm=None, http=http)
+    web = WebCapability(http=http)
 
     web.fetch("http://x", auth="k")
     assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == "Bearer S3CRET"
@@ -763,7 +763,7 @@ def test_web_fetch_renders_full_page_map(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(httpx, "Client", _Client)
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
     out = web.fetch("https://example.com/page")
 
     assert out.startswith("# Sign in — Example")
@@ -787,7 +787,7 @@ def test_web_fetch_spilled_page_keeps_affordances(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(httpx, "Client", _Client)
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
     # save= forces the body to disk; the affordance map must still ride back.
     out = web.fetch("https://example.com/page", save="page.html")
     assert "saved" in out and "page.html" in out
@@ -815,7 +815,7 @@ def test_web_fetch_falls_back_when_extract_content_declines(tmp_path, monkeypatc
             pass
 
     monkeypatch.setattr(httpx, "Client", _Client)
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
     out = web.fetch("https://example.com/page")
     assert "Welcome back" in out  # fallback reducer produced the content
     assert "## LINKS" in out  # affordances unaffected by the content fallback
@@ -862,7 +862,7 @@ def test_web_fetch_warns_on_thin_extraction(tmp_path, monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "Client", _client_serving(_NAV_ONLY_HTML))
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
     out = web.fetch("https://example.com/app")
     # The warning is the first line, and the page map still rides behind it.
     assert out.startswith("[warning: extraction looks thin (")
@@ -874,7 +874,7 @@ def test_web_fetch_no_thin_warning_on_real_article(tmp_path, monkeypatch):
     import httpx
 
     monkeypatch.setattr(httpx, "Client", _client_serving(_ARTICLE_HTML))
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
     out = web.fetch("https://example.com/guide")
     # Same 30-link nav, but a substantial body: a link-heavy good page is not
     # flagged. This is the false-positive regression test for the heuristic.
@@ -908,7 +908,7 @@ def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkey
 
         return _Client
 
-    web = WebCapability(llm=None, http=HttpSessionCapability(Workspace(tmp_path)))
+    web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
 
     monkeypatch.setattr(
         httpx, "Client",
@@ -2016,7 +2016,7 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
          "author": "Ann", "score": 0.9, "highlights": ["snip one", "snip two"]},
     ]})
     monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
-    web = WebCapability(llm=None, http=None)
+    web = WebCapability(http=None)
 
     out = web.search_results("harrington jackets", num_results=5)
 
@@ -2039,7 +2039,7 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
 def test_web_search_results_clamps_num_results(monkeypatch):
     fake = _patch_exa(monkeypatch)
     monkeypatch.setenv("EXA_API_KEY", "k")
-    web = WebCapability(llm=None, http=None)
+    web = WebCapability(http=None)
 
     web.search_results("q", num_results=0)
     web.search_results("q", num_results=500)
@@ -2052,7 +2052,7 @@ def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
     # and a response with no "results" key yields [].
     _patch_exa(monkeypatch, body={"results": [{"url": "https://x.example"}]})
     monkeypatch.setenv("EXA_API_KEY", "k")
-    web = WebCapability(llm=None, http=None)
+    web = WebCapability(http=None)
     assert web.search_results("q") == [{
         "title": None, "url": "https://x.example", "snippet": "",
         "published_date": None, "author": None, "score": None,
@@ -2065,7 +2065,7 @@ def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
 def test_web_search_results_raises_without_leaking_key(monkeypatch):
     _patch_exa(monkeypatch, status=429)
     monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
-    web = WebCapability(llm=None, http=None)
+    web = WebCapability(http=None)
 
     with pytest.raises(RuntimeError) as exc:
         web.search_results("q")
@@ -2075,7 +2075,7 @@ def test_web_search_results_raises_without_leaking_key(monkeypatch):
 
 def test_web_search_results_requires_key(monkeypatch):
     monkeypatch.delenv("EXA_API_KEY", raising=False)
-    web = WebCapability(llm=None, http=None)
+    web = WebCapability(http=None)
     with pytest.raises(RuntimeError, match="EXA_API_KEY not set"):
         web.search_results("q")
 
