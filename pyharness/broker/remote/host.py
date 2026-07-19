@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import pickle
 import shutil
+import signal
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -18,6 +21,13 @@ from .sandbox import check_unsandboxed_platform, make_child_executable
 # Serializes the set_executable -> Process.start critical section across every
 # RemoteKernel in the process (see _start_locked).
 _START_LOCK = threading.Lock()
+
+# How long a resync waits for an interrupted cell to report done before giving
+# up and killing the child (_resync_after_abort).
+_DRAIN_DEADLINE_S = 5.0
+# Per-stage join timeout in the terminate -> join -> kill -> join escalation
+# (_reap) and for close()'s graceful shutdown join.
+_REAP_TIMEOUT_S = 2.0
 
 
 class RemoteKernel:
@@ -32,7 +42,15 @@ class RemoteKernel:
 
     State lives in the child's namespace and is in-memory and disposable: if the
     child dies mid-session its variables are lost (no durable resume in V1). The
-    next `run` starts a fresh child."""
+    next `run` starts a fresh child.
+
+    A Ctrl-C mid-cell unwinds the parent out of `_serve` while the child keeps
+    running; its buffered frames would otherwise be consumed as the *next*
+    cell's traffic, shifting every later turn's output by one. `run` therefore
+    resynchronizes on the way out (`_resync_after_abort`): forward SIGINT so the
+    cell aborts in the child (namespace preserved, like an in-process
+    KeyboardInterrupt) and drain the aborted cell's frames — or, if the child
+    doesn't wind down, kill it so the next `run` starts fresh."""
 
     def __init__(
         self,
@@ -113,7 +131,16 @@ class RemoteKernel:
             self._discard()
             self._start()
             self._conn.send(("run", code))
-        return self._serve()
+        try:
+            return self._serve()
+        except BaseException:
+            # Anything that unwinds mid-cell — typically a KeyboardInterrupt
+            # while blocked in recv or inside a broker call (dispatch has
+            # already written its outcome record by the time it re-raises) —
+            # leaves the child mid-cell and the pipe desynced. Resync before
+            # re-raising so the next run doesn't consume stale frames.
+            self._resync_after_abort()
+            raise
 
     def _serve(self) -> str:
         """Service the child's capability calls until the cell reports done."""
@@ -161,12 +188,73 @@ class RemoteKernel:
             except Exception as exc:  # noqa: BLE001 - e.g. unpicklable result
                 self._conn.send(("err", RuntimeError(f"{op} result not transferable: {exc!r}")))
 
+    def _resync_after_abort(self) -> None:
+        """Restore the request/reply pairing after the parent unwound out of
+        `_serve` mid-cell. Forward SIGINT to the child — the cell aborts with a
+        KeyboardInterrupt (namespace preserved, see child._run_cell) — then
+        drain the aborted cell's remaining frames up to its terminal "done". If
+        the signal can't be sent (non-POSIX) or the child doesn't report done in
+        time (e.g. agent code swallowed the interrupt), kill and discard it so
+        the next run starts a fresh child instead of reading stale frames."""
+        proc = self._proc
+        if proc is None:
+            return
+        if os.name == "posix" and proc.pid is not None and proc.is_alive():
+            try:
+                os.kill(proc.pid, signal.SIGINT)
+            except OSError:
+                pass
+            else:
+                if self._drain_to_done():
+                    return
+        self._discard()
+
+    def _drain_to_done(self) -> bool:
+        """Consume the aborted cell's leftover frames until its "done" arrives.
+        Stale capability-call frames are dropped unanswered — the forwarded
+        SIGINT unblocks the child from awaiting those replies. Returns False on
+        deadline, EOF, or a garbage frame (caller kills the child)."""
+        deadline = time.monotonic() + _DRAIN_DEADLINE_S
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                if not self._conn.poll(remaining):
+                    return False
+                msg = recv_json(self._conn)
+            except (EOFError, OSError, ValueError):
+                return False
+            if isinstance(msg, list) and len(msg) == 2 and msg[0] == "done":
+                return True
+
+    def _reap(self) -> None:
+        """Make sure the current child is dead *and* reaped (no zombie), whatever
+        state it is in: terminate() -> join -> kill() -> join. SIGTERM first so a
+        healthy child can run atexit teardown; SIGKILL if it is wedged in a cell
+        or ignoring the signal. A join on an already-dead child just collects its
+        exit status."""
+        proc = self._proc
+        if proc is None:
+            return
+        try:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(_REAP_TIMEOUT_S)
+                if proc.is_alive():
+                    proc.kill()  # SIGKILL: cannot be caught or ignored
+                    proc.join(_REAP_TIMEOUT_S)
+            else:
+                proc.join(_REAP_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - best-effort teardown of a broken handle
+            pass
+
     def _discard(self) -> None:
-        """Drop an already-dead child and its broken pipe so the next run starts
-        fresh. Unlike close(), this makes no attempt to shut the child down (it is
-        gone); it just reaps the handle and keeps the sandbox dir for reuse."""
-        if self._proc is not None:
-            self._proc.join(timeout=1)
+        """Tear down the current child — dead, wedged, or off-protocol — and its
+        pipe so the next run starts fresh. Escalates terminate -> join -> kill so
+        even a child ignoring SIGTERM is killed and reaped; keeps the sandbox dir
+        for reuse by the replacement child."""
+        self._reap()
         if self._conn is not None:
             try:
                 self._conn.close()
@@ -175,17 +263,16 @@ class RemoteKernel:
         self._proc, self._conn = None, None
 
     def close(self) -> None:
-        if self._proc is None:
-            return
-        try:
-            if self._proc.is_alive():
-                self._conn.send(("shutdown",))
-                self._proc.join(timeout=2)
-        except Exception:  # noqa: BLE001 - best-effort teardown
-            pass
-        if self._proc.is_alive():
-            self._proc.terminate()
-        self._proc, self._conn = None, None
+        if self._proc is not None:
+            try:
+                if self._proc.is_alive():
+                    self._conn.send(("shutdown",))
+                    self._proc.join(timeout=_REAP_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 - best-effort graceful path
+                pass
+            # Graceful or not, escalate until the child is dead and reaped —
+            # a child wedged mid-cell never reads the shutdown message.
+            self._discard()
         if self._sbdir is not None:
             shutil.rmtree(self._sbdir, ignore_errors=True)
             self._sbdir = None

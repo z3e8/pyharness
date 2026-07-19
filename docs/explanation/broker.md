@@ -95,6 +95,11 @@ across every I/O site — means:
   because the parent is trusted (`pyharness/broker/remote/protocol.py`).
   `RemoteError` normalizes exceptions that can't round-trip through that framing
   (e.g. `anthropic.APIStatusError`) so the child sees a faithful error either way.
+  A Ctrl-C mid-cell is forwarded to the child as SIGINT: the running cell aborts
+  with a `KeyboardInterrupt` (namespace preserved, like an in-process kernel) and
+  the parent drains the aborted cell's leftover frames so the pipe stays in sync;
+  a child that doesn't wind down promptly is killed (`SIGTERM`, then `SIGKILL`)
+  and the next cell starts a fresh one.
 
 The child is confined at the OS level too (macOS Seatbelt + POSIX rlimits) — see
 [Security & audit](security-and-audit.md). The point of the boundary: the child

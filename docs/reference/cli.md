@@ -40,7 +40,8 @@ pyharness [repl] [SESSION_DIR]
   asking for input — and are mirrored best-effort as a desktop notification.
 - A turn that fails mid-stream is retried once, then aborted without crashing the
   REPL. `Ctrl-C` aborts the in-flight turn (e.g. a slow web search) and drops back
-  to the prompt with history intact; `Ctrl-D` exits.
+  to the prompt with history intact; the interrupt is forwarded into the kernel,
+  so a running cell stops but the session's variables survive. `Ctrl-D` exits.
 
 Each turn prints the streamed reply and a `[spent $… over N calls]` line.
 

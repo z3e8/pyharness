@@ -5,7 +5,10 @@ byte-for-byte what the in-process kernel runs — only the execution boundary mo
 
 import json
 import multiprocessing as mp
+import os
 import pickle
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,7 @@ from pyharness.broker.capabilities import (
     ToolsCapability,
 )
 from pyharness.broker.remote import RemoteKernel
+from pyharness.broker.remote import host as remote_host
 from pyharness.broker.remote.protocol import recv_json
 from pyharness.broker.remote.sandbox import macos_sandbox_supported
 from pyharness.llm.client import Completion
@@ -59,6 +63,20 @@ class BoomCapability:
 
     def _boom(self):
         raise _KwOnlyError("api error 400: bad tool version", response="r", body="b")
+
+
+class InterruptCapability:
+    """A capability whose one op raises KeyboardInterrupt parent-side — standing
+    in for a real Ctrl-C landing while the parent blocks in `_serve` (the child
+    is deterministically mid-cell, awaiting the call's reply)."""
+
+    name = "intr"
+
+    def exports(self):
+        return {"interrupt_parent": self._interrupt}
+
+    def _interrupt(self):
+        raise KeyboardInterrupt
 
 
 def _example_tool():
@@ -379,6 +397,110 @@ def test_child_environment_has_no_secrets(kernel_factory, tmp_path, monkeypatch)
         "print('HOME' in os.environ)\n"
     )
     assert out == "None\nNone\nNone\nTrue"
+
+
+requires_posix_signals = pytest.mark.skipif(
+    os.name != "posix", reason="SIGINT/SIGTERM forwarding is POSIX-only"
+)
+
+
+@requires_posix_signals
+def test_interrupt_mid_cell_resyncs_pipe_and_keeps_state(kernel_factory, tmp_path):
+    # Regression for the Ctrl-C desync: a KeyboardInterrupt unwinding the parent
+    # mid-cell used to leave the child's buffered "done" in the pipe, where the
+    # *next* run consumed it as its own result — shifting every later turn's
+    # output by one. The resync forwards SIGINT (cell aborts child-side) and
+    # drains the aborted cell's frames, so the next cell's result is its own and
+    # the namespace survives, like an in-process interrupt.
+    broker = _broker(tmp_path)
+    broker.register(InterruptCapability())
+    kernel = kernel_factory(broker)
+    kernel.run("keep = 41")
+    with pytest.raises(KeyboardInterrupt):
+        kernel.run("interrupt_parent()\nprint('UNREACHED')")
+    out = kernel.run("print(keep + 1)")
+    assert out == "42"  # not the interrupted cell's stale traceback/output
+    assert "UNREACHED" not in out
+
+
+@requires_posix_signals
+def test_interrupt_swallowed_by_agent_code_falls_back_to_kill(
+    kernel_factory, tmp_path, monkeypatch
+):
+    # If agent code swallows the forwarded interrupt and never reports done, the
+    # drain times out and the child is killed — the next run starts fresh
+    # instead of hanging or reading stale frames.
+    monkeypatch.setattr(remote_host, "_DRAIN_DEADLINE_S", 1.0)
+    monkeypatch.setattr(remote_host, "_REAP_TIMEOUT_S", 0.5)
+    broker = _broker(tmp_path)
+    broker.register(InterruptCapability())
+    kernel = kernel_factory(broker)
+    kernel.run("x = 1")
+    proc = kernel._proc
+    with pytest.raises(KeyboardInterrupt):
+        kernel.run(
+            "try:\n"
+            "    interrupt_parent()\n"
+            "except BaseException:\n"
+            "    import time\n"
+            "    time.sleep(60)\n"
+        )
+    assert not proc.is_alive()
+    assert kernel._proc is None
+    # Fresh child: pipe is clean, prior state gone.
+    assert "NameError" in kernel.run("print(x)")
+    assert kernel.run("print('fresh')") == "fresh"
+
+
+@requires_posix_signals
+def test_discard_kills_and_reaps_wedged_child(kernel_factory, tmp_path, monkeypatch):
+    # _discard must actually tear a live child down, escalating past an ignored
+    # SIGTERM to SIGKILL, and reap it (exit status collected — no zombie).
+    monkeypatch.setattr(remote_host, "_REAP_TIMEOUT_S", 0.5)
+    kernel = kernel_factory(_broker(tmp_path))
+    kernel.run("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN)")
+    proc = kernel._proc
+    assert proc.is_alive()
+    kernel._discard()
+    assert not proc.is_alive()
+    assert proc.exitcode is not None  # reaped, not a zombie
+    assert kernel._proc is None and kernel._conn is None
+
+
+@requires_posix_signals
+def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
+    # close() on a child stuck mid-cell (it never reads the shutdown message,
+    # and here also ignores SIGTERM) must escalate to SIGKILL and reap.
+    monkeypatch.setattr(remote_host, "_REAP_TIMEOUT_S", 0.5)
+    kernel = RemoteKernel(_broker(tmp_path))
+    kernel.run("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN)")
+    proc = kernel._proc
+    entered = threading.Event()
+
+    def wedge():
+        entered.set()
+        kernel.run("import time; time.sleep(60)")
+
+    t = threading.Thread(target=wedge, daemon=True)
+    t.start()
+    entered.wait(timeout=5)
+    time.sleep(0.3)  # let the child enter the cell
+    kernel.close()
+    assert not proc.is_alive()
+    assert proc.exitcode is not None  # reaped, not a zombie
+    t.join(timeout=5)
+    assert not t.is_alive()
+
+
+def test_close_reaps_idle_child(kernel_factory, tmp_path):
+    # The graceful path: an idle child honors the shutdown message; close()
+    # still collects its exit status so nothing is left for the OS to hold.
+    kernel = kernel_factory(_broker(tmp_path))
+    kernel.run("x = 1")
+    proc = kernel._proc
+    kernel.close()
+    assert not proc.is_alive()
+    assert proc.exitcode is not None
 
 
 def test_child_restarts_after_crash(kernel_factory, tmp_path):

@@ -46,7 +46,13 @@ def child_main(
             _sys.path.insert(0, venv_site_packages)
     namespace = {op: _make_proxy(conn, op) for op in op_names}
     while True:
-        msg = conn.recv()
+        try:
+            msg = conn.recv()
+        except KeyboardInterrupt:
+            # A forwarded Ctrl-C (see host._resync_after_abort) that lost the
+            # race with cell completion: the cell already finished, so there is
+            # nothing to abort. Stay alive and wait for the next command.
+            continue
         if msg[0] == "shutdown":
             return
         if msg[0] == "run":
@@ -63,7 +69,10 @@ def _run_cell(conn, namespace: dict, code: str) -> str:
     try:
         with redirect_stdout(out), redirect_stderr(out):
             exec(compile(code, "<cell>", "exec"), namespace)
-    except Exception:
+    except (Exception, KeyboardInterrupt):
+        # KeyboardInterrupt is the parent forwarding a Ctrl-C mid-cell (see
+        # host._resync_after_abort): abort the cell like an in-process kernel
+        # would — traceback into the output, namespace preserved for later cells.
         out.write(traceback.format_exc(limit=5))
     return truncate(out.getvalue().rstrip()) or "(no output)"
 
