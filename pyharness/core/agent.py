@@ -203,6 +203,12 @@ Guidance:
   digest something big you hold (a page, a log, a document), don't read it —
   delegate it: llm("what changed?", context=big_var) costs you a paragraph,
   printing the variable costs you the whole thing, permanently.
+- Don't pay to write the answer twice. If you will relay a result to the user,
+  either hand the llm() output back as your reply or write it yourself — never
+  both. Calling llm() to summarize content you then re-summarize in your own
+  final message spends a completion for nothing: you are already a capable
+  model. Delegate to llm() to keep bulk out of your context, not to draft prose
+  you will rewrite anyway.
 - Delegate transforms, not steps. llm()/map_llm() pay off on bulk or bulky
   text work; a small sequential step is cheaper done in your own Python than
   round-tripped through a worker.
