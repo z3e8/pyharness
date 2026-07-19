@@ -156,3 +156,27 @@ with the same scrypt+Fernet envelope as the vault. `names()` / `exists(name)` /
 never placed in the agent's kernel). `save(name, state)` and `delete(name)` manage
 the store. See
 [Keep the agent logged in](../how-to/site-profiles.md).
+
+## `AnthropicLLM`
+
+```python
+AnthropicLLM(budget=None, max_tokens=8000)   # the default llm when Session(llm=None)
+```
+
+The Anthropic-backed client. `complete(...)` streams one completion, records
+usage into the shared `Budget`, and drives the retry/stall supervisor.
+
+**A few environment variables are read once, at client construction — not per
+call.** For the CLI this is invisible (the `.env` is loaded before the client is
+built), but a library embedder that constructs `AnthropicLLM` (directly or via
+`Session`) and *then* sets one of these gets no effect, silently. Set them before
+constructing the client (or the `Session`):
+
+- `PYHARNESS_LLM_IPV6` — truthy disables the default IPv4 transport pin (read in
+  `AnthropicLLM.__init__`). The pin retires itself on a v6-only network, so this
+  is only needed to force default DNS family selection.
+- `ANTHROPIC_API_KEY` — resolved by the underlying SDK client at construction.
+
+`max_tokens` on `complete(...)` must be a positive integer at or below the tier's
+output ceiling (see [builtins](builtins.md#delegation)); `0`,
+negative, or above-ceiling values raise `ValueError` before any request is sent.
