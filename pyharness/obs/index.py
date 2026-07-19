@@ -160,6 +160,13 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
+    # Parallel sessions each open this one shared index. Without these two
+    # pragmas a concurrent writer hits "database is locked", the fail-open
+    # caller swallows it, and that session silently never indexes. WAL lets a
+    # reader and a writer coexist; busy_timeout makes a blocked writer wait for
+    # the lock (up to 5s) instead of erroring immediately.
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA journal_mode=WAL")
     if _has_meta(conn):
         row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         if row is not None and row[0] != _SCHEMA_VERSION:

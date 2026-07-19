@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from pyharness.obs.index import SCHEMA_HELP, query, update_index
+from pyharness.obs.index import SCHEMA_HELP, open_db, query, update_index
 from pyharness.tools.skills import record_use, write_skill
 
 
@@ -186,6 +186,15 @@ def test_rebuild_from_scratch(tmp_path):
     counts = update_index(db, [], rebuild=True)
     assert counts["indexed"] == 1  # everything re-derived
     assert query(db, "SELECT COUNT(*) AS n FROM sessions")[0]["n"] == 1
+
+
+def test_open_db_sets_wal_and_busy_timeout(tmp_path):
+    conn = open_db(tmp_path / "index.db")
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    finally:
+        conn.close()
 
 
 def test_schema_help_names_every_table():
