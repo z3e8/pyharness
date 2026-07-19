@@ -54,15 +54,16 @@ make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .en
 make run       # the agent + its live viewer → http://localhost:6061 (make dev is an alias)
 make watch     # live viewer alone, for a session started elsewhere
 make test      # tests (no API key)
+make lint      # ruff check + format (make format applies fixes; make typecheck runs mypy)
 ```
 
 Or drive it directly without make:
 
 ```bash
-uv venv && uv pip install -e .
+uv venv && uv pip install -e . --group dev             # runtime + dev toolchain
 ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 
-uv pip install pytest && uv run pytest -q               # tests (no API key)
+uv run pytest -q                                        # tests (no API key)
 ```
 
 The live viewer is on by default; the heavier OTel export (Phoenix/Langfuse) is

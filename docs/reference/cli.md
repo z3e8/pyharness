@@ -203,4 +203,6 @@ Day-to-day you drive these through `make` (see [Configuration](configuration.md)
 and `make help`): `make run` (and its alias `make dev`) wraps `pyharness`, live
 viewer included; `make watch` wraps `pyharness-watch`; `make up` starts the
 optional Phoenix OTel backend; `make verify-audit DIR=.sessions/<name>` checks
-a session's [audit chain](../explanation/security-and-audit.md).
+a session's [audit chain](../explanation/security-and-audit.md). For development
+there are also `make test`, `make lint` (ruff check + format), `make format`
+(apply autofixes), and `make typecheck` (lenient, non-blocking mypy).

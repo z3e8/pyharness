@@ -21,12 +21,21 @@ Everything is driven by `make` (`make help` lists all targets). `uv` is the
 package manager; there is no `pip`/`venv` step to run by hand.
 
 ```bash
-make setup     # create .env + install editable package + pytest (one-time)
+make setup     # create .env + install editable package + dev toolchain (one-time)
 make test      # run the test suite — no API key needed. Use this to verify changes.
+make lint      # ruff check + ruff format --check (what CI enforces)
+make format    # ruff format + ruff check --fix (apply autofixes)
+make typecheck # mypy — lenient, non-blocking (see [tool.mypy] in pyproject.toml)
 make run       # interactive agent + live viewer :6061 (needs ANTHROPIC_API_KEY in .env)
 make watch     # live viewer alone (tails .sessions/) for a session started elsewhere
 make up        # optional Phoenix OTel backend (:6006); make down stops it
 ```
+
+The dev toolchain (ruff, mypy, pytest) is pinned in the `dev` dependency group
+(`[dependency-groups]` in `pyproject.toml`); `make setup` installs it. CI
+(`.github/workflows/`) runs `make test` across Python 3.11/3.12/3.13 and gates on
+`ruff`; `mypy` runs as a non-blocking signal. Do not wire coverage into the
+default `pytest` run — `pytest-cov` breaks the sandbox child's re-exec (6 tests).
 
 To test-drive the harness itself (run a probe task, inspect what happened, fix,
 re-run) use the headless CLI — the `harness-loop` skill has the full loop:
