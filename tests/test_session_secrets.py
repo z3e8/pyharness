@@ -9,7 +9,9 @@ def test_bash_hides_provider_key(tmp_path, monkeypatch):
     # bash runs parent-side with a scrubbed environ; a live provider key must not
     # survive into it, or `printenv` would hand the agent cleartext.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-leak")
-    session = Session(tmp_path)
+    # shell.bash is approval-gated by default; this test is about the env, so
+    # approve the call.
+    session = Session(tmp_path, approver=lambda request: True)
     try:
         bash = session.broker.namespace()["bash"]
         out = bash("printenv ANTHROPIC_API_KEY || echo MISSING")

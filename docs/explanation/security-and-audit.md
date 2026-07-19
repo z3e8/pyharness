@@ -19,7 +19,10 @@ Rules match by prefix, so `"files"` gates every file operation and
 `skills.save_skill`, `skills.edit_skill`, and `packages.install` — all write
 content that would load and run in later sessions, so a human signs off at
 author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
-proposals too — reflection routes its skill writes through the same broker gate). It also gates
+proposals too — reflection routes its skill writes through the same broker gate).
+`shell.bash` is approval-gated too: it runs an arbitrary program parent-side, and
+while the OS sandbox (below) jails its filesystem and network on macOS, the
+command itself is unvetted — and off macOS there is no jail at all. It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
 **state-changing browser actions** (`click` / `fill` / `fill_secret` /
 `fill_totp` / `select_option` / `press` / `upload`), since those act outward on the user's
@@ -342,7 +345,13 @@ boundary itself:
   package source the child needs to import — the package's `sys.path` directory is
   listable so the import resolves, but its other files, a project `.env` or a prior
   session's data among them, stay unreadable). Anything the child execs inherits
-  the profile.
+  the profile. **`shell.bash` runs under this same profile** — the command
+  executes in the (unsandboxed) parent, so it is wrapped in `sandbox-exec` with
+  the identical Seatbelt profile (`sandboxed_shell_argv`) rather than trusted
+  with the parent's OS reach; the generated profile lives outside the workspace,
+  so a sandboxed command can't rewrite its own jail. Where the platform has no
+  OS sandbox, `bash` falls back to the scrubbed environment alone (and remains
+  approval-gated).
 - **POSIX rlimits** — no core dumps; on Linux, a process cap to blunt fork bombs
   (skipped on macOS, where the limit is per-user and would break ordinary
   `subprocess`/`fork`).

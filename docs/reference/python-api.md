@@ -17,6 +17,7 @@ Session(
     llm=None,                  # defaults to AnthropicLLM(budget=...)
     budget=None,               # Budget — defaults to unlimited
     policy=None,               # Policy — defaults to requiring approval for
+                               #   shell.bash (an arbitrary program),
                                #   skills.save_skill, skills.edit_skill,
                                #   packages.install, tools.add_mcp_server,
                                #   spawn.spawn (a spawned child's whole plan),

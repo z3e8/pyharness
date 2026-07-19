@@ -46,6 +46,9 @@ import them. This is the complete list; nothing else is callable by bare name.
     read(path, offset=0, limit=None) / write(path, content) / edit(path, old, new)
         # read returns the file whole; offset/limit page a long one by line.
     bash(cmd, timeout=60)
+        # needs human approval per call, and runs OS-sandboxed where supported:
+        # no network, writes stay inside the workspace. Reach the network
+        # through tools (web/http), never curl.
     search(pattern, path=".")
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)

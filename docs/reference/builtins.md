@@ -30,7 +30,7 @@ away, and the full text remains in `trace.jsonl`.
 | `read(path, offset=0, limit=None)` | file contents (whole, or a line window) |
 | `write(path, content)` | — (creates/overwrites) |
 | `edit(path, old, new)` | — (replaces `old` with `new`) |
-| `bash(cmd, timeout=60)` | combined stdout/stderr |
+| `bash(cmd, timeout=60)` | combined stdout/stderr — **needs human approval** |
 | `search(pattern, path=".")` | matching lines |
 
 `read` returns the file whole by default; `offset`/`limit` page it by line
@@ -38,8 +38,11 @@ away, and the full text remains in `trace.jsonl`.
 into context. None of these cap their result — the content lands in a kernel
 variable intact; the only cap is on what the agent chooses to `print()` back to
 itself (see [the action space](../explanation/action-space.md#large-and-binary-payloads)).
-`bash` runs with secret-bearing env vars stripped (see
-[Security & audit](../explanation/security-and-audit.md)).
+`bash` needs human approval per call, runs with secret-bearing env vars
+stripped, and on macOS executes inside the same OS sandbox as the out-of-process
+child: no outbound network, writes confined to the workspace, `$HOME` reads
+jailed. Reach the network through the `web`/`http` tools, not `curl`. (See
+[Security & audit](../explanation/security-and-audit.md).)
 
 ## Reaching the outside world is not a builtin
 

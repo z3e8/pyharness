@@ -12,7 +12,7 @@ import pytest
 
 from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
-from pyharness.broker import Broker
+from pyharness.broker import Broker, PermissionDenied
 from pyharness.broker.capabilities import (
     FilesCapability,
     HttpSessionCapability,
@@ -219,6 +219,23 @@ def test_screenshot_gated_after_injected_secret(tmp_path, monkeypatch):
         assert session.policy.decide("browser.look", ("sid",), {}) is Decision.APPROVE
         stub.injected = False  # no secret typed → both are free reads
         assert session.policy.decide("browser.screenshot", ("sid",), {}) is Decision.ALLOW
+    finally:
+        session.close()
+
+
+# --- shell.bash is approval-gated by default (readiness C1) ------------------
+
+def test_shell_bash_requires_approval_by_default(tmp_path, monkeypatch):
+    # bash runs an arbitrary program parent-side; the default policy gates it
+    # on a human. With no approver wired, an unapproved call is refused and
+    # nothing executes.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    session = Session(tmp_path)
+    try:
+        assert session.policy.decide("shell.bash", ("ls",), {}) is Decision.APPROVE
+        with pytest.raises(PermissionDenied):
+            session.broker.namespace()["bash"]("echo pwned > marker.txt")
+        assert not (session.workspace.dir / "marker.txt").exists()
     finally:
         session.close()
 

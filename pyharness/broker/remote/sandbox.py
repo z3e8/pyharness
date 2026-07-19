@@ -125,6 +125,24 @@ def make_child_executable(sbdir: Path, workspace: Path | None = None) -> str | N
     return str(launcher)
 
 
+def sandboxed_shell_argv(cmd: str, sbdir: Path, workspace: Path | None = None) -> list[str] | None:
+    """Return an argv that runs `cmd` under `/bin/sh -c` inside the same
+    Seatbelt profile the out-of-process child gets — no outbound network, writes
+    confined to the workspace, the $HOME read jail — or None when this platform
+    has no OS sandbox. `shell.bash` executes in the privileged parent, so
+    without this wrapper the command would run with the parent's full OS reach.
+    `sbdir` holds the generated profile; it must sit *outside* the workspace so
+    a sandboxed command cannot rewrite its own jail. A None return means the
+    caller falls back to a plain `shell=True` run where env scrubbing is the
+    only containment — a Linux confinement path (bubblewrap/seccomp) would plug
+    in here."""
+    if not macos_sandbox_supported():
+        return None
+    profile = sbdir / "shell.sb"
+    profile.write_text(_seatbelt_profile(workspace))
+    return [_SANDBOX_EXEC, "-f", str(profile), "/bin/sh", "-c", cmd]
+
+
 def apply_resource_limits() -> None:
     """Bound the child's blast radius with POSIX rlimits. Each is guarded: a
     platform (or value) the kernel rejects is simply skipped, never fatal."""
