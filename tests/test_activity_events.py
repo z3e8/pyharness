@@ -6,6 +6,9 @@ before the approver blocks on the human — so a viewer tailing the trace can
 show what is running, what is stuck, and what it is waiting on.
 """
 
+import json
+import threading
+
 import pytest
 
 from pyharness.audit import AuditLog
@@ -116,6 +119,56 @@ def test_refused_approval_ends_the_action(tmp_path):
 
     assert [k for k, _, _ in events][-2:] == ["approval_resolved", "action_end"]
     assert events[-1][2]["ok"] is False
+
+
+class _Blocker:
+    name = "block"
+
+    def __init__(self, started, release):
+        self._started = started
+        self._release = release
+
+    def exports(self):
+        return {"go": self._go}
+
+    def _go(self):
+        self._started.set()
+        self._release.wait(5)
+        return "done"
+
+
+def test_orphan_completion_after_abort_does_not_double_end(tmp_path):
+    # A call abort_inflight() closed at teardown that then completes anyway must
+    # not append a second outcome record (which would over-count `actions`): the
+    # settle-once flag makes dispatch's own end a no-op after the aborted end.
+    started, release = threading.Event(), threading.Event()
+    events = []
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    broker = Broker(Policy(), audit, Budget(),
+                    on_event=lambda kind, text="", **extra: events.append((kind, text, extra)))
+    broker.register(_Blocker(started, release))
+
+    out = {}
+    t = threading.Thread(target=lambda: out.update(val=broker.call("block", "go")))
+    t.start()
+    assert started.wait(5)  # in flight, blocked in the capability func
+
+    aborted = broker.abort_inflight()  # settle + write the aborted end
+    release.set()
+    t.join(5)
+
+    assert out["val"] == "done"  # the orphaned call still returned normally
+    assert aborted == ["block.go"]
+
+    records = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    block = [r for r in records if r.get("action") == "block.go"]
+    assert sum(r.get("phase") == "start" for r in block) == 1
+    assert sum(r.get("phase") == "end" for r in block) == 1  # not two
+    end = next(r for r in block if r.get("phase") == "end")
+    assert end["error"] == "aborted"  # the abort's end stands; dispatch's is suppressed
+
+    # Exactly one action_end event too — the late completion emits nothing.
+    assert sum(1 for k, t_, _ in events if k == "action_end") == 1
 
 
 def test_event_sink_failure_never_breaks_the_call(tmp_path):

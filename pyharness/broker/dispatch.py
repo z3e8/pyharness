@@ -106,6 +106,12 @@ class Broker:
         # `abort_inflight` (session teardown) uses this to close the audit
         # record of anything a killed session left running.
         self._inflight: dict[object, tuple[str, float]] = {}
+        # Tokens whose single terminal outcome record has been claimed (by normal
+        # dispatch *or* by abort_inflight, whichever reached it first), so a call
+        # closed at teardown that then completes anyway can't append a second
+        # `phase: "end"` record. Bounded to concurrently-inflight actions: each
+        # token is discarded when its `call()` returns.
+        self._settled: set[object] = set()
         self._inflight_lock = threading.Lock()
         self._capabilities: dict[str, object] = {}
         self._core: set[str] = set()  # capabilities surfaced as bare-name builtins
@@ -246,18 +252,34 @@ class Broker:
             )
 
         try:
-            return self._dispatch(cap, op, action, args, kwargs, _end)
+            return self._dispatch(cap, op, action, args, kwargs, _end, token)
         finally:
             with self._inflight_lock:
                 self._inflight.pop(token, None)
+                self._settled.discard(token)
 
-    def _dispatch(self, cap: str, op: str, action: str, args, kwargs, _end) -> object:
+    def _settle(self, token: object) -> bool:
+        """Claim the single terminal outcome record for an in-flight action.
+        Returns True for the first caller — normal dispatch's end *or*
+        `abort_inflight`, whichever reaches it first — and False for any later
+        one, so a call abort_inflight already closed that then completes anyway
+        can't append a second `phase: "end"` record (which would over-count
+        `actions`)."""
+        with self._inflight_lock:
+            if token in self._settled:
+                return False
+            self._settled.add(token)
+            self._inflight.pop(token, None)
+            return True
+
+    def _dispatch(self, cap: str, op: str, action: str, args, kwargs, _end, token) -> object:
         with telemetry.tool_span(action) as span:
             decision = self.policy.decide(action, args, kwargs)
             if decision is Decision.DENY:
-                self.audit.record(action=action, phase="end", decision="deny", ok=False)
-                telemetry.record_tool(span, action=action, decision="deny", ok=False)
-                _end(ok=False, decision="deny")
+                if self._settle(token):
+                    self.audit.record(action=action, phase="end", decision="deny", ok=False)
+                    telemetry.record_tool(span, action=action, decision="deny", ok=False)
+                    _end(ok=False, decision="deny")
                 raise PermissionDenied(f"policy denied {action}")
             if decision is Decision.APPROVE:
                 request = self._approval_request(cap, op, action, args, kwargs)
@@ -307,13 +329,18 @@ class Broker:
                         }
                     if outcome is ApprovalOutcome.DENY:
                         # A refused approval ends the action: its decision record
-                        # doubles as the outcome record.
+                        # doubles as the outcome record. Guard it so a call
+                        # abort_inflight already closed (a child blocked on
+                        # approval at teardown) doesn't append a second end.
                         fields.update(phase="end", ok=False)
-                    self.audit.record(**fields)
-                    if outcome is ApprovalOutcome.DENY:
-                        telemetry.record_tool(span, action=action, decision="approve", ok=False)
-                        _end(ok=False, decision="approve")
+                        if self._settle(token):
+                            self.audit.record(**fields)
+                            telemetry.record_tool(span, action=action, decision="approve", ok=False)
+                            _end(ok=False, decision="approve")
                         raise PermissionDenied(f"not approved: {action}")
+                    # Approve/grant: a non-terminal decision record (no phase);
+                    # the outcome record comes on the success/exception path.
+                    self.audit.record(**fields)
 
             if cap in self.metered:
                 self.budget.check()
@@ -322,17 +349,19 @@ class Broker:
             try:
                 result = func(*args, **kwargs)
             except BaseException as exc:  # incl. KeyboardInterrupt — record, then re-raise
-                self.audit.record(action=action, phase="end", ok=False, error=repr(exc))
-                telemetry.record_tool(
-                    span, action=action, decision="allow", ok=False, error=repr(exc)
-                )
-                _end(ok=False, error=repr(exc))
+                if self._settle(token):
+                    self.audit.record(action=action, phase="end", ok=False, error=repr(exc))
+                    telemetry.record_tool(
+                        span, action=action, decision="allow", ok=False, error=repr(exc)
+                    )
+                    _end(ok=False, error=repr(exc))
                 raise
-            self.audit.record(
-                action=action, phase="end", ok=True, args=summarize_args(args, kwargs)
-            )
-            telemetry.record_tool(span, action=action, decision="allow", ok=True)
-            _end(ok=True)
+            if self._settle(token):
+                self.audit.record(
+                    action=action, phase="end", ok=True, args=summarize_args(args, kwargs)
+                )
+                telemetry.record_tool(span, action=action, decision="allow", ok=True)
+                _end(ok=True)
             return result
 
     def abort_inflight(self) -> list[str]:
@@ -340,11 +369,16 @@ class Broker:
         session teardown, when in-flight calls (e.g. a broker call stuck in a
         thread the abort orphaned) would otherwise vanish between their start
         record and never-written outcome. Appends `{phase: "end", ok: False,
-        error: "aborted"}` per action, best-effort, and returns their names."""
+        error: "aborted"}` per action, best-effort, and returns their names. Each
+        action's outcome is claimed via `_settle`, so if the orphaned thread later
+        completes its dispatch it finds the token already settled and won't write a
+        second outcome record."""
         with self._inflight_lock:
-            pending = list(self._inflight.values())
-            self._inflight.clear()
-        for action, started in pending:
+            pending = list(self._inflight.items())
+        aborted: list[str] = []
+        for token, (action, started) in pending:
+            if not self._settle(token):
+                continue  # dispatch closed it first; its real outcome already stands
             self.audit.record(action=action, phase="end", ok=False, error="aborted")
             self._emit(
                 "action_end",
@@ -353,4 +387,5 @@ class Broker:
                 ok=False,
                 error="aborted",
             )
-        return [action for action, _ in pending]
+            aborted.append(action)
+        return aborted
