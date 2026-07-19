@@ -18,10 +18,18 @@ This module gives the request path one function, `check_url`, that:
 Loopback and RFC1918/ULA private ranges stay reachable by default (local dev,
 local services, and local MCP-over-http are normal), but setting
 `PYHARNESS_BLOCK_PRIVATE_NETWORK=true` extends the block to them for a stricter
-posture. The guard is best-effort defense-in-depth: it resolves once here and the
-client resolves again at connect, so a deliberately racing resolver is not fully
-closed out — pinning the connection to the vetted IP is the durable fix and is
-noted in docs/explanation/security-and-audit.md.
+posture. DNS resolution *failure* fails **closed**: a hostname that will not
+resolve is refused rather than waved through, so a name that resolves only
+intermittently (or only for the second, unguarded lookup the client makes) can't
+slip past the guard on the attempt where our lookup happens to fail.
+
+The guard is best-effort defense-in-depth: it resolves the name here and the
+client resolves it again at connect, so a deliberately racing resolver (DNS
+rebinding) is not fully closed out — the guard vets the IPs *it* sees, not
+necessarily the one the socket ultimately connects to. Pinning the connection to
+the vetted IP is the durable fix (a custom httpx transport); it is not built in
+this version and the residual TOCTOU is tracked in agents/issues.md and
+docs/explanation/security-and-audit.md.
 """
 
 from __future__ import annotations
@@ -43,19 +51,36 @@ def _strict() -> bool:
     return os.environ.get(BLOCK_PRIVATE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _resolve_host(host: str) -> list[tuple]:
+    """DNS resolution seam: return `socket.getaddrinfo` infos for `host`, or raise
+    `socket.gaierror`. Factored out as the one place tests patch so the offline
+    suite (placeholder hosts + mocked HTTP transports) doesn't hit real DNS, while
+    the guard's own logic (literal handling, range checks, fail-closed) stays under
+    test."""
+    return socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+
+
 def _candidate_ips(host: str) -> list[ipaddress._BaseAddress]:
     """Every IP the host could resolve to. An IP literal is returned as itself; a
-    name is resolved via DNS. A resolution failure yields no candidates — the guard
-    fails open on transient DNS rather than blocking legitimate traffic (the request
-    itself will fail if the name is truly unresolvable)."""
+    name is resolved via DNS.
+
+    A resolution failure fails **closed**: it raises `EgressBlocked` rather than
+    returning an empty (== "allow") list. Failing open let an unresolvable — or
+    only-intermittently-resolvable — name through unchecked, which both defeats the
+    guard on the lookup where our resolver happens to fail and hands a rebinding
+    resolver a free pass. A name that legitimately doesn't resolve would fail the
+    request anyway; refusing it here just moves the failure earlier and closes the
+    hole."""
     try:
         return [ipaddress.ip_address(host)]
     except ValueError:
         pass
     try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        return []
+        infos = _resolve_host(host)
+    except socket.gaierror as exc:
+        raise EgressBlocked(
+            f"host {host!r} could not be resolved ({exc}); refusing (fail-closed)"
+        ) from exc
     ips: list[ipaddress._BaseAddress] = []
     for info in infos:
         sockaddr = info[4]
@@ -63,6 +88,8 @@ def _candidate_ips(host: str) -> list[ipaddress._BaseAddress]:
             ips.append(ipaddress.ip_address(sockaddr[0]))
         except ValueError:
             continue
+    if not ips:
+        raise EgressBlocked(f"host {host!r} resolved to no usable address; refusing")
     return ips
 
 
