@@ -59,6 +59,8 @@ def render_transcript(trace_path: Path) -> str:
             part = f"[output]\n{text}"
         elif kind == "error":
             part = f"[error] {text}"
+        elif kind == "llm_attempt":
+            part = f"[llm attempt] {text}"
         elif kind == "skill_use":
             part = f"[skill_use] {e.get('skill')}: {e.get('outcome')} {e.get('note') or ''}".rstrip()
         elif kind == "answer":

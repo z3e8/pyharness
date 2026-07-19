@@ -9,6 +9,12 @@ WORKER_SYSTEM = (
     "and return only the result — no preamble, no meta-commentary."
 )
 
+# Wall-clock bound for one worker completion, retries included. Without it a
+# single llm()/map_llm call could legally block the kernel for the client's
+# full 3 × attempt-deadline worst case; with it a worker fails inside 10
+# minutes and the failure becomes data.
+WORKER_TOTAL_DEADLINE_S = 600.0
+
 
 class WorkerLimitExceeded(Exception):
     """Raised when a session has spent its total budget of LLM workers."""
@@ -93,6 +99,7 @@ class LLMCapability:
         system: str | None,
         context: str | None,
         max_tokens: int | None = None,
+        label: str | None = None,
     ) -> str:
         # Fail fast once the session budget is exhausted, so a fan-out can't keep
         # spending past the limit. In map_llm this surfaces as a per-task error
@@ -100,11 +107,40 @@ class LLMCapability:
         if self._budget is not None:
             self._budget.check()
         content = prompt if context is None else f"{prompt}\n\nContext:\n{context}"
+        eff_tier = tier or self.default_tier
+        label = label or f"llm({eff_tier})"
+
+        def on_attempt(info: dict) -> None:
+            # Worker streams show no tokens (concurrent fan-outs would
+            # interleave into garbage), so the attempt callback is the one
+            # window into a long or retrying call: a periodic streaming
+            # heartbeat, each failure with the clock that fired, and each
+            # retry as it actually launches ("start" only fires when one does).
+            outcome, attempt, attempts = info["outcome"], info["attempt"], info["attempts"]
+            if outcome == "streaming":
+                self._emit(
+                    f"{label} — streaming, ~{info['output_tokens']} tokens ({info['elapsed_s']:.0f}s)",
+                    phase="progress", tier=eff_tier, attempt=attempt,
+                )
+            elif outcome == "failed":
+                cause = info.get("clock_fired") or info.get("error")
+                self._emit(
+                    f"{label} — attempt {attempt}/{attempts} failed ({cause}, {info['elapsed_s']}s)",
+                    phase="progress", tier=eff_tier, attempt=attempt,
+                )
+            elif outcome == "start" and attempt > 1:
+                self._emit(
+                    f"{label} — retry {attempt}/{attempts}",
+                    phase="progress", tier=eff_tier, attempt=attempt,
+                )
+
         completion = self.llm.complete(
             system=system,
             messages=[{"role": "user", "content": content}],
-            tier=tier or self.default_tier,
+            tier=eff_tier,
             max_tokens=max_tokens,
+            on_attempt=on_attempt,
+            total_deadline_s=WORKER_TOTAL_DEADLINE_S,
         )
         return completion.text
 
@@ -155,7 +191,7 @@ class LLMCapability:
                     "prompts — they must pair one-to-one"
                 )
 
-        def work(prompt: str, ctx: str | None) -> Result:
+        def work(index: int, prompt: str, ctx: str | None) -> Result:
             try:
                 self._reserve()
             except WorkerLimitExceeded as exc:
@@ -165,7 +201,11 @@ class LLMCapability:
             # deterministic (bad request, budget) — it becomes data once.
             try:
                 return Result(
-                    True, self._complete(prompt, tier, system or WORKER_SYSTEM, ctx, max_tokens)
+                    True,
+                    self._complete(
+                        prompt, tier, system or WORKER_SYSTEM, ctx, max_tokens,
+                        label=f"map_llm[{index}]",
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - errors become data
                 return Result(False, None, repr(exc))
@@ -180,7 +220,7 @@ class LLMCapability:
         results: list[Result | None] = [None] * len(prompts)
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             futures = {
-                pool.submit(work, p, contexts[i] if contexts is not None else context): i
+                pool.submit(work, i, p, contexts[i] if contexts is not None else context): i
                 for i, p in enumerate(prompts)
             }
             done = 0

@@ -79,7 +79,7 @@ class MeteredLLM:
         ]
         self.calls = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, on_token=None, on_thinking=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         self.calls.append([dict(m) for m in messages])
         return self.completions.pop(0)
 

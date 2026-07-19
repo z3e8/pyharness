@@ -350,6 +350,29 @@ class Agent:
                 # between text and tool calls are visibly the model working.
                 self.on_event("llm_thinking", chunk)
 
+            def _on_attempt(info: dict) -> None:
+                # Per-attempt retry record, so a stalling-and-retrying call is
+                # distinguishable from a hang straight from the trace. The
+                # healthy path stays quiet: a first attempt starting or
+                # succeeding is implied by llm_start/llm_call, and streaming
+                # heartbeats are redundant next to live llm_token events.
+                outcome = info.get("outcome")
+                attempt, attempts = info.get("attempt"), info.get("attempts")
+                if outcome == "streaming" or (attempt == 1 and outcome in ("start", "ok")):
+                    return
+                if outcome == "failed":
+                    cause = info.get("clock_fired") or info.get("error")
+                    text = (
+                        f"attempt {attempt}/{attempts} failed: {cause} "
+                        f"after {info.get('elapsed_s')}s "
+                        f"({info.get('events')} events, ~{info.get('output_tokens')} tokens)"
+                    )
+                elif outcome == "start":
+                    text = f"attempt {attempt}/{attempts} starting"
+                else:
+                    text = f"attempt {attempt}/{attempts} succeeded after {info.get('elapsed_s')}s"
+                self.on_event("llm_attempt", text, **info)
+
             # Paired with the llm_call event below: start without a matching
             # llm_call = a completion in flight (or one that died).
             self.on_event("llm_start", "", tier=self.tier)
@@ -361,6 +384,7 @@ class Agent:
                     tools=[RUN_PYTHON_TOOL],
                     on_token=_on_token,
                     on_thinking=_on_thinking,
+                    on_attempt=_on_attempt,
                     # The elision frontier: everything at or before it is
                     # byte-stable across steps, so the prompt cache breakpoint
                     # belongs there once elision starts mutating mid-history.

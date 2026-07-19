@@ -16,7 +16,7 @@ class ScriptedLLM:
         self.systems = []
         self.anchors = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         self.calls.append(list(messages))
         self.tiers.append(tier)
         self.systems.append(system)
@@ -87,7 +87,7 @@ def test_agent_splits_system_into_static_and_dynamic_segments():
 class FailingLLM:
     """Raises on complete() to simulate a stream that dies mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         raise RuntimeError("stream interrupted")
 
 
@@ -113,7 +113,7 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
 class InterruptedLLM:
     """Raises KeyboardInterrupt on complete() to simulate a Ctrl-C mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         raise KeyboardInterrupt
 
 
@@ -352,3 +352,55 @@ def test_agent_passes_elision_frontier_as_cache_anchor():
     # Calls 1-2: elision hasn't started, full-history caching (None).
     # Calls 3-4: the frontier advances one tool message per step.
     assert llm.anchors == [None, None, 2, 4]
+
+
+class AttemptScriptedLLM(ScriptedLLM):
+    """Replays a scripted sequence of on_attempt firings before answering —
+    the shape of a call that stalled once and succeeded on retry."""
+
+    def __init__(self, completions, firings):
+        super().__init__(completions)
+        self.firings = firings
+
+    def complete(self, *, on_attempt=None, **kwargs):
+        for info in self.firings:
+            on_attempt(info)
+        return super().complete(**kwargs)
+
+
+def test_agent_records_llm_attempt_events_on_retries():
+    llm = AttemptScriptedLLM([_text_completion("done")], [
+        {"attempt": 1, "attempts": 3, "outcome": "start"},
+        {"attempt": 1, "attempts": 3, "outcome": "streaming",
+         "elapsed_s": 30.0, "events": 20, "output_tokens": 400},
+        {"attempt": 1, "attempts": 3, "outcome": "failed", "error": "StreamStalled",
+         "clock_fired": "silence", "elapsed_s": 61.0, "events": 40, "output_tokens": 700},
+        {"attempt": 2, "attempts": 3, "outcome": "start"},
+        {"attempt": 2, "attempts": 3, "outcome": "ok",
+         "elapsed_s": 25.0, "events": 12, "output_tokens": 300},
+    ])
+    events = []
+    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    assert agent.run("answer", []) == "done"
+
+    # The trace shows the retry chain — failure with its clock, the relaunch,
+    # the recovery — while streaming heartbeats stay out (llm_token already
+    # shows liveness for orchestrator calls).
+    attempts = [t for k, t in events if k == "llm_attempt"]
+    assert attempts == [
+        "attempt 1/3 failed: silence after 61.0s (40 events, ~700 tokens)",
+        "attempt 2/3 starting",
+        "attempt 2/3 succeeded after 25.0s",
+    ]
+
+
+def test_agent_healthy_call_records_no_attempt_events():
+    llm = AttemptScriptedLLM([_text_completion("done")], [
+        {"attempt": 1, "attempts": 3, "outcome": "start"},
+        {"attempt": 1, "attempts": 3, "outcome": "ok",
+         "elapsed_s": 5.0, "events": 12, "output_tokens": 300},
+    ])
+    events = []
+    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    assert agent.run("answer", []) == "done"
+    assert not [t for k, t in events if k == "llm_attempt"]

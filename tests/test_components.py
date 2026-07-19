@@ -355,7 +355,7 @@ def test_llm_worker_session_cap():
     from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
             from pyharness.llm.client import Completion
 
             return Completion(text="ok", tool_calls=[], content=[])
@@ -374,7 +374,7 @@ def test_llm_workers_emit_progress_events():
     from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
             from pyharness.llm.client import Completion
 
             return Completion(text="ok", tool_calls=[], content=[])
@@ -402,7 +402,7 @@ def test_llm_workers_emit_progress_events():
 
 def _recording_stub_llm(calls):
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
             from pyharness.llm.client import Completion
 
             calls.append((messages[0]["content"], max_tokens))
@@ -2382,3 +2382,60 @@ def test_cli_renders_notify_distinct_from_approval(capsys):
     out = capsys.readouterr().out
     assert "[agent note] blocked on 2FA — need you" in out
     assert "approval" not in out and "allow?" not in out
+
+
+def test_llm_worker_attempts_surface_as_worker_events():
+    from pyharness.broker.capabilities import LLMCapability
+    from pyharness.broker.capabilities.llm import WORKER_TOTAL_DEADLINE_S
+
+    seen = {}
+
+    class RetryingLLM:
+        """Scripts the client's on_attempt firings for one stalled-then-saved call."""
+
+        def complete(self, *, on_attempt=None, total_deadline_s=None, **kw):
+            from pyharness.llm.client import Completion
+
+            seen["total_deadline_s"] = total_deadline_s
+            on_attempt({"attempt": 1, "attempts": 3, "outcome": "start"})
+            on_attempt({"attempt": 1, "attempts": 3, "outcome": "streaming",
+                        "elapsed_s": 30.0, "events": 40, "output_tokens": 1200})
+            on_attempt({"attempt": 1, "attempts": 3, "outcome": "failed",
+                        "error": "StreamStalled", "clock_fired": "silence",
+                        "elapsed_s": 61.2, "events": 40, "output_tokens": 1200})
+            on_attempt({"attempt": 2, "attempts": 3, "outcome": "start"})
+            on_attempt({"attempt": 2, "attempts": 3, "outcome": "ok",
+                        "elapsed_s": 20.0, "events": 10, "output_tokens": 500})
+            return Completion(text="ok", tool_calls=[], content=[])
+
+    events = []
+    cap = LLMCapability(RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+    assert cap.run("q") == "ok"
+
+    # Workers are wall-clock bounded so one call can never block the kernel
+    # for the client's full worst case.
+    assert seen["total_deadline_s"] == WORKER_TOTAL_DEADLINE_S
+
+    texts = [t for k, t, _ in events if k == "worker"]
+    assert "llm(cheap) — streaming, ~1200 tokens (30s)" in texts
+    assert "llm(cheap) — attempt 1/3 failed (silence, 61.2s)" in texts
+    assert "llm(cheap) — retry 2/3" in texts
+    # First-attempt start stays quiet: run() already emits its own start marker.
+    assert texts[0] == "llm(cheap) — working…"
+
+
+def test_map_llm_attempt_events_carry_worker_index():
+    from pyharness.broker.capabilities import LLMCapability
+
+    class RetryingLLM:
+        def complete(self, *, on_attempt=None, **kw):
+            from pyharness.llm.client import Completion
+
+            on_attempt({"attempt": 2, "attempts": 3, "outcome": "start"})
+            return Completion(text="ok", tool_calls=[], content=[])
+
+    events = []
+    cap = LLMCapability(RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+    assert all(r.ok for r in cap.map_llm(["a", "b"]))
+    retries = sorted(t for k, t, _ in events if k == "worker" and "retry" in t)
+    assert retries == ["map_llm[0] — retry 2/3", "map_llm[1] — retry 2/3"]

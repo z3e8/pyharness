@@ -703,6 +703,10 @@ function handle(e) {
     // llm()/map_llm progress heartbeat — the broker's action spinner shows the
     // call is live, this shows fan-out progress within it.
     laneAdd(lane, el('div', 'row small', e.text || ''));
+  } else if (k === 'llm_attempt') {
+    // Orchestrator-call retry record: a stalling-and-retrying completion
+    // reads as attempts, not as a silent gap.
+    laneAdd(lane, el('div', 'row small', 'llm ' + (e.text || '')));
   } else if (k === 'note') {
     // preamble text duplicated by the llm_call event — skip
   }

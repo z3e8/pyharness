@@ -26,7 +26,7 @@ class ScriptedLLM:
         self._completions = list(completions)
         self.child_budget = None
 
-    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None, on_token=None, on_thinking=None, cache_anchor=None):
+    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         return self._completions.pop(0)
 
     def with_budget(self, budget):
@@ -211,7 +211,7 @@ class GatedLLM:
         self.child_budget = None
 
     def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None,
-                 on_token=None, on_thinking=None, cache_anchor=None):
+                 on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         if not self.gate.wait(5.0):
             raise AssertionError("gate never opened")
         return self._completions.pop(0)
@@ -230,7 +230,7 @@ class BarrierLLM:
         self.barrier = barrier
 
     def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None,
-                 on_token=None, on_thinking=None, cache_anchor=None):
+                 on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
         self.barrier.wait(timeout=5)
         return _text("done")
 
