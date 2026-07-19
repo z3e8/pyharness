@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import io
 import threading
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
 from ...security.env import reduce_environ
-from ...util import truncate
+from ...util import CaptureBuffer, truncate
 from .protocol import RemoteToolSpec, send_json
 from .sandbox import apply_resource_limits
 
@@ -65,7 +64,10 @@ def _run_cell(conn, namespace: dict, code: str) -> str:
     """Exec one cell against the persistent namespace, mirroring the in-process
     Kernel: only captured stdout/stderr (and tracebacks) return to the parent;
     every other value stays live in the namespace for later cells."""
-    out = io.StringIO()
+    # CaptureBuffer, not io.StringIO: a runaway `print` of gigabytes would fill
+    # an unbounded buffer entirely before `truncate` runs, OOMing the child from
+    # one line of agent code. CaptureBuffer bounds capture to CAPTURE_CEILING.
+    out = CaptureBuffer()
     try:
         with redirect_stdout(out), redirect_stderr(out):
             exec(compile(code, "<cell>", "exec"), namespace)

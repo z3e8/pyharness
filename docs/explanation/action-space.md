@@ -56,7 +56,10 @@ variable. There are two distinct size boundaries, and only one of them is a cap:
 - **The display boundary** (kernel → context). What the agent chooses to
   `print()` back to itself is capped (`util.MAX_OUTPUT`, ~10k chars, kept
   head-and-tail so an ending survives). This is the only truncation, and it
-  guards the context window, not the data.
+  guards the context window, not the data. A separate memory guard sits under
+  it: capture itself is bounded at `util.CAPTURE_CEILING` (~1M chars, well above
+  the display cap), so a runaway `print` of gigabytes can't OOM the process
+  before that display truncation runs.
 
 Keeping these separate is the point: the agent holds the whole thing and decides
 how much to surface. It searches, slices, and prints just the part it needs.

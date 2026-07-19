@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import io
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 
-from ..util import truncate
+from ..util import CaptureBuffer, truncate
 
 
 class Kernel:
@@ -24,7 +23,7 @@ class Kernel:
         self.namespace = dict(namespace)
 
     def run(self, code: str) -> str:
-        out = io.StringIO()
+        out = CaptureBuffer()  # bound memory: a runaway print can't OOM the host
         try:
             with redirect_stdout(out), redirect_stderr(out):
                 exec(compile(code, "<cell>", "exec"), self.namespace)

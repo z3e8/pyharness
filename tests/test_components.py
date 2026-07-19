@@ -36,6 +36,48 @@ def test_truncate_keeps_head_and_tail(tmp_path):
     assert "truncated" in out and len(out) < len(text)
 
 
+def test_capture_buffer_bounds_memory_but_keeps_ends():
+    from pyharness.util import CaptureBuffer
+
+    buf = CaptureBuffer(ceiling=1000)
+    buf.write("H" * 400)
+    for _ in range(100_000):  # a runaway "print": 10M chars total
+        buf.write("M" * 100)
+    buf.write("T" * 400)
+    out = buf.getvalue()
+    # Memory stayed bounded — never accumulated the full 10M chars.
+    assert len(out) < 3000
+    assert out.startswith("H") and out.rstrip().endswith("T")  # both ends survive
+    assert "output capped" in out
+
+
+def test_capture_buffer_single_huge_write_is_bounded():
+    from pyharness.util import CaptureBuffer
+
+    buf = CaptureBuffer(ceiling=1000)
+    buf.write("X" * 5_000_000)  # one enormous print in a single call
+    out = buf.getvalue()
+    assert len(out) < 3000 and "output capped" in out
+
+
+def test_capture_buffer_passthrough_under_ceiling():
+    from pyharness.util import CaptureBuffer
+
+    buf = CaptureBuffer(ceiling=1000)
+    buf.write("hello ")
+    buf.write("world")
+    assert buf.getvalue() == "hello world"  # nothing dropped, no marker
+
+
+def test_kernel_runaway_print_does_not_grow_unbounded():
+    kernel = Kernel({})
+    out = kernel.run("print('x' * 50_000_000)")  # 50M chars
+    # truncate reduces to the display cap; the point is it never OOMs.
+    from pyharness.util import MAX_OUTPUT
+
+    assert len(out) <= MAX_OUTPUT + 200
+
+
 def test_workspace_confines_relative_paths(tmp_path):
     ws = Workspace(tmp_path)
     files = FilesCapability(ws)
