@@ -369,12 +369,31 @@ boundary itself:
   (skipped on macOS, where the limit is per-user and would break ordinary
   `subprocess`/`fork`).
 
-All are best-effort and degrade silently where a platform can't honor them. On
-non-macOS, only the resource limits apply (seccomp/namespace confinement isn't
-built yet). The child needs no network and no writes outside its workspace:
-every side effect that leaves the box goes back through the broker in the parent,
-while scratch files stay in the workspace where both the agent and the human can
-see them.
+The child needs no network and no writes outside its workspace: every side
+effect that leaves the box goes back through the broker in the parent, while
+scratch files stay in the workspace where both the agent and the human can see
+them.
+
+### What the sandbox does not cover — non-macOS platforms
+
+Be clear-eyed about the boundary: **OS-level confinement is built for macOS
+only.** Linux confinement (bubblewrap / namespaces + seccomp, or a container)
+is a known future build-out, not a degraded mode that quietly exists today. Off
+macOS there is *no* network denial, *no* write jail, and *no* `$HOME` read jail
+— agent code would run with your user's full filesystem and network reach, kept
+honest only by the process boundary, the minimal environment, and (on POSIX)
+the rlimits above. Windows has no rlimits either.
+
+That absence is loud, not silent. On a platform with no OS sandbox, pyharness
+**refuses to start a kernel by default**
+(`broker/remote/sandbox.py:check_unsandboxed_platform`, raised when the session
+constructs its out-of-process kernel — before any agent code or LLM spend).
+Running anyway requires the explicit `PYHARNESS_ALLOW_UNSANDBOXED=true` opt-in,
+which prints a one-time stderr warning that agent code is unconfined. On macOS
+the gate is a no-op and the variable is ignored — the sandbox is always on.
+`shell.bash` composes with this: its no-sandbox fallback (env scrubbing only,
+still approval-gated per command) is only reachable behind the same opt-in,
+because without it the session never starts.
 
 > Workspace-internal writes are deliberately *not* individually audited — the
 > audit chain records effects that cross the perimeter, not every `savefig`. The

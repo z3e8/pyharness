@@ -14,8 +14,7 @@ from pathlib import Path
 # level. Every legitimate outward side effect goes through the broker in the
 # (unsandboxed) parent over IPC instead.
 #
-# Two complementary layers, both best-effort and degrading silently where a
-# platform can't honor them:
+# Two complementary layers:
 #   1. A macOS Seatbelt profile (`sandbox-exec`) enforcing three things: no
 #      outbound network, no filesystem write outside the workspace, and a read
 #      jail that hides the user's $HOME (re-allowing only what the interpreter
@@ -23,14 +22,67 @@ from pathlib import Path
 #   2. POSIX resource limits applied inside the child to bound blast radius
 #      (no core dumps; on Linux, a cap on processes blunts fork bombs).
 #
-# Linux/container confinement (seccomp, namespaces) is not built here; on
-# non-macOS only the resource limits apply. See docs/explanation/security-and-audit.md.
+# Linux/container confinement (seccomp, namespaces) is not built here, so off
+# macOS there is no OS-level confinement at all (and Windows loses the rlimits
+# too). That absence is loud, not silent: `check_unsandboxed_platform` refuses
+# to start a kernel on such a platform unless PYHARNESS_ALLOW_UNSANDBOXED opts
+# in explicitly, and warns on stderr when it does. See
+# docs/explanation/security-and-audit.md.
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+
+ALLOW_UNSANDBOXED_ENV = "PYHARNESS_ALLOW_UNSANDBOXED"
 
 
 def macos_sandbox_supported() -> bool:
     return sys.platform == "darwin" and os.path.exists(_SANDBOX_EXEC)
+
+
+def os_sandbox_supported() -> bool:
+    """Whether this platform can confine agent code at the OS level — the single
+    source of truth the launch gate consults. Today only macOS Seatbelt is
+    built; a Linux path (bubblewrap/namespaces+seccomp) would extend this."""
+    return macos_sandbox_supported()
+
+
+class UnsandboxedPlatformError(RuntimeError):
+    """No OS sandbox exists on this platform and the explicit opt-in
+    (PYHARNESS_ALLOW_UNSANDBOXED) is not set."""
+
+
+_UNSANDBOXED_WARNED = False
+
+
+def check_unsandboxed_platform() -> None:
+    """The loud opt-in gate for platforms with no OS sandbox (today: everything
+    but macOS). There, agent-authored code would run with the parent user's full
+    filesystem and network reach — only the process boundary, the minimal
+    environment, and (POSIX) rlimits remain — so by default pyharness refuses to
+    start a kernel rather than run LLM-authored code unconfined. Setting
+    PYHARNESS_ALLOW_UNSANDBOXED=true proceeds anyway, with a one-time stderr
+    warning. Where a sandbox is available this is a no-op."""
+    global _UNSANDBOXED_WARNED
+    if os_sandbox_supported():
+        return
+    if os.environ.get(ALLOW_UNSANDBOXED_ENV, "").strip().lower() not in ("1", "true", "yes", "on"):
+        windows = " (and on Windows, no resource limits either)" if sys.platform == "win32" else ""
+        raise UnsandboxedPlatformError(
+            "no OS sandbox is available on this platform — OS-level confinement "
+            "is only built for macOS (Seatbelt), so agent-authored code would run "
+            f"with your full user privileges: unrestricted filesystem and network "
+            f"access{windows}. Refusing to start. Set {ALLOW_UNSANDBOXED_ENV}=true "
+            "to run anyway (a loud warning is printed), or run on macOS for OS "
+            "confinement. See docs/explanation/security-and-audit.md."
+        )
+    if not _UNSANDBOXED_WARNED:
+        _UNSANDBOXED_WARNED = True
+        print(
+            f"WARNING: {ALLOW_UNSANDBOXED_ENV} is set and this platform has no OS "
+            "sandbox — agent code runs UNCONFINED (full filesystem and network "
+            "access as your user). Only the minimal environment and POSIX rlimits "
+            "still apply.",
+            file=sys.stderr,
+        )
 
 
 def _sbpl_quote(path: str) -> str:

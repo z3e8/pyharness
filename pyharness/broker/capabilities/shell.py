@@ -42,8 +42,11 @@ class ShellCapability:
         # jail). The profile is written to the session root — outside the
         # workspace, so a sandboxed command cannot loosen its own jail. Where
         # the platform has no OS sandbox, argv is None and the command runs as
-        # before (`shell=True`), env scrubbing the only containment; a future
-        # Linux path plugs into sandboxed_shell_argv (see remote/sandbox.py).
+        # before (`shell=True`), env scrubbing the only containment — a state
+        # only reachable behind the explicit PYHARNESS_ALLOW_UNSANDBOXED opt-in,
+        # since the session's kernel refuses to start on such a platform without
+        # it (see remote/sandbox.py:check_unsandboxed_platform); a future Linux
+        # path plugs into sandboxed_shell_argv.
         argv = sandboxed_shell_argv(cmd, self.ws.root, self.ws.dir)
         try:
             proc = subprocess.run(

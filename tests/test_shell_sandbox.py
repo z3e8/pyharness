@@ -83,8 +83,10 @@ def test_bash_read_jail_denies_home_files(tmp_path):
 
 def test_bash_falls_back_to_plain_run_without_os_sandbox(tmp_path, monkeypatch):
     # Where the platform has no OS sandbox, sandboxed_shell_argv returns None
-    # and bash runs as before — env scrubbing the only containment (the loud
-    # non-macOS gate is tracked separately).
+    # and bash runs as before — env scrubbing the only containment. This state
+    # is only reachable behind the PYHARNESS_ALLOW_UNSANDBOXED opt-in: the
+    # session's kernel refuses to start unsandboxed without it (see
+    # test_unsandboxed_gate.py), so bash itself needs no second gate.
     monkeypatch.setattr(sandbox, "macos_sandbox_supported", lambda: False)
     out = ShellCapability(Workspace(tmp_path)).bash("echo hi")
     assert out.strip() == "hi"

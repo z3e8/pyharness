@@ -13,7 +13,7 @@ from ...core.session_venv import SessionVenv
 from ...tools.registry import _public_functions
 from .child import child_main
 from .protocol import RemoteError, RemoteToolSpec, recv_json
-from .sandbox import make_child_executable
+from .sandbox import check_unsandboxed_platform, make_child_executable
 
 # Serializes the set_executable -> Process.start critical section across every
 # RemoteKernel in the process (see _start_locked).
@@ -44,6 +44,12 @@ class RemoteKernel:
     ):
         self.broker = broker
         self.sandbox = sandbox
+        if sandbox:
+            # Fail at construction (i.e. at session start, before any spend),
+            # not at first run: on a platform with no OS sandbox, agent code
+            # would execute unconfined, so refuse unless the user set the
+            # explicit PYHARNESS_ALLOW_UNSANDBOXED opt-in (see sandbox.py).
+            check_unsandboxed_platform()
         self._venv = venv
         self._workspace = workspace
         self._ctx = mp.get_context("spawn")

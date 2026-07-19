@@ -82,6 +82,18 @@ makes. See [the egress guard](../explanation/security-and-audit.md#egress-guard-
 |----------|---------|--------|
 | `PYHARNESS_BLOCK_PRIVATE_NETWORK` | unset (off) | Also block loopback and private (RFC1918/ULA) ranges — a stricter posture that stops the agent reaching localhost/LAN services. Off by default so local dev works. Set `true`/`1`/`yes`/`on`. |
 
+## OS sandbox (non-macOS)
+
+OS-level confinement of agent code — no outbound network, writes jailed to the
+workspace, the `$HOME` read jail — is built for **macOS only** (Seatbelt). On
+any other platform pyharness **refuses to start** by default rather than run
+LLM-authored code with your full user privileges. See
+[the sandbox](../explanation/security-and-audit.md#the-out-of-process-sandbox).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYHARNESS_ALLOW_UNSANDBOXED` | unset (refuse) | Opt in to running agent code with **no OS sandbox** on a platform that has none (Linux, Windows). A loud one-time warning is printed on stderr; only the process boundary, the minimal subprocess environment (below), and POSIX rlimits (not on Windows) still apply. Set `true`/`1`/`yes`/`on`. Ignored on macOS, where the sandbox is always on. |
+
 ## Subprocess environment
 
 Subprocesses reachable by agent code — the out-of-process child kernel,
