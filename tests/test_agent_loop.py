@@ -58,6 +58,33 @@ def test_agent_runs_code_then_answers(tmp_path):
     assert ("output", "written") in events
 
 
+def test_empty_code_cell_surfaces_a_hint_not_a_silent_noop(tmp_path):
+    events = []
+    llm = ScriptedLLM([
+        _tool_completion(""),  # run_python with empty code
+        _text_completion("ok"),
+    ])
+    agent = Agent(llm, Kernel({}), Budget(),
+                  on_event=lambda k, t, **kw: events.append((k, t)))
+
+    assert agent.run("do nothing", []) == "ok"
+    output = dict((k, t) for k, t in events if k == "output")["output"]
+    assert "empty" in output.lower() and "no code" in output.lower()
+
+
+def test_missing_code_key_surfaces_a_hint(tmp_path):
+    call = ToolCall(id="t1", name="run_python", input={})  # no "code" key at all
+    completion = Completion(text="", tool_calls=[call], content=[{"k": "v"}], stop_reason="tool_use")
+    events = []
+    llm = ScriptedLLM([completion, _text_completion("ok")])
+    agent = Agent(llm, Kernel({}), Budget(),
+                  on_event=lambda k, t, **kw: events.append((k, t)))
+
+    assert agent.run("do nothing", []) == "ok"
+    output = dict((k, t) for k, t in events if k == "output")["output"]
+    assert "no code" in output.lower()
+
+
 def test_agent_defaults_to_mid_tier():
     llm = ScriptedLLM([_text_completion("done")])
     agent = Agent(llm, Kernel({}), Budget())

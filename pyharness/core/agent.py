@@ -317,6 +317,16 @@ class Agent:
         # not just the failed turn. Roll back to here on any failure, including a
         # Ctrl-C (KeyboardInterrupt is a BaseException, not an Exception): an
         # interrupted turn must not wedge the session it drops back to.
+        #
+        # Known, accepted divergence: this rolls back *history* only. Cells that
+        # already ran this turn leave their side effects on disk and their
+        # variables live in the kernel namespace — that state is not unwound. So
+        # after an aborted turn the next turn sees a kernel that did work the
+        # message history now says never happened. This is deliberate: the kernel
+        # is a persistent REPL (its whole value is that state survives), and
+        # silently resetting it on abort would be more surprising and more
+        # dangerous than the divergence. History rollback is only about keeping
+        # the API's user/assistant alternation valid so the session isn't wedged.
         rollback_to = len(messages) - 1
         try:
             return self._run_loop(messages)
@@ -461,10 +471,21 @@ class Agent:
             meter = self._context_meter(usage, step)
             results = []
             for call in completion.tool_calls:
-                code = call.input.get("code", "")
+                code = call.input.get("code") or ""
                 self.on_event("code", code)
-                with telemetry.code_cell_span(code):
-                    output = self.kernel.run(code)
+                if not code.strip():
+                    # A run_python call with empty/missing code would exec an
+                    # empty cell and silently return "(no output)", reading as a
+                    # successful no-op. Surface a hint instead so the model
+                    # corrects course rather than looping on blank cells.
+                    output = (
+                        "(no code: run_python was called with an empty `code` "
+                        "argument — send the Python you want to run, or reply "
+                        "with text if the task is done)"
+                    )
+                else:
+                    with telemetry.code_cell_span(code):
+                        output = self.kernel.run(code)
                 self.on_event("output", output)
                 metered = f"{output}\n{meter}" if meter else output
                 # A cell may have staged images (browser.look). With none, the
