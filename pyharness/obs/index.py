@@ -32,7 +32,7 @@ from .transcript import iter_jsonl, session_digest
 
 DEFAULT_DB = "~/.pyharness/index.db"
 
-_SCHEMA_VERSION = "3"
+_SCHEMA_VERSION = "4"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     actions INTEGER,            -- audited capability calls (outcome records)
     denials INTEGER,            -- calls denied or unapproved
     aborted_actions INTEGER,    -- audit starts with no outcome record (hard kill)
+    events INTEGER,             -- capability event records (e.g. profile_saved), not calls
     fingerprint TEXT            -- size/mtime of source files, for incremental skip
 );
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -115,7 +116,7 @@ SCHEMA_HELP = """\
 Tables (one row per...):
   sessions(id, name, project, started, ended, task, tasks, outcome, answer,
            steps, errors, failed_actions, llm_calls, cost_usd,
-           actions, denials, aborted_actions)                     -- one session
+           actions, denials, aborted_actions, events)             -- one session
       outcome: answered | stopped:max_steps | stopped:budget | error | aborted | empty
   llm_calls(session_id, ts, model, tier, cost_usd, latency_s,
             input_tokens, output_tokens)                          -- one LLM call
@@ -321,13 +322,14 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
     # digest (`run --json` / `show`) — one scan there, one set of semantics.
     d = session_digest(session_dir)
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (sid, session_dir.name, _project_of(session_dir), d["started"], d["ended"],
          None if d["task"] is None else _clip(d["task"]),
          d["tasks"], d["outcome"],
          None if d["answer"] is None else _clip(d["answer"]),
          d["steps"], d["errors"], d["failed_actions"], d["llm_calls"],
-         d["cost_usd"], d["actions"], d["denials"], d["aborted_actions"], fingerprint),
+         d["cost_usd"], d["actions"], d["denials"], d["aborted_actions"],
+         d["events"], fingerprint),
     )
     return True
 

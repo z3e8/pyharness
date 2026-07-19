@@ -154,6 +154,27 @@ def test_session_digest_counts_two_phase_audit_records(tmp_path):
     digest = session_digest(d)
     assert digest["actions"] == 1  # paired outcomes, not rows — no double count
     assert digest["aborted_actions"] == 1  # the llm.llm start never ended
+    assert digest["events"] == 0  # no event-only records here
+
+
+def test_session_digest_counts_event_records_separately(tmp_path):
+    # A capability may write an event-only audit record (an `event` field, no
+    # phase) — today the browser's close-time `profile_saved`. It is surfaced
+    # under `events`, never miscounted as an `actions` capability call.
+    d = tmp_path / "s"
+    _write_jsonl(d / "trace.jsonl", [{"ts": 1.0, "kind": "task", "text": "t"}])
+    _write_jsonl(
+        d / "audit.jsonl",
+        [
+            {"ts": 1.0, "action": "browser.goto", "phase": "start", "args": "'u'"},
+            {"ts": 2.0, "action": "browser.goto", "phase": "end", "ok": True},
+            {"ts": 3.0, "event": "profile_saved", "profile": "acme", "trigger": "close"},
+        ],
+    )
+    digest = session_digest(d)
+    assert digest["actions"] == 1  # the goto outcome, not the event
+    assert digest["events"] == 1  # profile_saved surfaced, not silently dropped
+    assert digest["aborted_actions"] == 0
 
 
 def test_session_digest_error_outcome(tmp_path):

@@ -144,8 +144,14 @@ def session_digest(session_dir: str | Path) -> dict:
     # — see Broker.call), so `actions` counts outcomes and an unpaired start is
     # an action killed too hard for even the teardown record: `aborted_actions`.
     # A pre-two-phase log has no `phase` fields; fall back to counting rows.
-    actions = denials = starts = ends = 0
+    # A capability may also write an event-only record directly (an `event` field,
+    # no phase) — today the browser's close-time `profile_saved`. Those aren't
+    # capability calls, so they're counted under `events`, never as `actions`.
+    actions = denials = starts = ends = events = 0
     for e in iter_jsonl(audit_path):
+        if e.get("event") is not None:
+            events += 1
+            continue
         actions += 1
         phase = e.get("phase")
         starts += phase == "start"
@@ -173,6 +179,7 @@ def session_digest(session_dir: str | Path) -> dict:
         "actions": actions,
         "denials": denials,
         "aborted_actions": aborted_actions,
+        "events": events,
         "started": started,
         "ended": ended,
         "trace": str(trace_path),
