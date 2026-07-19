@@ -41,6 +41,7 @@ from pyharness.llm.client import (
     _attempt_deadline_s,
     _cache_marked_messages,
     _cache_marked_system,
+    _ipv4_first_client,
 )
 
 
@@ -287,6 +288,50 @@ def test_unknown_tier_fails_closed(monkeypatch):
     llm = _llm(monkeypatch, [])
     with pytest.raises(ValueError, match="unknown tier"):
         llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8")
+
+
+# ---- IPv4 transport pin with v6-only fallback --------------------------------
+
+
+def _ipv4_transport():
+    timeout = httpx.Timeout(connect=10.0, read=60.0, write=20.0, pool=10.0)
+    return _ipv4_first_client(httpx, timeout)._transport
+
+
+def test_ipv4_pin_uses_the_pinned_transport_when_v4_connects(monkeypatch):
+    transport = _ipv4_transport()
+    sentinel = object()
+    monkeypatch.setattr(transport._pinned, "handle_request", lambda req: sentinel)
+    monkeypatch.setattr(
+        transport._unpinned, "handle_request",
+        lambda req: pytest.fail("unpinned transport used while v4 was healthy"),
+    )
+    req = httpx.Request("POST", "https://api.anthropic.test/v1/messages")
+    assert transport.handle_request(req) is sentinel
+    assert transport._v4_dead is False
+
+
+def test_ipv4_pin_falls_back_to_unpinned_on_connect_error(monkeypatch):
+    transport = _ipv4_transport()
+    sentinel = object()
+
+    def v4_connect_error(req):
+        raise httpx.ConnectError("no route to host (v6-only network)")
+
+    monkeypatch.setattr(transport._pinned, "handle_request", v4_connect_error)
+    monkeypatch.setattr(transport._unpinned, "handle_request", lambda req: sentinel)
+    req = httpx.Request("POST", "https://api.anthropic.test/v1/messages")
+
+    # First request: v4 fails, falls back to unpinned and retires the pin.
+    assert transport.handle_request(req) is sentinel
+    assert transport._v4_dead is True
+
+    # Subsequent requests skip the dead pin entirely (no further v4 attempt).
+    monkeypatch.setattr(
+        transport._pinned, "handle_request",
+        lambda req: pytest.fail("retired v4 pin was retried"),
+    )
+    assert transport.handle_request(req) is sentinel
 
 
 # ---- request shaping: cache markers, thinking config -------------------------

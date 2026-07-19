@@ -238,6 +238,37 @@ def _attempt_deadline_s(max_tokens: int) -> float:
     )
 
 
+def _ipv4_first_client(httpx, timeout):
+    """An httpx.Client pinned to IPv4 that retires the pin if IPv4 can't
+    connect at all. `api.anthropic.com` is dual-stack and this SDK's httpx has
+    no happy-eyeballs, so it commits to whichever family DNS lists first — and
+    the 2026-07-18 D8 probe showed the IPv6 path silently dropping live streams
+    (4/4 v6 dead mid-stream, 2/2 v4 clean, same network and minute). Pinning
+    avoids that. The one cost of an unconditional pin is a v6-only network,
+    where a v4 source address reaches nothing: on the first `ConnectError` the
+    transport retires the pin and retries unpinned, so a v6-only host keeps
+    working without the operator having to set PYHARNESS_LLM_IPV6."""
+    class _IPv4FirstTransport(httpx.BaseTransport):
+        def __init__(self):
+            self._pinned = httpx.HTTPTransport(local_address="0.0.0.0")
+            self._unpinned = httpx.HTTPTransport()
+            self._v4_dead = False
+
+        def handle_request(self, request):
+            if not self._v4_dead:
+                try:
+                    return self._pinned.handle_request(request)
+                except httpx.ConnectError:
+                    self._v4_dead = True  # v6-only network: stop paying the probe
+            return self._unpinned.handle_request(request)
+
+        def close(self):
+            self._pinned.close()
+            self._unpinned.close()
+
+    return httpx.Client(transport=_IPv4FirstTransport(), timeout=timeout)
+
+
 class StreamStalled(Exception):
     """A stream the supervisor killed, naming which clock fired ("silence",
     "stall", "deadline", "truncated", or "total_deadline") plus what the
@@ -280,15 +311,14 @@ class AnthropicLLM:
         # this SDK's httpx has no happy-eyeballs, so it commits to whichever
         # family DNS lists first — and the 2026-07-18 D8 probe showed the IPv6
         # path silently dropping live streams (4/4 v6 attempts dead mid-stream,
-        # 2/2 v4 clean, same network and minute). PYHARNESS_LLM_IPV6=true opts
-        # back into default family selection (e.g. on a v6-only network).
+        # 2/2 v4 clean, same network and minute). The pin retires itself on a
+        # v6-only network (first connect failure falls back to unpinned), so
+        # PYHARNESS_LLM_IPV6=true is only needed to force default family
+        # selection, not to keep a v6-only host working.
         timeout = httpx.Timeout(connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0)
         client_kwargs: dict = {"timeout": timeout, "max_retries": 2}
         if os.environ.get("PYHARNESS_LLM_IPV6", "").lower() not in ("1", "true", "yes"):
-            client_kwargs["http_client"] = httpx.Client(
-                transport=httpx.HTTPTransport(local_address="0.0.0.0"),
-                timeout=timeout,
-            )
+            client_kwargs["http_client"] = _ipv4_first_client(httpx, timeout)
         self._client = anthropic.Anthropic(**client_kwargs)
         self._anthropic = anthropic
         self._httpx = httpx

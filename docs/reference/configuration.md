@@ -68,7 +68,7 @@ environment, **not** committed to `.env` if sensitive.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `PYHARNESS_LLM_IPV6` | unset (IPv4-only) | The Anthropic client binds to IPv4: `api.anthropic.com` is dual-stack, the HTTP client has no happy-eyeballs (it commits to whichever address family DNS lists first), and a flaky IPv6 path silently kills live streams mid-generation. Set `true`/`1`/`yes` to opt back into default family selection — needed on an IPv6-only network. |
+| `PYHARNESS_LLM_IPV6` | unset (IPv4-only) | The Anthropic client binds to IPv4: `api.anthropic.com` is dual-stack, the HTTP client has no happy-eyeballs (it commits to whichever address family DNS lists first), and a flaky IPv6 path silently kills live streams mid-generation. The pin retires itself on a v6-only network (it falls back to the unpinned transport on the first connect failure), so set `true`/`1`/`yes` only to force default family selection. |
 
 ## Network egress
 
