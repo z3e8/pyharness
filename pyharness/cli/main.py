@@ -167,12 +167,12 @@ def _headless_approver(approve_all: bool):
 
 def _build_session(root: Path, *, budget_usd: float, approver, on_event=None, **overrides) -> Session:
     """One Session construction shared by `repl` and `run`. `overrides` (llm,
-    out_of_process, skills_dir, …) are a test seam; the CLI never passes them."""
+    unsafe_in_process, skills_dir, …) are a test seam; the CLI never passes them.
+    The kernel default is already the sandboxed out-of-process child."""
     kwargs: dict = dict(
         budget=Budget(limit_usd=budget_usd),
         approver=approver,
         on_event=on_event,
-        out_of_process=True,
         # Passed even when the file doesn't exist yet: the session mounts it only
         # if present, but keeps the path so add_mcp_server(save=True) can create it.
         mcp_config=Path(os.environ.get("PYHARNESS_MCP_CONFIG", ".mcp.json")),

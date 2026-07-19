@@ -11,7 +11,7 @@ def test_bash_hides_provider_key(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-leak")
     # shell.bash is approval-gated by default; this test is about the env, so
     # approve the call.
-    session = Session(tmp_path, approver=lambda request: True)
+    session = Session(tmp_path, approver=lambda request: True, unsafe_in_process=True)
     try:
         bash = session.broker.namespace()["bash"]
         out = bash("printenv ANTHROPIC_API_KEY || echo MISSING")
@@ -29,7 +29,7 @@ def test_child_env_is_minimal_allowlist(tmp_path, monkeypatch):
     monkeypatch.setenv("CUSTOM_DB_URL", "postgres://secret")  # not on any denylist
     monkeypatch.setenv("OPTED_IN", "ok")
     monkeypatch.setenv("PYHARNESS_ENV_PASSTHROUGH", "OPTED_IN")
-    session = Session(tmp_path, out_of_process=True)
+    session = Session(tmp_path)  # the default kernel is the out-of-process child
     try:
         out = session.kernel.run(
             "import os\n"

@@ -98,7 +98,7 @@ def test_session_preamble_and_builtins(tmp_path):
     update_index(db, [root])
 
     s = Session(root / "cli-new", llm=RecordingLLM(), index_db=db,
-                skills_dir=tmp_path / "skills")
+                skills_dir=tmp_path / "skills", unsafe_in_process=True)
     try:
         ns = s.broker.namespace()
         assert "stats" in ns and "inspect_session" in ns
@@ -110,7 +110,8 @@ def test_session_preamble_and_builtins(tmp_path):
     finally:
         s.close()
 
-    bare = Session(tmp_path / "bare", llm=RecordingLLM(), skills_dir=tmp_path / "skills")
+    bare = Session(tmp_path / "bare", llm=RecordingLLM(), skills_dir=tmp_path / "skills",
+                   unsafe_in_process=True)
     try:
         assert bare.agent.preamble_extra == ""
         with pytest.raises(RuntimeError):
@@ -123,7 +124,7 @@ def test_close_folds_session_into_index(tmp_path):
     db = tmp_path / "index.db"
     root = tmp_path / ".sessions"
     s = Session(root / "cli-a", llm=RecordingLLM(), index_db=db,
-                skills_dir=tmp_path / "skills")
+                skills_dir=tmp_path / "skills", unsafe_in_process=True)
     s.close()
     from pyharness.obs.index import query
 

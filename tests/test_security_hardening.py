@@ -10,9 +10,10 @@ from urllib.parse import quote
 
 import pytest
 
-from pyharness import Budget, Decision, Policy, Registry, Vault, Workspace
+from pyharness import Budget, Decision, Kernel, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
+from pyharness.broker.remote import RemoteKernel
 from pyharness.broker.capabilities import (
     FilesCapability,
     HttpSessionCapability,
@@ -199,7 +200,7 @@ def test_secret_carrying_request_never_follows_redirects(tmp_path, monkeypatch):
 
 def test_screenshot_gated_after_injected_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
-    session = Session(tmp_path)
+    session = Session(tmp_path, unsafe_in_process=True)
     try:
         class _StubBrowser:
             injected = True
@@ -227,12 +228,36 @@ def test_shell_bash_requires_approval_by_default(tmp_path, monkeypatch):
     # on a human. With no approver wired, an unapproved call is refused and
     # nothing executes.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
-    session = Session(tmp_path)
+    session = Session(tmp_path, unsafe_in_process=True)
     try:
         assert session.policy.decide("shell.bash", ("ls",), {}) is Decision.APPROVE
         with pytest.raises(PermissionDenied):
             session.broker.namespace()["bash"]("echo pwned > marker.txt")
         assert not (session.workspace.dir / "marker.txt").exists()
+    finally:
+        session.close()
+
+
+# --- the default kernel is the sandboxed child (readiness H3) ----------------
+
+def test_default_session_kernel_is_out_of_process(tmp_path, monkeypatch):
+    # A bare Session() must never exec() agent code in the host process — that
+    # namespace can reach os.environ (API keys, vault passphrase) and the live
+    # vault/broker by introspection. The child process is lazy, so nothing is
+    # spawned until the first cell runs.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    session = Session(tmp_path)
+    try:
+        assert isinstance(session.kernel, RemoteKernel)
+    finally:
+        session.close()
+
+
+def test_in_process_kernel_requires_explicit_unsafe_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    session = Session(tmp_path, unsafe_in_process=True)
+    try:
+        assert isinstance(session.kernel, Kernel)
     finally:
         session.close()
 

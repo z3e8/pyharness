@@ -261,7 +261,7 @@ def test_add_mcp_server_save_requires_a_config_path(tmp_path):
 
 def test_session_wires_mcp_gating_in_process(tmp_path):
     config = {"mcpServers": {"demo": {"command": sys.executable, "args": [str(FAKE)]}}}
-    session = Session(tmp_path, mcp_config=config)  # in-process, no approver
+    session = Session(tmp_path, mcp_config=config, unsafe_in_process=True)  # no approver
     try:
         use_tool = session.broker.namespace()["use_tool"]
         demo = use_tool("demo")

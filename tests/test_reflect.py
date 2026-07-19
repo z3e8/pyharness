@@ -103,7 +103,7 @@ def test_lessons_dedupe_count_and_establish(tmp_path):
 def _session(tmp_path, replies, approver=None):
     llm = ScriptedLLM(replies)
     s = Session(tmp_path / "sess", llm=llm, skills_dir=tmp_path / "skills",
-                approver=approver)
+                approver=approver, unsafe_in_process=True)
     return s, llm
 
 

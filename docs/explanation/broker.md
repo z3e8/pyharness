@@ -77,12 +77,13 @@ across every I/O site — means:
 
 ## In-process vs out-of-process
 
-- **In-process** (default for the library): the broker's proxies run directly in
-  the host namespace. Simple; the agent's code shares the host process. Gating
-  here buys consistency (the same prompts and audit trail as the child), not a
-  hard boundary — in-process agent code could import pyharness and reach the raw
-  registry; real enforcement is the out-of-process mode.
-- **Out-of-process** (`out_of_process=True`, used by the CLI): agent code runs in
+- **In-process** (`unsafe_in_process=True` — an explicit, test-only opt-in): the
+  broker's proxies run directly in the host namespace. Fast, which is why the
+  test suite uses it. Gating here buys consistency (the same prompts and audit
+  trail as the child), not a hard boundary — in-process agent code could import
+  pyharness and reach the raw registry, the host's `os.environ`, and the live
+  vault; real enforcement is the out-of-process mode.
+- **Out-of-process** (the default, for the CLI and library alike): agent code runs in
   a restricted **child process** (`pyharness/broker/remote/`). The child holds
   the persistent namespace and proxy stubs; the parent keeps the broker, vault,
   and LLM client. During a cell the parent blocks, servicing the child's

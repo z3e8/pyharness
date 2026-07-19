@@ -127,7 +127,10 @@ class Session:
         registry: Registry | None = None,
         approver: Approver | None = None,
         on_event: Callable[[str, str], None] | None = None,
-        out_of_process: bool = False,
+        # Test-only escape hatch: True exec()s agent code in THIS process, with
+        # the host's os.environ and live vault/broker objects reachable by
+        # introspection. The default runs it in a sandboxed child (broker/remote).
+        unsafe_in_process: bool = False,
         mcp_config: str | Path | dict | None = None,
         skills_dir: str | Path | None = None,
         index_db: str | Path | None = None,
@@ -155,7 +158,7 @@ class Session:
         else:
             granted = frozenset(capabilities)
             self._caps = granted | CHILD_BODY | ({"tools"} if granted & _EXTERNAL else frozenset())
-        self._out_of_process = out_of_process
+        self._unsafe_in_process = unsafe_in_process
         self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
         self.llm = llm or AnthropicLLM(budget=self.budget)
@@ -379,17 +382,18 @@ class Session:
                 keywords=keywords, category=category,
             )
 
-        # In-process: the broker's proxies run directly in the host namespace.
-        # Out-of-process: agent code runs in a restricted child and every call
-        # crosses IPC back to the same broker (see broker/remote).
+        # Default (out-of-process): agent code runs in a restricted child and
+        # every call crosses IPC back to the same broker (see broker/remote).
+        # unsafe_in_process (test-only): the broker's proxies run directly in
+        # the host namespace — no process boundary at all.
         self.kernel = (
-            RemoteKernel(
+            Kernel(self.broker.namespace())
+            if unsafe_in_process
+            else RemoteKernel(
                 self.broker,
                 venv=self.session_venv,
                 workspace=self.workspace,
             )
-            if out_of_process
-            else Kernel(self.broker.namespace())
         )
 
         self.agent = Agent(
@@ -540,7 +544,7 @@ class Session:
             profiles=self.profiles,
             approver=approver,
             on_event=child_display,
-            out_of_process=self._out_of_process,
+            unsafe_in_process=self._unsafe_in_process,
             skills_dir=self.skills_dir,
             index_db=self.index_db,
             max_steps=max_steps,

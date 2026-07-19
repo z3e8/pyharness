@@ -106,7 +106,7 @@ def test_headless_approver_denies_by_default_and_never_grants():
 def _run_kwargs(tmp_path):
     """Hermetic Session overrides: no real index DB, skills dir, or MCP config."""
     return dict(
-        out_of_process=False,
+        unsafe_in_process=True,
         skills_dir=tmp_path / "skills",
         index_db=tmp_path / "index.db",
         mcp_config=None,

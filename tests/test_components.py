@@ -244,7 +244,7 @@ def test_session_close_records_aborted_inflight_actions(tmp_path):
             running.set()
             gate.wait(5)
 
-    session = Session(tmp_path)
+    session = Session(tmp_path, unsafe_in_process=True)
     try:
         session.broker.register(Stuck())
         thread = threading.Thread(
@@ -2366,7 +2366,8 @@ def test_notify_is_core_builtin_wired_to_session_events(tmp_path):
     from pyharness.core.session import Session
 
     events = []
-    session = Session(tmp_path, on_event=lambda kind, text: events.append((kind, text)))
+    session = Session(tmp_path, unsafe_in_process=True,
+                      on_event=lambda kind, text: events.append((kind, text)))
     try:
         # No real desktop popups from the test suite.
         session.broker._capabilities["notify"].desktop = None

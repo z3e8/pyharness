@@ -37,7 +37,8 @@ Session(
                                #   MCP servers, and learned skills into it
     approver=None,             # Callable[[ApprovalRequest], ApprovalOutcome | bool]
     on_event=None,             # Callable[[kind, text], None] — stream events
-    out_of_process=False,      # run agent code in a sandboxed child process
+    unsafe_in_process=False,   # True runs agent code in the host process —
+                               #   test-only; the default is a sandboxed child
     mcp_config=None,           # str | Path | dict — MCP servers to mount; a
                                #   path is kept (even if absent) as the target
                                #   for add_mcp_server(save=True)
@@ -79,10 +80,12 @@ finally:
 ```
 
 The `Session` owns the five things that must stay consistent: history, kernel,
-policy + budget, audit log, and workspace. In-process, agent code runs in the
-host namespace; `out_of_process=True` runs it in a restricted child while the
-broker, vault, and LLM client stay in the parent (see
-[the broker](../explanation/broker.md)).
+policy + budget, audit log, and workspace. By default agent code runs in a
+restricted child process while the broker, vault, and LLM client stay in the
+parent (see [the broker](../explanation/broker.md)). `unsafe_in_process=True`
+is a test-only escape hatch that `exec()`s agent code in the host namespace —
+with the host's `os.environ` and live vault/broker objects reachable by
+introspection — so never pass it outside a test.
 
 ## `Budget`
 

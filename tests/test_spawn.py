@@ -48,6 +48,7 @@ def _cell(code: str, call_id: str = "c1") -> Completion:
 
 def _session(tmp_path, llm, **kwargs):
     kwargs.setdefault("skills_dir", tmp_path / "skills")
+    kwargs.setdefault("unsafe_in_process", True)  # the fast test kernel
     return Session(tmp_path / "s", llm=llm, **kwargs)
 
 
@@ -81,6 +82,7 @@ def test_child_holds_body_plus_granted_never_spawn(tmp_path):
         llm=ScriptedLLM([]),
         capabilities=frozenset({"web"}),
         skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
     )
     try:
         names = set(child.broker.op_names())

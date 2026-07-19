@@ -13,7 +13,12 @@ class Kernel:
     Each `run` is a cell. Variables, imports, and functions persist across cells.
     Only captured stdout/stderr (what the agent prints) is returned; everything
     else stays in the namespace, unseen by the orchestrator. State is in-memory
-    and disposable (durable resume is a later version)."""
+    and disposable (durable resume is a later version).
+
+    UNSAFE — test-only. Cells exec() in the HOST process: agent code can reach
+    the host's os.environ (API keys, vault passphrase) and the live vault/broker
+    by introspection. Sessions select it only via `unsafe_in_process=True`; the
+    default is the out-of-process `RemoteKernel` (broker/remote)."""
 
     def __init__(self, namespace: dict[str, object]):
         self.namespace = dict(namespace)

@@ -200,11 +200,12 @@ def test_resave_de_verifies_but_keeps_log(tmp_path):
 
 def test_save_skill_requires_approval_by_default(tmp_path):
     skills = tmp_path / "skills"
-    denied = Session(tmp_path / "a", skills_dir=skills)  # no approver
+    denied = Session(tmp_path / "a", skills_dir=skills, unsafe_in_process=True)  # no approver
     with pytest.raises(PermissionDenied):
         denied.broker.namespace()["save_skill"]("x", "d", "i")
     denied.close()
 
-    allowed = Session(tmp_path / "b", skills_dir=skills, approver=lambda *a: True)
+    allowed = Session(tmp_path / "b", skills_dir=skills, approver=lambda *a: True,
+                      unsafe_in_process=True)
     assert "saved skill 'x'" in allowed.broker.namespace()["save_skill"]("x", "d", "i")
     allowed.close()

@@ -327,7 +327,8 @@ capture.
 
 ## The out-of-process sandbox
 
-When the agent runs in a child process (`out_of_process=True`), two OS-level
+When the agent runs in a child process (the default — the in-process kernel
+requires the explicit, test-only `unsafe_in_process=True` opt-in), two OS-level
 layers confine it (`pyharness/broker/remote/sandbox.py`), on top of the process
 boundary itself:
 
