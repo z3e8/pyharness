@@ -477,34 +477,143 @@ def test_http_redirect_loop_is_capped(tmp_path, monkeypatch):
     assert len(seen) <= 21  # initial request + at most _MAX_REDIRECTS hops
 
 
+class _Route:
+    """A fake Playwright route: a request with url/frame/navigation flags, plus
+    the abort/continue outcome the handler chose."""
+
+    def __init__(self, url, *, navigation=False, main_frame=True):
+        frame = SimpleNamespace(parent_frame=None if main_frame else object())
+        self.request = SimpleNamespace(
+            url=url,
+            frame=frame,
+            is_navigation_request=lambda: navigation,
+        )
+        self.aborted = self.continued = False
+
+    def abort(self, code=None):
+        self.aborted = True
+
+    def continue_(self):
+        self.continued = True
+
+
 def test_browser_route_handler_revets_every_request():
     # The browser's per-request enforcement point (installed via context.route on
     # every session): an HTTP/JS/meta-refresh redirect or subresource fetch to a
     # blocked address is aborted; permitted and in-page (data:) urls continue.
-    from pyharness.broker.capabilities.browser import _egress_route_handler
+    from pyharness.broker.capabilities.browser import _route_handler
 
-    class _Route:
-        def __init__(self, url):
-            self.request = SimpleNamespace(url=url)
-            self.aborted = self.continued = False
-
-        def abort(self, code=None):
-            self.aborted = True
-
-        def continue_(self):
-            self.continued = True
+    handler = _route_handler()
 
     blocked = _Route("http://169.254.169.254/latest/meta-data/")
-    _egress_route_handler(blocked)
+    handler(blocked)
     assert blocked.aborted and not blocked.continued
 
     ok = _Route("https://8.8.8.8/page")
-    _egress_route_handler(ok)
+    handler(ok)
     assert ok.continued and not ok.aborted
 
     inline = _Route("data:text/plain,hi")
-    _egress_route_handler(inline)
+    handler(inline)
     assert inline.continued and not inline.aborted  # never leaves the page
+
+
+def test_browser_route_handler_scopes_main_frame_navigations():
+    # With a host scope, a main-frame navigation out of scope is aborted —
+    # covering redirects, JS navigation, and link clicks — while subresource
+    # and iframe loads stay scope-exempt (SSRF guard only).
+    from pyharness.broker.capabilities.browser import _route_handler
+    from pyharness.security.egress import normalize_scope_hosts
+
+    handler = _route_handler(normalize_scope_hosts(["8.8.8.8"]))
+
+    out = _Route("https://198.51.100.10/", navigation=True)
+    handler(out)
+    assert out.aborted and not out.continued
+
+    within = _Route("https://8.8.8.8/page", navigation=True)
+    handler(within)
+    assert within.continued and not within.aborted
+
+    subresource = _Route("https://198.51.100.10/cdn.js", navigation=False)
+    handler(subresource)
+    assert subresource.continued and not subresource.aborted
+
+    iframe = _Route("https://198.51.100.10/embed", navigation=True, main_frame=False)
+    handler(iframe)
+    assert iframe.continued and not iframe.aborted
+
+    # Fail closed: a request whose navigation status can't be read gets the
+    # stricter (main-navigation) treatment.
+    opaque = _Route("https://198.51.100.10/", navigation=True)
+    opaque.request.frame = None
+    handler(opaque)
+    assert opaque.aborted
+
+
+def test_egress_scope_check_and_normalization():
+    from pyharness.security.egress import host_in_scope, normalize_scope_hosts
+
+    scope = normalize_scope_hosts(
+        ["API.GitHub.com", "https://pypi.org/simple", "*.example.com", "a.io:8080"]
+    )
+    assert scope == frozenset({"api.github.com", "pypi.org", "example.com", "a.io"})
+    assert host_in_scope("api.github.com", scope)
+    assert host_in_scope("files.pythonhosted.example.com", scope)  # subdomain
+    assert not host_in_scope("github.com", scope)  # parent of an entry: not covered
+    assert not host_in_scope("notexample.com", scope)  # suffix needs a dot boundary
+    with pytest.raises(ValueError):
+        normalize_scope_hosts(["https://"])
+    # check_url enforces the scope before DNS/SSRF resolution.
+    with pytest.raises(EgressBlocked):
+        check_url("https://8.8.8.8/", frozenset({"example.com"}))
+
+
+def test_http_redirect_out_of_scope_is_blocked_on_the_hop(tmp_path, monkeypatch):
+    import httpx
+
+    from pyharness.security.egress import normalize_scope_hosts
+
+    def handler(request):
+        if request.url.host == "198.51.100.10":
+            return httpx.Response(
+                302, headers={"location": "http://198.51.100.11/exfil"}
+            )
+        return httpx.Response(200, text="outside")
+
+    seen = _mock_transport_client(monkeypatch, handler)
+    http = HttpSessionCapability(
+        Workspace(tmp_path), allowed_hosts=normalize_scope_hosts(["198.51.100.10"])
+    )
+    with pytest.raises(EgressBlocked):
+        http.request(None, "GET", "http://198.51.100.10/start")
+    # The out-of-scope host was never contacted — the hop died at the check.
+    assert seen == ["http://198.51.100.10/start"]
+
+
+def test_http_initial_request_out_of_scope_is_blocked(tmp_path, monkeypatch):
+    from pyharness.security.egress import normalize_scope_hosts
+
+    seen = _mock_transport_client(monkeypatch, lambda request: None)
+    http = HttpSessionCapability(
+        Workspace(tmp_path), allowed_hosts=normalize_scope_hosts(["example.com"])
+    )
+    with pytest.raises(EgressBlocked):
+        http.request(None, "GET", "http://198.51.100.10/")
+    assert seen == []  # refused before any request left
+
+
+def test_web_search_unavailable_under_host_scope(tmp_path):
+    from pyharness.broker.capabilities.web import WebCapability
+    from pyharness.security.egress import normalize_scope_hosts
+
+    web = WebCapability(
+        http=HttpSessionCapability(
+            Workspace(tmp_path), allowed_hosts=normalize_scope_hosts(["example.com"])
+        )
+    )
+    with pytest.raises(EgressBlocked):
+        web.search_results("anything")
 
 
 # --- IMAP command injection --------------------------------------------------

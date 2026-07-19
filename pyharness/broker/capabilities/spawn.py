@@ -57,8 +57,9 @@ class ChildRun:
 class SpawnCapability:
     """Real sub-agents, asynchronous. `spawn` builds a full scoped child
     session — own kernel, own context, own step and budget walls, a capability
-    allowlist — starts it in a parent-side thread, and returns a handle (the
-    child session's name) immediately. `wait` collects distilled reports;
+    allowlist, optionally a host scope (`allowed_hosts`) confining its
+    web/http/browser reach — starts it in a parent-side thread, and returns a
+    handle (the child session's name) immediately. `wait` collects distilled reports;
     `spawn_status` shows what is still running and what it has spent. Depth is
     one by construction: a child's capability set never includes spawn.
 
@@ -88,20 +89,24 @@ class SpawnCapability:
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
         """The approval line shows exactly what the child would be granted —
-        task, capability set, budget slice, step ceiling — because approving a
-        spawn is approving that whole plan (OUTWARD: the child can reach out
-        with everything it was granted)."""
+        task, capability set, host scope, budget slice, step ceiling — because
+        approving a spawn is approving that whole plan (OUTWARD: the child can
+        reach out with everything it was granted)."""
         task = str(kwargs.get("task") or (args[0] if args else "?"))
         tools = kwargs.get("tools") or (args[1] if len(args) > 1 else DEFAULT_TOOLS)
         budget = kwargs.get("budget_usd")
         steps = kwargs.get("max_steps", DEFAULT_MAX_STEPS)
+        hosts = kwargs.get("allowed_hosts") or (args[5] if len(args) > 5 else None)
         brief = " ".join(task.split())
         brief = brief[:117] + "..." if len(brief) > 120 else brief
         budget_part = f"${budget:.2f}" if budget is not None else "default slice"
+        # Rendered verbatim (not normalized): preview must never raise before
+        # the approval record exists; validation happens on execution.
+        host_part = f"; hosts: {', '.join(map(str, hosts))}" if hosts else ""
         return (
             ActionCategory.OUTWARD,
-            f"spawn sub-session [tools: {', '.join(tools)}; budget {budget_part}; "
-            f"≤{steps} steps] — {brief}",
+            f"spawn sub-session [tools: {', '.join(tools)}{host_part}; "
+            f"budget {budget_part}; ≤{steps} steps] — {brief}",
         )
 
     def _reserve(self) -> None:
@@ -119,6 +124,7 @@ class SpawnCapability:
         budget_usd: float | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         tier: str = DEFAULT_TIER,
+        allowed_hosts=None,
     ) -> str:
         self._reserve()
         child = self._start_child(
@@ -127,6 +133,7 @@ class SpawnCapability:
             budget_usd=budget_usd,
             max_steps=max_steps,
             tier=tier,
+            allowed_hosts=tuple(allowed_hosts) if allowed_hosts is not None else None,
         )
         with self._lock:
             self._children[child.name] = child

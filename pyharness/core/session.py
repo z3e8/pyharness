@@ -36,6 +36,7 @@ from ..budget import Budget
 from ..llm.client import AnthropicLLM
 from ..obs import telemetry
 from ..obs.trace import TraceLog
+from ..security.egress import normalize_scope_hosts
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
 from ..security.vault import Vault
@@ -70,6 +71,9 @@ CHILD_GRANTABLE = frozenset(
 # External capabilities are reached through tool discovery, so granting any of
 # them implies the `tools` capability (search_tools/describe_tool/use_tool).
 _EXTERNAL = frozenset({"web", "http", "browser", "inbox", "packages"})
+# The capabilities a host scope (`allowed_hosts`) governs. Scoping a spawn that
+# grants none of these is a confused call and refused.
+_NETWORK = frozenset({"web", "http", "browser"})
 
 
 def _is_mutating_http(action: str, args: tuple, kwargs: dict) -> bool:
@@ -136,6 +140,12 @@ class Session:
         keep_outputs: int = 8,
         max_steps: int = 30,
         tier: str = "mid",
+        # Host scope: confines this session's web/http/browser reach to these
+        # hosts (and their subdomains) — everything else is refused at the
+        # egress layer, and web search is disabled (the query would leave
+        # scope). None = unscoped. The first user is spawn(allowed_hosts=...),
+        # but any session can be scoped this way.
+        allowed_hosts: Iterable[str] | None = None,
         # Spawned-child wiring (set by Session._spawn_child, not by callers):
         # a capability allowlist, the parent's audit log (one hash chain for the
         # whole session tree), the parent's workspace dir (shared data plane),
@@ -161,6 +171,9 @@ class Session:
                 | CHILD_BODY
                 | ({"tools"} if granted & _EXTERNAL else frozenset())
             )
+        self.allowed_hosts: frozenset[str] | None = (
+            normalize_scope_hosts(allowed_hosts) if allowed_hosts is not None else None
+        )
         self._unsafe_in_process = unsafe_in_process
         self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
@@ -319,7 +332,9 @@ class Session:
         )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
-        self.http = HttpSessionCapability(self.workspace, vault=self.vault)
+        self.http = HttpSessionCapability(
+            self.workspace, vault=self.vault, allowed_hosts=self.allowed_hosts
+        )
         # One outbox shared by the browser (fills it via look()) and the agent
         # loop (drains it into image content blocks after each cell).
         self.media = MediaOutbox()
@@ -329,6 +344,7 @@ class Session:
             media=self.media,
             profiles=self.profiles,
             audit=self.audit,
+            allowed_hosts=self.allowed_hosts,
         )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope for a
@@ -534,7 +550,9 @@ class Session:
         a spawned child holds its body plus what it was granted."""
         return self._caps is None or name in self._caps
 
-    def _child_preamble(self, granted: frozenset[str]) -> str:
+    def _child_preamble(
+        self, granted: frozenset[str], allowed_hosts: frozenset[str] | None = None
+    ) -> str:
         """The sub-session block appended to the child's system prompt. It must
         correct the static prompt's builtin list (the child holds a subset) and
         carry the report contract — the handoff is the whole point of a spawn.
@@ -566,6 +584,17 @@ class Session:
             if mounted
             else "No external tools are mounted this session."
         )
+        # Host-scope line: varies per spawn, but the child must know its bound
+        # to plan within it — worth the (rare) lost prompt-cache sharing.
+        scope_line = (
+            "- Your network reach is scoped to these hosts (and their\n"
+            f"  subdomains) only: {', '.join(sorted(allowed_hosts))}. Requests\n"
+            "  anywhere else are blocked, and web search is unavailable. If the\n"
+            "  task needs a host outside this scope, say so in your report\n"
+            "  instead of retrying.\n"
+            if allowed_hosts is not None
+            else ""
+        )
         return (
             "## Spawned sub-session\n"
             "You are a sub-session spawned by an orchestrator to complete the one\n"
@@ -573,6 +602,7 @@ class Session:
             f"- Your builtins are only: {builtins}. Anything else named above\n"
             "  (including spawn) is NOT available this session — do not call it.\n"
             f"- {tools_line}\n"
+            f"{scope_line}"
             "- You share the orchestrator's workspace: write anything large or\n"
             "  durable to files there, at the paths the task assigns.\n"
             "- Your step and spend budget are tighter than a top-level session and\n"
@@ -593,6 +623,7 @@ class Session:
         budget_usd: float | None,
         max_steps: int,
         tier: str,
+        allowed_hosts: tuple[str, ...] | None = None,
     ) -> ChildRun:
         """Build one spawned child session and start it running in a parent-side
         thread (the working half of the `spawn` builtin — the gated surface
@@ -605,6 +636,17 @@ class Session:
             raise ValueError(
                 f"unknown spawn tools {sorted(unknown)}; grantable: {sorted(CHILD_GRANTABLE)}"
             )
+        # Normalize the host scope up front so a bad entry fails the spawn call
+        # (not the child mid-run), and so the trace/preamble show the canonical
+        # hosts. Scoping without a network capability is a confused call.
+        scope: frozenset[str] | None = None
+        if allowed_hosts is not None:
+            scope = normalize_scope_hosts(allowed_hosts)
+            if not granted & _NETWORK:
+                raise ValueError(
+                    "allowed_hosts requires granting a network capability "
+                    f"({', '.join(sorted(_NETWORK))}) in tools"
+                )
 
         self._spawn_seq += 1
         name = f"{self.workspace.root.name}-spawn-{self._spawn_seq:02d}"
@@ -662,6 +704,7 @@ class Session:
             task,
             child=name,
             tools=sorted(granted),
+            allowed_hosts=sorted(scope) if scope is not None else None,
             budget_usd=limit,
             max_steps=max_steps,
             tier=tier,
@@ -680,9 +723,10 @@ class Session:
             max_steps=max_steps,
             tier=tier,
             capabilities=granted,
+            allowed_hosts=sorted(scope) if scope is not None else None,
             audit=self.audit,  # one hash chain for the whole session tree
             workspace_dir=self.workspace.dir,
-            preamble=self._child_preamble(granted),
+            preamble=self._child_preamble(granted, scope),
         )
         child.trace.record(
             "spawned_by", parent=self.id, parent_name=self.workspace.root.name

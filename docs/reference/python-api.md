@@ -50,6 +50,10 @@ Session(
     keep_outputs=8,            # recent cells whose full output stays in context
     max_steps=30,              # orchestrator step ceiling (a spawned child runs 15)
     tier="mid",                # orchestrator model tier
+    allowed_hosts=None,        # host scope: confines web/http/browser reach to
+                               #   these hosts (+ subdomains); web search is
+                               #   then disabled. Spawn passes it for scoped
+                               #   children — see security-and-audit.md
 )
 ```
 

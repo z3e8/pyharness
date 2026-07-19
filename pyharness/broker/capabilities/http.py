@@ -77,9 +77,20 @@ class HttpSessionCapability:
 
     name = "http"
 
-    def __init__(self, workspace: Workspace, vault: Vault | None = None):
+    def __init__(
+        self,
+        workspace: Workspace,
+        vault: Vault | None = None,
+        *,
+        allowed_hosts: frozenset[str] | None = None,
+    ):
         self.ws = workspace
         self.vault = vault
+        # Host scope (normalized, see security.egress) for a scoped session —
+        # e.g. a spawned child confined by spawn(allowed_hosts=...). None means
+        # unscoped. Enforced alongside the SSRF guard on the initial url and on
+        # every redirect hop, so a scoped fetch can't be bounced out of scope.
+        self.allowed_hosts = allowed_hosts
         self._clients: dict[str, object] = {}
 
     def exports(self) -> dict:
@@ -203,9 +214,9 @@ class HttpSessionCapability:
         workspace and returned as `path`/`bytes`/`preview` with `text=None`. Either
         way the full data is available: inline as a variable, or on disk for the
         agent's own Python to read. See `payload.deliver`."""
-        check_url(
-            url
-        )  # SSRF guard: no link-local/metadata (or private, if strict) targets
+        # SSRF guard (no link-local/metadata, or private if strict) plus the
+        # session's host scope, when one is set.
+        check_url(url, self.allowed_hosts)
         headers = dict(headers or {})
         params = dict(params or {})
         sink = SecretSink(self.vault)
@@ -288,7 +299,8 @@ class HttpSessionCapability:
                             f"exceeded {_MAX_REDIRECTS} redirects",
                             request=resp.next_request,
                         )
-                    check_url(str(resp.next_request.url))  # SSRF guard, re-run per hop
+                    # SSRF guard + host scope, re-run per hop
+                    check_url(str(resp.next_request.url), self.allowed_hosts)
                     resp = client.send(resp.next_request, follow_redirects=False)
         finally:
             if transient:

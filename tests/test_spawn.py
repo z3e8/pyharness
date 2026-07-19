@@ -533,3 +533,82 @@ def test_concurrent_children_keep_the_audit_chain_intact(tmp_path):
         parent.close()
     ok, bad = verify_chain(tmp_path / "s" / "audit.jsonl")
     assert ok, f"audit chain broken at line {bad}"
+
+
+# --- Host-scoped children (spawn(allowed_hosts=...)) --------------------------
+
+
+def test_child_session_is_host_scoped(tmp_path):
+    from pyharness.security.egress import EgressBlocked
+
+    child = Session(
+        tmp_path / "c",
+        llm=ScriptedLLM([]),
+        capabilities=frozenset({"web"}),
+        allowed_hosts=["Api.GitHub.com"],
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+    )
+    try:
+        # One normalized scope, carried by every egress path the child holds.
+        assert child.allowed_hosts == frozenset({"api.github.com"})
+        assert child.http.allowed_hosts == frozenset({"api.github.com"})
+        assert child.browser.allowed_hosts == frozenset({"api.github.com"})
+        # An out-of-scope fetch dies at the egress check — before DNS, before
+        # any request leaves the box.
+        with pytest.raises(EgressBlocked):
+            child.broker.call("web", "fetch", "https://attacker.example.net/")
+        # Web search would carry the query to the provider, outside the scope.
+        with pytest.raises(EgressBlocked):
+            child.broker.call("web", "search_results", "anything")
+    finally:
+        child.close()
+
+
+def test_spawn_allowed_hosts_shown_to_approver_and_passed_to_child(tmp_path):
+    llm = ScriptedLLM([_text("done")])
+    summaries = []
+
+    def approver(request):
+        summaries.append(request.summary)
+        return True
+
+    parent = _session(tmp_path, llm, approver=approver)
+    try:
+        handle = parent.broker.call(
+            "spawn",
+            "spawn",
+            "read the API",
+            tools=("web",),
+            allowed_hosts=["api.github.com", "PyPI.org"],
+        )
+        result = parent.broker.call("spawn", "wait", handle)
+    finally:
+        parent.close()
+    assert result.ok
+    # The human approved the bound: hosts appear in the spawn approval line.
+    assert any("hosts: api.github.com, PyPI.org" in s for s in summaries)
+
+
+def test_spawn_allowed_hosts_requires_a_network_capability(tmp_path):
+    parent = _session(tmp_path, ScriptedLLM([]), approver=lambda req: True)
+    try:
+        with pytest.raises(ValueError, match="network capability"):
+            parent.broker.call(
+                "spawn", "spawn", "t", tools=(), allowed_hosts=["example.com"]
+            )
+    finally:
+        parent.close()
+
+
+def test_child_preamble_names_the_host_scope(tmp_path):
+    session = _session(tmp_path, ScriptedLLM([]))
+    try:
+        granted = frozenset({"web"})
+        scoped = session._child_preamble(granted, frozenset({"api.github.com"}))
+        assert "api.github.com" in scoped
+        assert "web search is unavailable" in scoped
+        # Unscoped children keep the preamble free of scope talk.
+        assert "scoped to these hosts" not in session._child_preamble(granted)
+    finally:
+        session.close()

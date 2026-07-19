@@ -47,6 +47,44 @@ class EgressBlocked(Exception):
     """Raised when a URL's host is not a permitted outbound target."""
 
 
+def normalize_scope_hosts(entries) -> frozenset[str]:
+    """Canonicalize a host-scope allowlist (e.g. `spawn(allowed_hosts=...)` or
+    `Session(allowed_hosts=...)`) into the frozenset `host_in_scope` matches
+    against. Accepts bare hostnames, full URLs (the hostname is extracted),
+    `host:port` (the port is dropped — scope is per host), and `*.example.com`
+    (normalized to `example.com`; suffix matching makes the wildcard implicit).
+    Case-insensitive, trailing dots stripped. An entry that yields no hostname
+    raises `ValueError` — a scope must never silently cover less than asked."""
+    hosts: set[str] = set()
+    for entry in entries:
+        raw = str(entry).strip()
+        target = raw if "://" in raw else "//" + raw
+        try:
+            host = urlsplit(target).hostname
+        except ValueError:
+            host = None
+        if not host:
+            raise ValueError(
+                f"unusable allowed_hosts entry {raw!r} — need a hostname or URL"
+            )
+        host = host.lower().rstrip(".")
+        if host.startswith("*."):
+            host = host[2:]
+        if not host:
+            raise ValueError(f"unusable allowed_hosts entry {raw!r} — empty hostname")
+        hosts.add(host)
+    return frozenset(hosts)
+
+
+def host_in_scope(host: str, allowed_hosts: frozenset[str]) -> bool:
+    """Whether `host` is covered by a normalized scope: equal to an entry, or a
+    dot-subdomain of one (`api.github.com` under `github.com`). Entries are
+    authored deliberately (and shown to the approving human), so suffix
+    semantics are intent, not laxity — grants stay exact-match separately."""
+    host = host.lower().rstrip(".")
+    return any(host == entry or host.endswith("." + entry) for entry in allowed_hosts)
+
+
 def _strict() -> bool:
     return os.environ.get(BLOCK_PRIVATE_ENV, "").strip().lower() in (
         "1",
@@ -109,10 +147,15 @@ def _blocked(ip: ipaddress._BaseAddress, strict: bool) -> bool:
     return False
 
 
-def check_url(url: str) -> str:
+def check_url(url: str, allowed_hosts: frozenset[str] | None = None) -> str:
     """Raise `EgressBlocked` if `url` is not a permitted outbound target; return it
     unchanged otherwise. Enforces the http(s)-only + no-link-local rules above (plus
-    private/loopback when PYHARNESS_BLOCK_PRIVATE_NETWORK is set)."""
+    private/loopback when PYHARNESS_BLOCK_PRIVATE_NETWORK is set).
+
+    `allowed_hosts` (a set normalized by `normalize_scope_hosts`) additionally
+    confines the target to those hosts and their subdomains — the host-scope
+    check for scoped sessions/spawned children. None means unscoped; the SSRF
+    rules apply either way."""
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
     if scheme not in _ALLOWED_SCHEMES:
@@ -122,6 +165,11 @@ def check_url(url: str) -> str:
     host = parts.hostname
     if not host:
         raise EgressBlocked(f"url {url!r} has no host")
+    if allowed_hosts is not None and not host_in_scope(host, allowed_hosts):
+        raise EgressBlocked(
+            f"host {host!r} is outside this session's allowed hosts "
+            f"({', '.join(sorted(allowed_hosts))})"
+        )
     strict = _strict()
     for ip in _candidate_ips(host):
         if _blocked(ip, strict):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from urllib.parse import urlsplit
 
+from ...security.egress import EgressBlocked
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from . import exa
@@ -66,7 +67,22 @@ class WebCapability:
 
         Backed by Exa; needs `EXA_API_KEY` in the environment. The key is resolved
         parent-side and never reaches agent code. Note: each search carries a small
-        per-query dollar cost at Exa that is not recorded to the budget."""
+        per-query dollar cost at Exa that is not recorded to the budget.
+
+        Unavailable in a host-scoped session (e.g. a child spawned with
+        `allowed_hosts=...`): the query itself travels to the search provider,
+        which is outside the scope — and a free-text query is a classic
+        exfiltration channel. Fetch the allowed hosts directly instead."""
+        # Scope lives on the shared HTTP substrate — one source of truth for
+        # the session's whole web/http reach. (http is None only in tests that
+        # exercise search alone — an unscoped configuration.)
+        scope = self.http.allowed_hosts if self.http is not None else None
+        if scope is not None:
+            raise EgressBlocked(
+                "web search is unavailable under a host scope: the query would "
+                "go to the search provider, outside the allowed hosts "
+                f"({', '.join(sorted(scope))})"
+            )
         api_key = os.environ.get("EXA_API_KEY")
         if not api_key:
             raise RuntimeError(

@@ -110,7 +110,10 @@ only the distilled results return to the orchestrator's context.
 The second tier is `spawn()` — a **real sub-agent**. A spawned child is a full
 recursive `Session`: its own kernel, its own message history, its own step and
 budget walls, and a capability allowlist granted at spawn time
-(`spawn(tools=...)`). Unlike an `llm()` worker it can act — fetch, browse, run
+(`spawn(tools=...)`), optionally confined to a host scope
+(`allowed_hosts=[...]` — see
+[security](security-and-audit.md#host-scoped-sessions)). Unlike an `llm()`
+worker it can act — fetch, browse, run
 code — so gather-work stays out of the orchestrator's context entirely.
 Spawning is **asynchronous**: the call returns a handle immediately and the
 child runs in a parent-side thread, so the orchestrator can start several
@@ -125,7 +128,7 @@ condensed final report (the child's last message, returned verbatim in a
 `SpawnResult`), plus the shared workspace for anything large. Depth is one by
 construction — a child's capability set never includes `spawn` — and the
 `spawn` call itself always needs human approval: approving it is approving
-the child's whole plan (task, capability set, budget slice).
+the child's whole plan (task, capability set, host scope, budget slice).
 
 Everything a cell does still routes through [the broker](broker.md), so this
 freedom is bounded by policy, audit, and budget.

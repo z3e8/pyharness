@@ -69,14 +69,20 @@ import them. This is the complete list; nothing else is callable by bare name.
         # anything that must act. .ok means the call went through, not that the
         # worker delivered: a refusal ("the text does not contain…") comes back
         # ok=True — filter those out before synthesizing from the results.
-    spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> str
+    spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid",
+          allowed_hosts=None) -> str
         # start a real sub-agent: a scoped child session (own kernel, own
         # context, own step/budget walls) that works the task to completion in
         # the BACKGROUND. Returns a handle immediately — collect the report
         # with wait(). Children run in parallel: start several, keep working,
         # wait when you need the results. tools grants capabilities by name
         # from: web, http, browser, inbox, packages, shell, secrets, skills,
-        # history, obs, notify. The child shares your workspace but sees none
+        # history, obs, notify. allowed_hosts=["api.example.com", ...] confines
+        # the child's web/http/browser reach to those hosts and their
+        # subdomains — anything else is blocked, and web search is disabled
+        # under a scope. Scope a child to the hosts its task actually needs
+        # whenever it will read untrusted content (pages can try to steer it
+        # elsewhere). The child shares your workspace but sees none
         # of this conversation, cannot spawn further, and its approvals route
         # to the same human. Needs human approval; costs real money — a child
         # runs many completions. Write the task like a brief to a contractor

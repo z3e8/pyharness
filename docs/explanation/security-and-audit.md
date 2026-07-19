@@ -242,6 +242,42 @@ ultimately connects to. Pinning the connection to the vetted IP is the durable
 fix (a custom httpx transport); it is not built in this version and the residual
 rebinding TOCTOU is tracked in `agents/issues.md`.
 
+## Host-scoped sessions
+
+`spawn(tools=...)` scopes a child *by capability name*; `allowed_hosts` scopes
+*where* the granted network capabilities may reach. A child spawned with
+`spawn(task, tools=("web",), allowed_hosts=["api.github.com"])` can only talk
+to those hosts and their subdomains — the point is that a child reading
+untrusted content (pages can try to steer it) cannot be talked into
+exfiltrating to an attacker host, and the human approving the spawn approves a
+*bounded* plan (the approval line shows the hosts). `Session(allowed_hosts=...)`
+is the general mechanism; spawn is its first user.
+
+Enforcement rides the same egress layer as the SSRF guard, not the policy
+layer — a broker-level check sees only the initial URL of a call, while
+`check_url(url, allowed_hosts)` runs at every point the guard already covers:
+the initial `http.request`/`web.fetch` URL and each redirect hop, and
+`browser.goto` plus the settled URL. In the browser's route interceptor the
+scope applies to **main-frame navigations** (redirects, JS navigation, link
+clicks — everywhere the agent can end up); subresource and iframe loads are
+scope-exempt (blocking CDNs would break most pages) but stay under the SSRF
+guard. Scope entries match a host and its subdomains (`github.com` covers
+`api.github.com`); this suffix semantics is deliberate — entries are authored
+by the spawning agent and shown to the human, unlike approval grants, which
+stay exact-match because they are minted from an observed concrete host.
+
+Under a host scope, `web.search_results` is refused: the query itself travels
+to the search provider (outside any scope), and a free-text query is a classic
+exfiltration channel. The scope also does not pre-grant anything: mutating or
+secret-carrying calls to in-scope hosts still prompt the human exactly as
+unscoped ones do.
+
+Known limits: exfiltration *to an in-scope host* remains possible (the scope
+bounds where, not what); subresource/iframe traffic is not scope-bound;
+capabilities with fixed off-box targets (`inbox`'s IMAP server, `packages`'
+index) and the per-command-gated `shell` are outside the scope's remit; and
+the DNS-rebinding TOCTOU above applies to scope checks identically.
+
 ## Vault — secrets the agent can name but never read
 
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to

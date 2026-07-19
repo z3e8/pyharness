@@ -136,7 +136,7 @@ toolless — they cannot call capabilities or run code.
 |-----------|-------|
 | `llm(prompt, tier=None, system=None, context=None, max_tokens=None) -> str` | one completion; `context` is a string appended to the prompt — the way to hand a large variable to a worker instead of printing it. `max_tokens` bounds the answer; it must be a positive integer at or below the tier's output ceiling (32000 smart / 16000 mid / 8000 cheap) — `0`/negative or a value above the ceiling raises `ValueError` (in `llm()` it propagates; in `map_llm` it becomes a per-task `Result` error). Wall-clock bounded (`WORKER_TOTAL_DEADLINE_S`, 600s, retries included) so one call can't block the kernel indefinitely; long or retrying calls emit streaming/retry heartbeats to the viewer |
 | `map_llm(prompts, tier=None, system=None, context=None, contexts=None, max_concurrency=8, max_tokens=None) -> list[Result]` | parallel fan-out of `llm()`; each `Result` has `.ok`, `.value`, `.error`; a failed worker becomes data, not an exception. `.ok` is transport-level only — a worker's refusal comes back `ok=True` and must be filtered semantically. `contexts` pairs one context per prompt (must match `prompts` in length; mutually exclusive with scalar `context`, which applies to all). `system` defaults to a fixed return-only-the-result worker prompt. Count-capped (`max_per_call=64` per call, `session_cap=256` per session in `pyharness/broker/capabilities/llm.py`) |
-| `spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid") -> str` | start a real sub-agent: a scoped child session — own kernel, context, and step/budget walls — that works the task to completion **in the background**. Returns a handle immediately; collect the report with `wait()`. **Needs human approval** (the prompt shows the task, capability set, and budget slice — approving it approves the child's whole plan) |
+| `spawn(task, tools=("web","http"), budget_usd=None, max_steps=15, tier="mid", allowed_hosts=None) -> str` | start a real sub-agent: a scoped child session — own kernel, context, and step/budget walls — that works the task to completion **in the background**. Returns a handle immediately; collect the report with `wait()`. **Needs human approval** (the prompt shows the task, capability set, host scope, and budget slice — approving it approves the child's whole plan) |
 | `wait(handles=None, timeout=None) -> SpawnResult \| list[SpawnResult]` | block until spawned children finish and return their reports — a single `SpawnResult` for one handle, a list (in handle order) for a list, every child so far for `None`. On `timeout` (seconds) raises `TimeoutError`; the children keep running and a later `wait()` still collects them |
 | `spawn_status() -> list[dict]` | one row per spawned child: `session` (the handle), `state` (`"running"`/`"done"`), `spent_usd` — the cheap glance while children work in the background |
 
@@ -146,7 +146,13 @@ needed. The child always holds its body (`read`/`write`/`edit`,
 `search`, `llm`/`map_llm`); `tools` grants more by name from `shell`,
 `secrets`, `skills`, `history`, `obs`, `notify`, `web`, `http`, `browser`,
 `inbox`, `packages` (granting an external one implies tool discovery). It can
-never spawn — delegation depth is one by construction. It shares the parent's
+never spawn — delegation depth is one by construction.
+`allowed_hosts=["api.example.com", ...]` additionally confines the child's
+`web`/`http`/`browser` reach to those hosts and their subdomains — anything
+else is refused at the egress layer (including redirect hops and browser
+navigations), and `web.search_results` is disabled under a scope (the query
+would leave it); requires a network capability in `tools`. See
+[security](../explanation/security-and-audit.md#host-scoped-sessions). It shares the parent's
 workspace (file handoff is free; the parent assigns output paths in the task)
 and starts with none of the parent's conversation, so the task must be
 self-contained: objective, output format, boundaries, paths. Its own approvals
