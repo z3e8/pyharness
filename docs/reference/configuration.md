@@ -74,7 +74,9 @@ environment, **not** committed to `.env` if sensitive.
 
 Outbound requests (`web.fetch` / `http.request` / `browser.goto`) always refuse
 non-`http(s)` schemes and link-local targets (the cloud-metadata range
-`169.254.169.254`). See [the egress guard](../explanation/security-and-audit.md#egress-guard--no-requests-to-the-boxs-own-network).
+`169.254.169.254`). The check re-runs on every redirect hop (HTTP redirects are
+followed manually, capped at 20) and, in the browser, on every request the page
+makes. See [the egress guard](../explanation/security-and-audit.md#egress-guard--no-requests-to-the-boxs-own-network).
 
 | Variable | Default | Effect |
 |----------|---------|--------|

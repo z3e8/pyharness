@@ -207,6 +207,18 @@ it on its own.
   fetch target — so a hostname that resolves there (`metadata.google.internal`) is
   caught, not just the bare IP.
 
+The check covers every hop, not just the url the agent named. An HTTP client
+that auto-follows redirects would make the initial check worthless — a public
+host could 302 to `http://169.254.169.254/…` and the internal body would come
+back to the agent — so `http.request`/`web.fetch` never auto-follow: the
+capability drives the redirect loop itself, re-running `check_url` on each
+`Location` before chasing it (capped at 20 hops so a redirect loop terminates).
+The browser closes the same hole at the request layer: every session installs a
+Playwright route interceptor that re-vets each network request the page makes —
+redirect hops, JS/meta-refresh navigations, subresource fetches — and aborts any
+whose target is blocked, and `browser.goto` re-checks where navigation actually
+settled before returning page state.
+
 Loopback and RFC1918/ULA private ranges stay reachable by default (local dev, LAN
 services, and local MCP-over-http are normal); `PYHARNESS_BLOCK_PRIVATE_NETWORK=true`
 extends the block to them for a stricter posture. The guard is best-effort

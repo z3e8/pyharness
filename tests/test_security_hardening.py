@@ -5,7 +5,7 @@ class it guards (see agents/security-hardening-2026-07.md).
 """
 from __future__ import annotations
 
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from urllib.parse import quote
 
 import pytest
@@ -29,40 +29,26 @@ from pyharness.security.egress import EgressBlocked, check_url
 from pyharness.security.sink import SecretSink
 
 
-class _FakeResp:
-    def __init__(self, url="http://x"):
-        import datetime
-
-        self.status_code = 200
-        self.text = "ok"
-        self.url = url
-        self.content = b"ok"
-        self.headers = {"content-type": "text/plain"}
-        self.elapsed = datetime.timedelta(milliseconds=1)
-
-
-class _FakeClient:
-    instances: list = []
-
-    def __init__(self, **kwargs):
-        self.calls: list = []
-        _FakeClient.instances.append(self)
-
-    def request(self, method, url, **kwargs):
-        self.calls.append({"method": method, "url": url, **kwargs})
-        return _FakeResp(url=url)
-
-    def close(self):
-        pass
-
-
-@pytest.fixture
-def fake_httpx(monkeypatch):
+def _mock_transport_client(monkeypatch, handler):
+    """Route the capability's own `httpx.Client(...)` construction through a
+    `MockTransport` running `handler` — real httpx redirect semantics, no network.
+    Returns the list of URLs actually requested, in order, so a test can assert a
+    blocked hop was never contacted."""
     import httpx
 
-    _FakeClient.instances = []
-    monkeypatch.setattr(httpx, "Client", _FakeClient)
-    return _FakeClient
+    real_client = httpx.Client
+    seen: list[str] = []
+
+    def routed(request):
+        seen.append(str(request.url))
+        return handler(request)
+
+    def factory(**kwargs):
+        kwargs["transport"] = httpx.MockTransport(routed)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(httpx, "Client", factory)
+    return seen
 
 
 def _broker(tmp_path):
@@ -190,12 +176,23 @@ def test_secret_carrying_read_is_grantable_per_host(tmp_path):
     assert web.scope("fetch", ("https://api.example.com/x",), {}) is None
 
 
-def test_secret_carrying_request_disables_redirects(tmp_path, fake_httpx):
+def test_secret_carrying_request_never_follows_redirects(tmp_path, monkeypatch):
+    import httpx
+
+    def handler(request):
+        if request.url.host == "198.51.100.10":
+            return httpx.Response(302, headers={"location": "http://198.51.100.11/elsewhere"})
+        return httpx.Response(200, text="other origin")
+
+    seen = _mock_transport_client(monkeypatch, handler)
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
-    http.request(None, "GET", "http://nonexistent.invalid", auth="k")
-    assert fake_httpx.instances[-1].calls[-1]["follow_redirects"] is False
-    http.request(None, "GET", "http://nonexistent.invalid")
-    assert fake_httpx.instances[-1].calls[-1]["follow_redirects"] is True
+    result = http.request(
+        None, "GET", "http://198.51.100.10/start", auth="k", auth_style="header", auth_name="X-Key"
+    )
+    assert result["status"] == 302  # the 3xx returns as-is; the agent re-decides auth
+    assert seen == ["http://198.51.100.10/start"]  # credential never resent to the Location
+    result = http.request(None, "GET", "http://198.51.100.10/start")  # no secret → followed
+    assert result["status"] == 200 and result["text"] == "other origin"
 
 
 # --- Screenshot leaks a secret's pixels the same way look does ---------------
@@ -272,6 +269,87 @@ def test_egress_private_ranges_gated_by_strict_flag(monkeypatch):
         check_url("http://127.0.0.1:8080/")
     with pytest.raises(EgressBlocked):
         check_url("http://10.0.0.5/")
+
+
+# --- SSRF via redirect: every hop is re-vetted, not just the initial url ------
+
+def test_http_redirect_to_internal_address_is_blocked_on_the_hop(tmp_path, monkeypatch):
+    import httpx
+
+    def handler(request):
+        if request.url.host == "198.51.100.10":
+            return httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+            )
+        return httpx.Response(200, text="IAM-CREDENTIALS")
+
+    seen = _mock_transport_client(monkeypatch, handler)
+    http = HttpSessionCapability(Workspace(tmp_path))
+    with pytest.raises(EgressBlocked):
+        http.request(None, "GET", "http://198.51.100.10/start")
+    # The metadata endpoint was never contacted — the hop died at the check, so
+    # the internal body has no path back to the agent.
+    assert seen == ["http://198.51.100.10/start"]
+
+
+def test_http_redirects_to_permitted_hosts_still_follow(tmp_path, monkeypatch):
+    import httpx
+
+    def handler(request):
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "http://198.51.100.11/final"})
+        return httpx.Response(200, text="landed")
+
+    seen = _mock_transport_client(monkeypatch, handler)
+    http = HttpSessionCapability(Workspace(tmp_path))
+    result = http.request(None, "GET", "http://198.51.100.10/start")
+    assert result["status"] == 200 and result["text"] == "landed"
+    assert result["url"] == "http://198.51.100.11/final"
+    assert seen == ["http://198.51.100.10/start", "http://198.51.100.11/final"]
+
+
+def test_http_redirect_loop_is_capped(tmp_path, monkeypatch):
+    import httpx
+
+    def handler(request):
+        n = int(request.url.path.lstrip("/"))
+        return httpx.Response(302, headers={"location": f"http://198.51.100.10/{n + 1}"})
+
+    seen = _mock_transport_client(monkeypatch, handler)
+    http = HttpSessionCapability(Workspace(tmp_path))
+    with pytest.raises(httpx.TooManyRedirects):
+        http.request(None, "GET", "http://198.51.100.10/0")
+    assert len(seen) <= 21  # initial request + at most _MAX_REDIRECTS hops
+
+
+def test_browser_route_handler_revets_every_request():
+    # The browser's per-request enforcement point (installed via context.route on
+    # every session): an HTTP/JS/meta-refresh redirect or subresource fetch to a
+    # blocked address is aborted; permitted and in-page (data:) urls continue.
+    from pyharness.broker.capabilities.browser import _egress_route_handler
+
+    class _Route:
+        def __init__(self, url):
+            self.request = SimpleNamespace(url=url)
+            self.aborted = self.continued = False
+
+        def abort(self, code=None):
+            self.aborted = True
+
+        def continue_(self):
+            self.continued = True
+
+    blocked = _Route("http://169.254.169.254/latest/meta-data/")
+    _egress_route_handler(blocked)
+    assert blocked.aborted and not blocked.continued
+
+    ok = _Route("https://8.8.8.8/page")
+    _egress_route_handler(ok)
+    assert ok.continued and not ok.aborted
+
+    inline = _Route("data:text/plain,hi")
+    _egress_route_handler(inline)
+    assert inline.continued and not inline.aborted  # never leaves the page
 
 
 # --- IMAP command injection --------------------------------------------------

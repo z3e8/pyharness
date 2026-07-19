@@ -1601,9 +1601,13 @@ class _FakeProfileContext:
     def __init__(self, state):
         self._state = state
         self.storage_state_calls: list = []
+        self.routes: list = []  # (pattern, handler) pairs open_browser installs
 
     def new_page(self):
         return _FakePage()
+
+    def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
 
     def storage_state(self, indexed_db=None):
         self.storage_state_calls.append(indexed_db)

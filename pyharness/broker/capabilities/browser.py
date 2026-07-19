@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
-from ...security.egress import check_url
+from ...security.egress import EgressBlocked, check_url
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.profiles import ProfileStore
@@ -37,6 +37,24 @@ _SELECTOR_POS_OPS = frozenset({"click", "fill", "fill_secret", "fill_totp", "sel
 # Credential-releasing ops: never grant-covered (scope() returns None), so each
 # one prompts on its own even inside a granted domain.
 _CREDENTIAL_OPS = frozenset({"fill_secret", "fill_totp"})
+
+
+def _egress_route_handler(route) -> None:
+    """Playwright route handler enforcing the egress guard on *every* request the
+    page makes, not just the url `goto` was called with. The initial `check_url`
+    in `goto` vets one url; an HTTP redirect, a meta-refresh, a JS
+    `window.location`, or a subresource fetch can then point anywhere — including
+    the cloud-metadata endpoint — so each network request is re-vetted here and
+    aborted when its target is blocked. Non-http(s) schemes (data:, blob:) pass
+    through: they never leave the page and `check_url` would refuse them all."""
+    url = route.request.url
+    if urlsplit(url).scheme.lower() in ("http", "https"):
+        try:
+            check_url(url)
+        except EgressBlocked:
+            route.abort("blockedbyclient")
+            return
+    route.continue_()
 
 
 class _BrowserSession:
@@ -267,6 +285,9 @@ class BrowserCapability:
             context = browser.new_context(storage_state=state)
         else:
             context = browser.new_context()
+        # Egress guard on every request this context ever makes (redirect hops,
+        # JS navigations, subresources, popups) — see _egress_route_handler.
+        context.route("**/*", _egress_route_handler)
         page = context.new_page()
         session_id = uuid4().hex
         self._sessions[session_id] = _BrowserSession(browser, context, page, SecretSink(self.vault), profile=profile)
@@ -334,6 +355,15 @@ class BrowserCapability:
         session = self._session(session_id)
         resp = session.page.goto(url, wait_until="domcontentloaded")
         session.last_snapshot = None  # new page: every prior ref is now meaningless
+        # Belt over the route interceptor: a redirect chain that dodged
+        # interception (e.g. served by a service worker) could still land the
+        # page on a blocked host. Re-vet where navigation actually settled and
+        # bail to a blank page rather than return internal content.
+        try:
+            check_url(session.page.url)
+        except EgressBlocked:
+            session.page.goto("about:blank")
+            raise
         return self._state(
             session,
             title=session.page.title(),

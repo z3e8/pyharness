@@ -28,6 +28,10 @@ MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # grant scope.
 _GRANTABLE_METHODS = MUTATING_METHODS - {"DELETE"}
 
+# Redirect-chain ceiling for the manual follow loop in `request` (matches httpx's
+# own default), so a redirect loop terminates instead of spinning.
+_MAX_REDIRECTS = 20
+
 
 def _apply_secret_auth(headers: dict, params: dict, *, secret: str, style: str, name, user) -> None:
     """Attach a resolved secret to the outgoing request the way `auth_style`
@@ -127,7 +131,9 @@ class HttpSessionCapability:
         and calls; cookies set by the server persist on it until `close_session`."""
         httpx = import_module("httpx")
         session_id = uuid4().hex
-        self._clients[session_id] = httpx.Client(follow_redirects=True, timeout=30)
+        # No client-level auto-redirects: `request` drives every redirect hop
+        # itself so the egress guard re-checks each Location before it is chased.
+        self._clients[session_id] = httpx.Client(timeout=30)
         return session_id
 
     def close_session(self, session_id: str) -> str:
@@ -222,13 +228,18 @@ class HttpSessionCapability:
         transient = session_id is None
         if transient:
             httpx = import_module("httpx")
-            client = httpx.Client(follow_redirects=True, timeout=30)
+            client = httpx.Client(timeout=30)
         else:
             client = self._clients.get(session_id)
             if client is None:
                 raise KeyError(f"no open http session {session_id!r}")
 
         try:
+            # httpx never auto-follows here: `check_url` above vetted only the
+            # *initial* url, so every redirect hop is followed manually below,
+            # re-vetting each Location first — otherwise a public host could 302
+            # to the cloud-metadata endpoint or a localhost service and the
+            # internal body would come back to the agent (SSRF via redirect).
             resp = client.request(
                 method,
                 url,
@@ -237,13 +248,32 @@ class HttpSessionCapability:
                 json=json,
                 data=data,
                 files=built_files,
-                follow_redirects=not carries_secret,
+                follow_redirects=False,
             )
+            if not carries_secret:
+                # httpx builds `next_request` for a redirect response even when
+                # not following — its own RFC semantics (303 -> GET, Authorization
+                # stripped cross-origin), so this loop only adds the per-hop
+                # egress check and the chain ceiling. A secret-carrying request
+                # never enters the loop: the 3xx returns as-is (see above).
+                hops = 0
+                while getattr(resp, "has_redirect_location", False) and resp.next_request is not None:
+                    hops += 1
+                    if hops > _MAX_REDIRECTS:
+                        httpx = import_module("httpx")
+                        raise httpx.TooManyRedirects(
+                            f"exceeded {_MAX_REDIRECTS} redirects", request=resp.next_request
+                        )
+                    check_url(str(resp.next_request.url))  # SSRF guard, re-run per hop
+                    resp = client.send(resp.next_request, follow_redirects=False)
         finally:
             if transient:
                 client.close()
 
-        elapsed = getattr(resp, "elapsed", None)
+        try:
+            elapsed = getattr(resp, "elapsed", None)
+        except RuntimeError:  # httpx raises until the stream is closed (mocked transports)
+            elapsed = None
         content_type = resp.headers.get("content-type", "")
         text = resp.text
         title: str | None = None
