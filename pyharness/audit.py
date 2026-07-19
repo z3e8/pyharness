@@ -32,6 +32,11 @@ class AuditLog:
         self._lock = threading.Lock()
 
     def record(self, **fields: object) -> None:
+        # Plain append (no fsync/rename): a crash mid-write can leave a torn
+        # final line. That is tolerated, not prevented — `verify_chain` treats a
+        # broken/torn final line as a broken chain (returns the bad index) rather
+        # than raising, and `_last_hash`/`tail` skip an unparseable line, so a
+        # reopened log continues cleanly from the last intact entry.
         with self._lock:
             entry = {"ts": time.time(), **fields}
             payload = json.dumps(entry, default=str, sort_keys=True)
@@ -72,25 +77,28 @@ class AuditLog:
 
 
 def _last_hash(path: Path) -> str:
-    """The hash of the final entry, so a reopened log continues the same chain."""
+    """The hash of the final intact entry, so a reopened log continues the same
+    chain. A torn final line (a crash mid-append) is skipped so the next record
+    chains off the last *parseable* entry rather than silently restarting the
+    chain from genesis."""
     if not path.exists():
         return _GENESIS
-    last = ""
-    for line in path.read_text().splitlines():
+    for line in reversed(path.read_text().splitlines()):
         line = line.strip()
-        if line:
-            last = line
-    if not last:
-        return _GENESIS
-    try:
-        return json.loads(last).get("hash", _GENESIS)
-    except json.JSONDecodeError:
-        return _GENESIS
+        if not line:
+            continue
+        try:
+            return json.loads(line).get("hash", _GENESIS)
+        except json.JSONDecodeError:
+            continue
+    return _GENESIS
 
 
 def verify_chain(path: str | Path) -> tuple[bool, int]:
     """Verify a log's hash chain. Returns ``(ok, bad_line)`` — ``bad_line`` is the
-    0-based index of the first tampered/broken entry, or -1 when intact."""
+    0-based index of the first tampered/broken entry, or -1 when intact. An
+    unparseable line — including a torn final line from a crash mid-append — is
+    itself a broken chain: it returns ``(False, index)`` rather than raising."""
     path = Path(path)
     prev = _GENESIS
     index = -1
@@ -99,7 +107,10 @@ def verify_chain(path: str | Path) -> tuple[bool, int]:
         if not line:
             continue
         index += 1
-        entry = json.loads(line)
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            return False, index
         recorded_hash = entry.pop("hash", None)
         recorded_prev = entry.pop("prev", None)
         payload = json.dumps(entry, default=str, sort_keys=True)
