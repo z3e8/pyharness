@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 
 from ...core.session_venv import SessionVenv
+from ...security.env import minimal_environ
 from ...security.policy import ActionCategory
 
 
@@ -26,11 +27,18 @@ class PackagesCapability:
         if site is None:
             return "package installation requires out-of-process mode"
         pip = self._venv.dir / "bin" / "pip"
+        # A package's `setup.py`/build hook runs arbitrary code at install time —
+        # so pip must not inherit the parent environment, or a malicious package
+        # could read ANTHROPIC_API_KEY, the vault passphrase, or any
+        # PYHARNESS_SECRET_*. It gets the same minimal allowlist env the child
+        # kernel and shell.bash use (PATH/HOME/TMPDIR is all pip legitimately
+        # needs; see security/env.py).
         result = subprocess.run(
             [str(pip), "install", package],
             capture_output=True,
             text=True,
             timeout=120,
+            env=minimal_environ(),
         )
         return (result.stdout + result.stderr).strip() or f"installed {package}"
 
@@ -38,5 +46,7 @@ class PackagesCapability:
         if self._venv.dir is None:
             return "no per-session venv active"
         pip = self._venv.dir / "bin" / "pip"
-        result = subprocess.run([str(pip), "list"], capture_output=True, text=True)
+        result = subprocess.run(
+            [str(pip), "list"], capture_output=True, text=True, env=minimal_environ()
+        )
         return result.stdout.strip()
