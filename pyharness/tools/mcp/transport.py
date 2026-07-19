@@ -25,6 +25,7 @@ import time
 from collections import deque
 from typing import Protocol, runtime_checkable
 
+from ...security.egress import check_url
 from ...security.env import minimal_environ
 
 # Protocol version we advertise at `initialize` (the current stable spec).
@@ -182,12 +183,19 @@ class HttpTransport:
     def __init__(self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 30.0):
         import httpx  # provided transitively via the anthropic dependency
 
+        # A remote MCP URL is an outbound target like any other — an internal or
+        # link-local endpoint (cloud metadata, a localhost admin service) would
+        # otherwise let a `.mcp.json` entry point the parent at internal services
+        # and forward `secret:` creds in its headers. Vet it at mount (here) and
+        # again on every request (below), since DNS can rebind between the two.
+        check_url(url)
         self.protocol_version = PROTOCOL_VERSION
         self._url = url
         self._client = httpx.Client(timeout=timeout, headers=headers or {})
         self._session_id: str | None = None
 
     def request(self, message: dict) -> dict:
+        check_url(self._url)  # re-vet per request: DNS may have rebound since mount
         with self._client.stream("POST", self._url, json=message, headers=self._headers()) as resp:
             resp.raise_for_status()
             self._capture_session(resp)
@@ -200,6 +208,7 @@ class HttpTransport:
             return json.loads(resp.read())
 
     def notify(self, message: dict) -> None:
+        check_url(self._url)  # re-vet per request: DNS may have rebound since mount
         with self._client.stream("POST", self._url, json=message, headers=self._headers()) as resp:
             resp.raise_for_status()
             self._capture_session(resp)
