@@ -68,3 +68,16 @@ uv run pytest -q                                        # tests (no API key)
 
 The live viewer is on by default; the heavier OTel export (Phoenix/Langfuse) is
 opt-in — see [Run with observability](docs/how-to/observability.md).
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the
+`make test` / `make lint` expectations, and the docs-sync convention, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+
+Found a security issue? **Do not open a public issue** — follow
+[SECURITY.md](SECURITY.md) (private GitHub advisory).
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
