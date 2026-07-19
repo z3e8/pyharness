@@ -48,7 +48,12 @@ class EncryptedFile:
         from cryptography.fernet import Fernet
 
         key = hashlib.scrypt(
-            self._passphrase.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
+            self._passphrase.encode(),
+            salt=salt,
+            n=_SCRYPT_N,
+            r=_SCRYPT_R,
+            p=_SCRYPT_P,
+            dklen=32,
         )
         return Fernet(base64.urlsafe_b64encode(key))
 
@@ -75,8 +80,12 @@ class EncryptedFile:
         # Write to a sibling temp file created 0o600, then atomically replace: a
         # crash mid-write leaves the previous file intact, and the plaintext-key
         # material is never briefly world-readable under a permissive umask.
-        ensure_private_dir(self.path.parent)  # ~/.pyharness (0700) — holds vault + profiles
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=self.path.name, suffix=".tmp")
+        ensure_private_dir(
+            self.path.parent
+        )  # ~/.pyharness (0700) — holds vault + profiles
+        fd, tmp = tempfile.mkstemp(
+            dir=self.path.parent, prefix=self.path.name, suffix=".tmp"
+        )
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w") as f:
@@ -125,7 +134,7 @@ class Vault:
         return self._env_prefix
 
     @classmethod
-    def from_env(cls, *, env_prefix: str = DEFAULT_ENV_PREFIX) -> "Vault":
+    def from_env(cls, *, env_prefix: str = DEFAULT_ENV_PREFIX) -> Vault:
         """Build the default vault. Attaches the encrypted-file backend only when
         both a passphrase (PYHARNESS_VAULT_PASSPHRASE) and the file are present,
         so non-interactive and test use fall back to dict + env transparently."""
@@ -167,6 +176,6 @@ class Vault:
         names = set(self._secrets)
         for key in os.environ:
             if key.startswith(self._env_prefix):
-                names.add(key[len(self._env_prefix):].lower())
+                names.add(key[len(self._env_prefix) :].lower())
         names.update(self._file_secrets())
         return sorted(names)

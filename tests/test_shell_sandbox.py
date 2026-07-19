@@ -4,6 +4,7 @@ same Seatbelt profile as the out-of-process child: workspace writes work, but
 outbound network, writes outside the workspace, and $HOME reads are denied at
 the OS level. Where no OS sandbox exists, bash falls back to the env-scrubbed
 plain run (a Linux path plugs into `sandboxed_shell_argv` later)."""
+
 from __future__ import annotations
 
 import sys

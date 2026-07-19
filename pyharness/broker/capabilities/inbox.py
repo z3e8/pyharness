@@ -14,6 +14,7 @@ password is the vault secret named ``imap``, resolved parent-side through a
 Message bodies are third-party text anyone can send: untrusted input, exactly
 like a web page.
 """
+
 from __future__ import annotations
 
 import email
@@ -37,8 +38,20 @@ PASSWORD_SECRET = "imap"  # the vault secret name holding the IMAP password
 
 # IMAP's date format uses fixed English month names; strftime's %b is
 # locale-dependent, so spell them out.
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 
 # Bare URLs in a text/plain body. Trailing sentence punctuation is stripped
 # after the match so "https://x.test/verify." yields the clickable link.
@@ -57,7 +70,9 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 def _no_control(value: str, what: str) -> str:
     if _CONTROL_RE.search(value):
-        raise ValueError(f"{what} contains control characters (possible IMAP injection)")
+        raise ValueError(
+            f"{what} contains control characters (possible IMAP injection)"
+        )
     return value
 
 
@@ -152,7 +167,7 @@ class InboxCapability:
     def _summaries(self, imap, uids: list[bytes], limit: int) -> list[dict]:
         """Fetch the metadata rows for the newest `limit` of `uids`, newest
         first. Header-fields only — bodies never ride along on a listing."""
-        uids = uids[-max(limit, 0):][::-1]  # UID SEARCH returns oldest first
+        uids = uids[-max(limit, 0) :][::-1]  # UID SEARCH returns oldest first
         if not uids:
             return []
         status, data = imap.uid("FETCH", b",".join(uids).decode(), _HEADER_FIELDS)
@@ -178,7 +193,9 @@ class InboxCapability:
             }
         return [by_uid[uid.decode()] for uid in uids if uid.decode() in by_uid]
 
-    def list(self, folder: str = "INBOX", limit: int = 20, unseen_only: bool = False) -> list[dict]:
+    def list(
+        self, folder: str = "INBOX", limit: int = 20, unseen_only: bool = False
+    ) -> list[dict]:
         """The newest messages in `folder`, newest first — metadata only, one
         dict per message: `{id, from, to, subject, date, seen, has_attachments}`.
         `unseen_only=True` narrows to unread. `id` is the message's stable UID in
@@ -243,7 +260,11 @@ class InboxCapability:
             self._select(imap, folder)
             status, data = imap.uid("FETCH", message_id, "(BODY.PEEK[])")
             raw = next(
-                (item[1] for item in data or [] if isinstance(item, tuple) and len(item) >= 2),
+                (
+                    item[1]
+                    for item in data or []
+                    if isinstance(item, tuple) and len(item) >= 2
+                ),
                 None,
             )
             if status != "OK" or not raw:
@@ -292,7 +313,9 @@ class InboxCapability:
                 links.append({"text": "", "href": href})
         return text, links
 
-    def _spill_attachments(self, msg, sink: SecretSink, *, folder: str, uid: str) -> list[dict]:
+    def _spill_attachments(
+        self, msg, sink: SecretSink, *, folder: str, uid: str
+    ) -> list[dict]:
         """Write each attachment to the workspace (redacted, size recorded via
         the payload path) and return its coordinates — bytes never ride inline
         into context."""
@@ -300,7 +323,10 @@ class InboxCapability:
         attachments: list[dict] = []
         for i, part in enumerate(msg.iter_attachments()):
             # Basename only: a crafted filename must not steer the write path.
-            filename = os.path.basename((part.get_filename() or "").replace("\\", "/")) or f"part-{i}"
+            filename = (
+                os.path.basename((part.get_filename() or "").replace("\\", "/"))
+                or f"part-{i}"
+            )
             data = part.get_payload(decode=True)
             if data is None:  # e.g. an attached message/rfc822
                 data = part.as_bytes()

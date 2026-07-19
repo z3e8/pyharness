@@ -40,7 +40,9 @@ def totp_code(
     try:
         digest = _ALGORITHMS[algorithm]
     except KeyError:
-        raise ValueError(f"unknown TOTP algorithm {algorithm!r} (use sha1/sha256/sha512)") from None
+        raise ValueError(
+            f"unknown TOTP algorithm {algorithm!r} (use sha1/sha256/sha512)"
+        ) from None
     key = _decode_seed(seed_b32)
     counter = int((time.time() if at is None else at) // period)
     mac = hmac.new(key, struct.pack(">Q", counter), digest).digest()

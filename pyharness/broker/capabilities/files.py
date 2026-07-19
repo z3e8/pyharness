@@ -36,6 +36,8 @@ class FilesCapability:
         text = target.read_text()
         count = text.count(old)
         if count != 1:
-            raise ValueError(f"`old` matched {count} times in {target}; must match exactly once")
+            raise ValueError(
+                f"`old` matched {count} times in {target}; must match exactly once"
+            )
         target.write_text(text.replace(old, new))
         return f"edited {target}"

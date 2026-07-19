@@ -16,9 +16,21 @@ def _run(monkeypatch, tmp_path, *argv):
 
 def test_add_local_server(monkeypatch, tmp_path, capsys):
     path = _run(
-        monkeypatch, tmp_path,
-        "add", "weather", "--command", "npx", "--arg=-y", "--arg", "weather-mcp",
-        "--summary", "Weather lookups.", "--keyword", "forecast", "--category", "data",
+        monkeypatch,
+        tmp_path,
+        "add",
+        "weather",
+        "--command",
+        "npx",
+        "--arg=-y",
+        "--arg",
+        "weather-mcp",
+        "--summary",
+        "Weather lookups.",
+        "--keyword",
+        "forecast",
+        "--category",
+        "data",
     )
     spec = json.loads(path.read_text())["mcpServers"]["weather"]
     assert spec == {
@@ -33,9 +45,14 @@ def test_add_local_server(monkeypatch, tmp_path, capsys):
 
 def test_add_remote_server_with_secret_ref(monkeypatch, tmp_path):
     path = _run(
-        monkeypatch, tmp_path,
-        "add", "gh", "--url", "https://mcp.example/mcp",
-        "--header", "Authorization=secret:gh_token",
+        monkeypatch,
+        tmp_path,
+        "add",
+        "gh",
+        "--url",
+        "https://mcp.example/mcp",
+        "--header",
+        "Authorization=secret:gh_token",
     )
     spec = json.loads(path.read_text())["mcpServers"]["gh"]
     assert spec["headers"] == {"Authorization": "secret:gh_token"}
@@ -44,8 +61,14 @@ def test_add_remote_server_with_secret_ref(monkeypatch, tmp_path):
 def test_add_refuses_cleartext_credentials(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="cleartext"):
         _run(
-            monkeypatch, tmp_path,
-            "add", "gh", "--url", "https://x/mcp", "--header", "Authorization=Bearer abc",
+            monkeypatch,
+            tmp_path,
+            "add",
+            "gh",
+            "--url",
+            "https://x/mcp",
+            "--header",
+            "Authorization=Bearer abc",
         )
     assert not (tmp_path / "mcp.json").exists()
 

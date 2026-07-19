@@ -21,7 +21,7 @@ import inspect
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -36,8 +36,11 @@ def validate_skill_name(name: str) -> str:
     simple slug — no dots or slashes that could traverse out of it. The single
     check every write/edit/record path runs before `name` touches the filesystem."""
     if not _NAME_RE.match(name):
-        raise ValueError(f"skill name {name!r} must match [A-Za-z0-9_-]+ (no dots or slashes)")
+        raise ValueError(
+            f"skill name {name!r} must match [A-Za-z0-9_-]+ (no dots or slashes)"
+        )
     return name
+
 
 # A skill's trust state lives in a sidecar next to SKILL.md, not in the
 # procedure itself: whether it has ever run successfully (`verified`) and a
@@ -58,7 +61,10 @@ def read_journal(skill_dir: str | Path) -> dict:
         data = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return dict(_EMPTY_JOURNAL, uses=[])
-    return {"verified": bool(data.get("verified", False)), "uses": list(data.get("uses", []))}
+    return {
+        "verified": bool(data.get("verified", False)),
+        "uses": list(data.get("uses", [])),
+    }
 
 
 def _write_journal(skill_dir: Path, data: dict) -> None:
@@ -76,7 +82,7 @@ def record_use(
         raise ValueError("outcome must be 'worked' or 'failed'")
     skill_dir = Path(skill_dir)
     data = read_journal(skill_dir)
-    stamp = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    stamp = now or datetime.now(UTC).isoformat(timespec="seconds")
     entry = {"at": stamp, "outcome": outcome}
     if note:
         entry["note"] = note
@@ -121,7 +127,9 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         return None
     meta, body = parse_skill_md(md.read_text())
     name = meta.get("name") or skill_dir.name
-    keywords = tuple(k.strip() for k in meta.get("keywords", "").split(",") if k.strip())
+    keywords = tuple(
+        k.strip() for k in meta.get("keywords", "").split(",") if k.strip()
+    )
     journal = read_journal(skill_dir)
     registry.add_skill(
         name,

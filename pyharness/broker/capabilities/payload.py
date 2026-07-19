@@ -45,7 +45,9 @@ def _download_path(content_type: str, default_name: str) -> str:
     if "." in stem:
         ext = ""
     else:
-        ext = mimetypes.guess_extension((content_type or "").split(";")[0].strip()) or ""
+        ext = (
+            mimetypes.guess_extension((content_type or "").split(";")[0].strip()) or ""
+        )
     return f"{_DOWNLOAD_DIR}/{uuid4().hex}-{stem}{ext}"
 
 
@@ -76,7 +78,13 @@ def deliver(
     limit = INLINE_TEXT_LIMIT if inline_limit is None else inline_limit
     textual = is_textual(content_type)
     if save is None and textual and len(text) <= limit:
-        return {"text": text, "path": None, "bytes": None, "preview": None, "saved": False}
+        return {
+            "text": text,
+            "path": None,
+            "bytes": None,
+            "preview": None,
+            "saved": False,
+        }
 
     data = text.encode("utf-8", "replace") if textual else (content or b"")
     path = save or _download_path(content_type, default_name)

@@ -160,7 +160,9 @@ def _project_of(session_dir: Path) -> str:
 
 def open_db(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path).expanduser()
-    ensure_private_dir(path.parent)  # ~/.pyharness (0700): the index is not world-readable
+    ensure_private_dir(
+        path.parent
+    )  # ~/.pyharness (0700): the index is not world-readable
     new_db = not path.exists()
     conn = sqlite3.connect(path)
     if new_db:
@@ -179,7 +181,9 @@ def open_db(db_path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
     if _has_meta(conn):
-        row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()
         if row is not None and row[0] != _SCHEMA_VERSION:
             _drop_all(conn)  # stale schema: the DB is a cache — rebuild, don't migrate
     conn.executescript(_SCHEMA)
@@ -266,7 +270,9 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
     """(Re)index one session dir; returns whether it was (re)parsed."""
     sid = str(session_dir.resolve())
     fingerprint = _fingerprint(session_dir)
-    row = conn.execute("SELECT fingerprint FROM sessions WHERE id = ?", (sid,)).fetchone()
+    row = conn.execute(
+        "SELECT fingerprint FROM sessions WHERE id = ?", (sid,)
+    ).fetchone()
     if row is not None and row[0] == fingerprint:
         return False
 
@@ -281,8 +287,16 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
         if kind == "llm_call":
             conn.execute(
                 "INSERT INTO llm_calls VALUES (?,?,?,?,?,?,?,?)",
-                (sid, ts, e.get("model"), e.get("tier"), e.get("cost_usd"),
-                 e.get("latency_s"), e.get("input_tokens"), e.get("output_tokens")),
+                (
+                    sid,
+                    ts,
+                    e.get("model"),
+                    e.get("tier"),
+                    e.get("cost_usd"),
+                    e.get("latency_s"),
+                    e.get("input_tokens"),
+                    e.get("output_tokens"),
+                ),
             )
         elif kind == "code":
             if pending_cell is not None:
@@ -312,10 +326,17 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
         approved = e.get("approved")
         conn.execute(
             "INSERT INTO actions VALUES (?,?,?,?,?,?,?,?,?)",
-            (sid, e.get("ts"), e.get("action"), e.get("phase"),
-             None if ok is None else int(bool(ok)),
-             e.get("decision"), None if approved is None else int(bool(approved)),
-             _clip(e.get("error")) or None, _clip(e.get("args")) or None),
+            (
+                sid,
+                e.get("ts"),
+                e.get("action"),
+                e.get("phase"),
+                None if ok is None else int(bool(ok)),
+                e.get("decision"),
+                None if approved is None else int(bool(approved)),
+                _clip(e.get("error")) or None,
+                _clip(e.get("args")) or None,
+            ),
         )
 
     # The summary row shares its counting and outcome vocabulary with the CLI's
@@ -323,13 +344,27 @@ def _index_session(conn: sqlite3.Connection, session_dir: Path) -> bool:
     d = session_digest(session_dir)
     conn.execute(
         "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (sid, session_dir.name, _project_of(session_dir), d["started"], d["ended"],
-         None if d["task"] is None else _clip(d["task"]),
-         d["tasks"], d["outcome"],
-         None if d["answer"] is None else _clip(d["answer"]),
-         d["steps"], d["errors"], d["failed_actions"], d["llm_calls"],
-         d["cost_usd"], d["actions"], d["denials"], d["aborted_actions"],
-         d["events"], fingerprint),
+        (
+            sid,
+            session_dir.name,
+            _project_of(session_dir),
+            d["started"],
+            d["ended"],
+            None if d["task"] is None else _clip(d["task"]),
+            d["tasks"],
+            d["outcome"],
+            None if d["answer"] is None else _clip(d["answer"]),
+            d["steps"],
+            d["errors"],
+            d["failed_actions"],
+            d["llm_calls"],
+            d["cost_usd"],
+            d["actions"],
+            d["denials"],
+            d["aborted_actions"],
+            d["events"],
+            fingerprint,
+        ),
     )
     return True
 
@@ -350,10 +385,16 @@ def _index_skills(conn: sqlite3.Connection, skills_dir: Path) -> None:
         last = uses[-1] if uses else {}
         conn.execute(
             "INSERT INTO skills VALUES (?,?,?,?,?,?,?,?)",
-            (child.name, int(journal["verified"]), len(uses),
-             sum(u.get("outcome") == "worked" for u in uses),
-             sum(u.get("outcome") == "failed" for u in uses),
-             last.get("at"), last.get("outcome"), last.get("note")),
+            (
+                child.name,
+                int(journal["verified"]),
+                len(uses),
+                sum(u.get("outcome") == "worked" for u in uses),
+                sum(u.get("outcome") == "failed" for u in uses),
+                last.get("at"),
+                last.get("outcome"),
+                last.get("note"),
+            ),
         )
 
 

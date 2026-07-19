@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import ModuleType
 
-import pytest
-
 from pyharness.tools.registry import Registry
 
 
@@ -26,7 +24,9 @@ def send(channel: str, text: str):  # noqa: D401
 
 def test_empty_query_lists_only_featured():
     reg = Registry()
-    reg.register(_tool("shown", "a common tool", send), source="installed", featured=True)
+    reg.register(
+        _tool("shown", "a common tool", send), source="installed", featured=True
+    )
     reg.register(_tool("hidden", "a long-tail tool", send), source="installed")
     listing = reg.search("")
     assert "# shown" in listing
@@ -35,7 +35,9 @@ def test_empty_query_lists_only_featured():
 
 def test_include_all_surfaces_the_long_tail():
     reg = Registry()
-    reg.register(_tool("shown", "a common tool", send), source="installed", featured=True)
+    reg.register(
+        _tool("shown", "a common tool", send), source="installed", featured=True
+    )
     reg.register(_tool("hidden", "a long-tail tool", send), source="installed")
     listing = reg.search("", include_all=True)
     assert "# shown" in listing and "# hidden" in listing
@@ -43,8 +45,12 @@ def test_include_all_surfaces_the_long_tail():
 
 def test_keyword_alias_matches_intent_word():
     reg = Registry()
-    reg.register(_tool("slack", "Slack integration", send),
-                 source="installed", category="chat", keywords=("message", "im"))
+    reg.register(
+        _tool("slack", "Slack integration", send),
+        source="installed",
+        category="chat",
+        keywords=("message", "im"),
+    )
     # "message" appears in neither the name nor the summary — only the keywords.
     listing = reg.search("message")
     assert "# slack" in listing
@@ -85,7 +91,9 @@ def test_exact_name_outranks_summary_match():
 
 def test_no_match_falls_back_to_common_tools():
     reg = Registry()
-    reg.register(_tool("common", "a featured tool", send), source="installed", featured=True)
+    reg.register(
+        _tool("common", "a featured tool", send), source="installed", featured=True
+    )
     listing = reg.search("nonexistent-xyz")
     assert "no tool matched" in listing
     assert "# common" in listing  # featured set shown instead of a dead end

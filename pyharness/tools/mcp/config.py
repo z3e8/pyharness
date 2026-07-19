@@ -34,7 +34,9 @@ def load_config(path: str | Path) -> dict:
     return json.loads(Path(path).read_text())
 
 
-def mount_config(registry, config: dict | str | Path, *, vault=None, lazy: bool = True) -> list[str]:
+def mount_config(
+    registry, config: dict | str | Path, *, vault=None, lazy: bool = True
+) -> list[str]:
     """Mount every server declared in `config` into `registry`. `config` may be a
     dict or a path to a JSON file. Returns the registered tool names.
 
@@ -64,7 +66,8 @@ def mount_config(registry, config: dict | str | Path, *, vault=None, lazy: bool 
                     _loader(name, spec, env, headers),
                     source="installed",
                     kind="mcp",
-                    summary=spec.get("summary") or f"MCP server {name!r} (not yet connected)",
+                    summary=spec.get("summary")
+                    or f"MCP server {name!r} (not yet connected)",
                     **meta,
                 )
             )
@@ -114,7 +117,9 @@ def _resolve_secrets(mapping: dict | None, vault) -> dict | None:
     for key, value in mapping.items():
         if isinstance(value, str) and value.startswith(_SECRET_PREFIX):
             if vault is None:
-                raise ValueError(f"{key!r} references a secret but no vault was provided")
-            value = vault.get(value[len(_SECRET_PREFIX):])
+                raise ValueError(
+                    f"{key!r} references a secret but no vault was provided"
+                )
+            value = vault.get(value[len(_SECRET_PREFIX) :])
         resolved[key] = value
     return resolved

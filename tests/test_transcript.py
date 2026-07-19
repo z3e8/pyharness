@@ -28,8 +28,14 @@ def _seed_session(root, name):
         d / "trace.jsonl",
         [
             {"ts": 1.0, "kind": "task", "text": "apply to job"},
-            {"ts": 2.0, "kind": "llm_call", "text": "fetching", "cost_usd": 0.01,
-             "system": "SECRET-PROMPT", "messages": [{"role": "user", "text": "hidden"}]},
+            {
+                "ts": 2.0,
+                "kind": "llm_call",
+                "text": "fetching",
+                "cost_usd": 0.01,
+                "system": "SECRET-PROMPT",
+                "messages": [{"role": "user", "text": "hidden"}],
+            },
             {"ts": 3.0, "kind": "code", "text": "print('x')"},
             {"ts": 4.0, "kind": "output", "text": "x"},
             {"ts": 4.5, "kind": "action_end", "text": "files.write", "ok": True},
@@ -60,7 +66,9 @@ def test_render_transcript_drops_prompt_snapshots(tmp_path):
 
 def test_render_transcript_truncates_entries(tmp_path):
     d = tmp_path / "s"
-    _write_jsonl(d / "trace.jsonl", [{"ts": 1.0, "kind": "output", "text": "y" * 10_000}])
+    _write_jsonl(
+        d / "trace.jsonl", [{"ts": 1.0, "kind": "output", "text": "y" * 10_000}]
+    )
     text = render_transcript(d / "trace.jsonl")
     assert len(text) < 6000 and "truncated" in text
 
@@ -77,8 +85,15 @@ def test_render_transcript_missing_trace_raises(tmp_path):
     ("kwargs", "expected"),
     [
         (dict(answer="done", errors=0, tasks=1, stopped_budget=False), "answered"),
-        (dict(answer="(stopped: reached max_steps)", errors=0, tasks=1,
-              stopped_budget=False), "stopped:max_steps"),
+        (
+            dict(
+                answer="(stopped: reached max_steps)",
+                errors=0,
+                tasks=1,
+                stopped_budget=False,
+            ),
+            "stopped:max_steps",
+        ),
         (dict(answer=None, errors=1, tasks=1, stopped_budget=True), "stopped:budget"),
         (dict(answer=None, errors=1, tasks=1, stopped_budget=False), "error"),
         (dict(answer=None, errors=0, tasks=1, stopped_budget=False), "aborted"),
@@ -99,13 +114,20 @@ def test_session_digest_envelope(tmp_path):
     assert digest["outcome"] == "answered"
     assert digest["task"] == "apply to job"
     assert digest["answer"] == "done"
-    assert (digest["tasks"], digest["steps"], digest["llm_calls"], digest["errors"]) == (1, 1, 1, 0)
+    assert (
+        digest["tasks"],
+        digest["steps"],
+        digest["llm_calls"],
+        digest["errors"],
+    ) == (1, 1, 1, 0)
     assert digest["failed_actions"] == 0  # the ok=True action_end doesn't count
     # cumulative budget beats the summed per-call costs
     assert digest["cost_usd"] == 0.05
     assert (digest["actions"], digest["denials"]) == (2, 1)
     assert (digest["started"], digest["ended"]) == (1.0, 6.0)
-    assert digest["trace"].endswith("trace.jsonl") and digest["audit"].endswith("audit.jsonl")
+    assert digest["trace"].endswith("trace.jsonl") and digest["audit"].endswith(
+        "audit.jsonl"
+    )
     assert digest["workspace"].endswith("workspace")
 
 
@@ -126,8 +148,14 @@ def test_session_digest_counts_failed_actions(tmp_path):
         [
             {"ts": 1.0, "kind": "task", "text": "t"},
             {"ts": 2.0, "kind": "action_start", "text": "llm.llm"},
-            {"ts": 3.0, "kind": "action_end", "text": "llm.llm", "ok": False,
-             "error": "StreamStalled('silence')", "elapsed_s": 620.0},
+            {
+                "ts": 3.0,
+                "kind": "action_end",
+                "text": "llm.llm",
+                "ok": False,
+                "error": "StreamStalled('silence')",
+                "elapsed_s": 620.0,
+            },
             {"ts": 4.0, "kind": "action_end", "text": "files.write", "ok": True},
         ],
     )
@@ -168,7 +196,12 @@ def test_session_digest_counts_event_records_separately(tmp_path):
         [
             {"ts": 1.0, "action": "browser.goto", "phase": "start", "args": "'u'"},
             {"ts": 2.0, "action": "browser.goto", "phase": "end", "ok": True},
-            {"ts": 3.0, "event": "profile_saved", "profile": "acme", "trigger": "close"},
+            {
+                "ts": 3.0,
+                "event": "profile_saved",
+                "profile": "acme",
+                "trigger": "close",
+            },
         ],
     )
     digest = session_digest(d)

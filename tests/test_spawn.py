@@ -26,7 +26,20 @@ class ScriptedLLM:
         self._completions = list(completions)
         self.child_budget = None
 
-    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="mid",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         return self._completions.pop(0)
 
     def with_budget(self, budget):
@@ -42,7 +55,14 @@ def _cell(code: str, call_id: str = "c1") -> Completion:
     return Completion(
         text="",
         tool_calls=[ToolCall(id=call_id, name="run_python", input={"code": code})],
-        content=[{"type": "tool_use", "id": call_id, "name": "run_python", "input": {"code": code}}],
+        content=[
+            {
+                "type": "tool_use",
+                "id": call_id,
+                "name": "run_python",
+                "input": {"code": code},
+            }
+        ],
     )
 
 
@@ -89,7 +109,15 @@ def test_child_holds_body_plus_granted_never_spawn(tmp_path):
     finally:
         child.close()
     # Body always; tools implied by an external grant.
-    assert {"read", "write", "edit", "search", "llm", "map_llm", "search_tools"} <= names
+    assert {
+        "read",
+        "write",
+        "edit",
+        "search",
+        "llm",
+        "map_llm",
+        "search_tools",
+    } <= names
     # Never spawn (depth one); nothing that wasn't granted.
     assert "spawn" not in names
     assert "bash" not in names
@@ -98,7 +126,9 @@ def test_child_holds_body_plus_granted_never_spawn(tmp_path):
 
 
 def test_spawn_shares_workspace_and_parent_audit_chain(tmp_path):
-    llm = ScriptedLLM([_cell("write('out.txt', 'hi from child')"), _text("wrote out.txt")])
+    llm = ScriptedLLM(
+        [_cell("write('out.txt', 'hi from child')"), _text("wrote out.txt")]
+    )
     parent = _session(tmp_path, llm, approver=lambda req: True)
     try:
         handle = parent.broker.call("spawn", "spawn", "write the file", tools=())
@@ -116,7 +146,9 @@ def test_spawn_shares_workspace_and_parent_audit_chain(tmp_path):
 
 def test_spawn_budget_slice_defaults_to_quarter_of_remaining(tmp_path):
     llm = ScriptedLLM([_text("done")])
-    parent = _session(tmp_path, llm, budget=Budget(limit_usd=8.0), approver=lambda req: True)
+    parent = _session(
+        tmp_path, llm, budget=Budget(limit_usd=8.0), approver=lambda req: True
+    )
     try:
         parent.broker.call("spawn", "wait", parent.broker.call("spawn", "spawn", "t"))
     finally:
@@ -126,9 +158,13 @@ def test_spawn_budget_slice_defaults_to_quarter_of_remaining(tmp_path):
 
 def test_spawn_budget_explicit_capped_by_remaining(tmp_path):
     llm = ScriptedLLM([_text("done")])
-    parent = _session(tmp_path, llm, budget=Budget(limit_usd=8.0), approver=lambda req: True)
+    parent = _session(
+        tmp_path, llm, budget=Budget(limit_usd=8.0), approver=lambda req: True
+    )
     try:
-        parent.broker.call("spawn", "wait", parent.broker.call("spawn", "spawn", "t", budget_usd=100.0))
+        parent.broker.call(
+            "spawn", "wait", parent.broker.call("spawn", "spawn", "t", budget_usd=100.0)
+        )
     finally:
         parent.close()
     assert llm.child_budget.limit_usd == 8.0
@@ -172,7 +208,11 @@ def test_child_approvals_bubble_to_parent_labeled(tmp_path):
     llm = ScriptedLLM([_cell("save_skill('x', 'desc', 'steps')"), _text("done")])
     parent = _session(tmp_path, llm, approver=approver)
     try:
-        parent.broker.call("spawn", "wait", parent.broker.call("spawn", "spawn", "save it", tools=("skills",)))
+        parent.broker.call(
+            "spawn",
+            "wait",
+            parent.broker.call("spawn", "spawn", "save it", tools=("skills",)),
+        )
     finally:
         parent.close()
     assert seen[0].startswith("spawn sub-session")
@@ -192,7 +232,9 @@ def test_failed_child_becomes_data(tmp_path):
     llm = ScriptedLLM([])  # the child's first completion raises -> child errors
     parent = _session(tmp_path, llm, approver=lambda req: True)
     try:
-        result = parent.broker.call("spawn", "wait", parent.broker.call("spawn", "spawn", "t"))
+        result = parent.broker.call(
+            "spawn", "wait", parent.broker.call("spawn", "spawn", "t")
+        )
     finally:
         parent.close()
     assert not result.ok
@@ -212,8 +254,20 @@ class GatedLLM:
         self.gate = gate
         self.child_budget = None
 
-    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None,
-                 on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="mid",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         if not self.gate.wait(5.0):
             raise AssertionError("gate never opened")
         return self._completions.pop(0)
@@ -231,8 +285,20 @@ class BarrierLLM:
     def __init__(self, barrier):
         self.barrier = barrier
 
-    def complete(self, *, system, messages, tier="mid", tools=None, max_tokens=None,
-                 on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="mid",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         self.barrier.wait(timeout=5)
         return _text("done")
 
@@ -394,7 +460,9 @@ def test_abandoned_child_settles_before_snapshot_and_never_after(tmp_path):
             json.loads(line)
             for line in (tmp_path / "s" / "trace.jsonl").read_text().splitlines()
         ]
-        assert any(r["kind"] == "spawn_abandoned" and r["child"] == handle for r in records)
+        assert any(
+            r["kind"] == "spawn_abandoned" and r["child"] == handle for r in records
+        )
         end = next(r for r in records if r["kind"] == "session_end")
         assert end["spent_usd"] == 0.5
 
@@ -448,10 +516,14 @@ def test_display_callback_is_serialized_across_threads(tmp_path):
 def test_concurrent_children_keep_the_audit_chain_intact(tmp_path):
     from pyharness.audit import verify_chain
 
-    llm = ScriptedLLM([
-        _cell("write('a.txt', 'a')"), _cell("write('b.txt', 'b')"),
-        _text("done a"), _text("done b"),
-    ])
+    llm = ScriptedLLM(
+        [
+            _cell("write('a.txt', 'a')"),
+            _cell("write('b.txt', 'b')"),
+            _text("done a"),
+            _text("done b"),
+        ]
+    )
     parent = _session(tmp_path, llm, approver=lambda req: True)
     try:
         h1 = parent.broker.call("spawn", "spawn", "write a", tools=())

@@ -92,13 +92,20 @@ def test_approval_wait_is_visible_before_the_prompt_blocks(tmp_path):
         return ApprovalOutcome.ONCE
 
     broker = _broker(
-        tmp_path, events,
-        policy=Policy(require_approval={"files.write"}), approver=approver,
+        tmp_path,
+        events,
+        policy=Policy(require_approval={"files.write"}),
+        approver=approver,
     )
     broker.call("files", "write", "a.txt", "hi")
 
     kinds = [k for k, _, _ in events]
-    assert kinds == ["action_start", "approval_pending", "approval_resolved", "action_end"]
+    assert kinds == [
+        "action_start",
+        "approval_pending",
+        "approval_resolved",
+        "action_end",
+    ]
     assert seen_at_prompt == [["action_start", "approval_pending"]]
     pending = next(e for e in events if e[0] == "approval_pending")
     assert pending[1] == "files.write"
@@ -110,8 +117,10 @@ def test_approval_wait_is_visible_before_the_prompt_blocks(tmp_path):
 def test_refused_approval_ends_the_action(tmp_path):
     events = []
     broker = _broker(
-        tmp_path, events,
-        policy=Policy(require_approval={"files.write"}), approver=lambda req: False,
+        tmp_path,
+        events,
+        policy=Policy(require_approval={"files.write"}),
+        approver=lambda req: False,
     )
 
     with pytest.raises(PermissionDenied):
@@ -144,8 +153,12 @@ def test_orphan_completion_after_abort_does_not_double_end(tmp_path):
     started, release = threading.Event(), threading.Event()
     events = []
     audit = AuditLog(tmp_path / "audit.jsonl")
-    broker = Broker(Policy(), audit, Budget(),
-                    on_event=lambda kind, text="", **extra: events.append((kind, text, extra)))
+    broker = Broker(
+        Policy(),
+        audit,
+        Budget(),
+        on_event=lambda kind, text="", **extra: events.append((kind, text, extra)),
+    )
     broker.register(_Blocker(started, release))
 
     out = {}
@@ -160,7 +173,9 @@ def test_orphan_completion_after_abort_does_not_double_end(tmp_path):
     assert out["val"] == "done"  # the orphaned call still returned normally
     assert aborted == ["block.go"]
 
-    records = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    records = [
+        json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+    ]
     block = [r for r in records if r.get("action") == "block.go"]
     assert sum(r.get("phase") == "start" for r in block) == 1
     assert sum(r.get("phase") == "end" for r in block) == 1  # not two
@@ -193,11 +208,27 @@ def test_agent_emits_llm_start_before_each_completion():
     events = []
 
     class LLM:
-        def complete(self, *, system, messages, tier="smart", tools=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+        def complete(
+            self,
+            *,
+            system,
+            messages,
+            tier="smart",
+            tools=None,
+            on_token=None,
+            on_thinking=None,
+            on_attempt=None,
+            cache_anchor=None,
+            total_deadline_s=None,
+        ):
             events.append(("complete", ""))
-            return Completion(text="done", tool_calls=[], content=[], stop_reason="end_turn")
+            return Completion(
+                text="done", tool_calls=[], content=[], stop_reason="end_turn"
+            )
 
-    agent = Agent(LLM(), Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        LLM(), Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
     agent.run("task", [])
 
     assert events.index(("llm_start", "")) < events.index(("complete", ""))

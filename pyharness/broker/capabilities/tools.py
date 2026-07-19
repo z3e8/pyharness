@@ -68,7 +68,9 @@ class ToolsCapability:
     # via call()/call_op(), just not bound in the kernel namespace.
     hidden_ops = frozenset({"invoke"})
 
-    def __init__(self, registry: Registry, *, broker=None, vault=None, mcp_config_path=None):
+    def __init__(
+        self, registry: Registry, *, broker=None, vault=None, mcp_config_path=None
+    ):
         self.registry = registry
         self._broker = broker  # set by Session; None leaves use_tool ungated
         self._vault = vault  # resolves secret:NAME refs when mounting a server
@@ -222,7 +224,9 @@ class ToolsCapability:
             bound = inspect.signature(self.add_mcp_server).bind(*args, **kwargs)
             bound.apply_defaults()
             b = bound.arguments
-            target = f"command: {b['command']}" if b.get("command") else f"url: {b['url']}"
+            target = (
+                f"command: {b['command']}" if b.get("command") else f"url: {b['url']}"
+            )
             parts = [target]
             if b.get("env"):
                 parts.append(f"env: {', '.join(b['env'])}")

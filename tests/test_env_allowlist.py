@@ -2,6 +2,7 @@
 by agent code — child kernel, shell.bash, local MCP servers — start from a
 minimal allowlist, so a secret only has to be *absent from the allowlist* to be
 protected, not *present on a denylist*."""
+
 from __future__ import annotations
 
 from pyharness import Workspace
@@ -35,7 +36,8 @@ def test_passthrough_cannot_resurrect_secrets(monkeypatch):
     monkeypatch.setenv("PYHARNESS_SECRET_GITHUB", "gh")
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")
     monkeypatch.setenv(
-        PASSTHROUGH_ENV, "ANTHROPIC_API_KEY,PYHARNESS_SECRET_GITHUB,PYHARNESS_VAULT_PASSPHRASE"
+        PASSTHROUGH_ENV,
+        "ANTHROPIC_API_KEY,PYHARNESS_SECRET_GITHUB,PYHARNESS_VAULT_PASSPHRASE",
     )
     env = minimal_environ()
     assert "ANTHROPIC_API_KEY" not in env

@@ -14,6 +14,7 @@ remote-MCP test), only egress's own lookup. Tests that need real egress behavior
 either use IP literals (which bypass resolution entirely) or re-patch the seam
 themselves — a test-body `monkeypatch` runs after this fixture and wins.
 """
+
 from __future__ import annotations
 
 import pytest

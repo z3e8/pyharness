@@ -27,9 +27,20 @@ class ScriptedLLM:
         self.replies = list(replies)
         self.calls: list[dict] = []
 
-    def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None, on_thinking=None, on_attempt=None,
-                 cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system=None,
+        messages,
+        tier="cheap",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         self.calls.append({"system": system, "messages": messages, "tier": tier})
         reply = self.replies.pop(0) if self.replies else ""
         return Completion(reply, [], [{"type": "text", "text": reply}])
@@ -39,7 +50,9 @@ class ScriptedLLM:
 
 
 def test_write_skill_persists_check_and_registry_surfaces_it(tmp_path):
-    d = write_skill(tmp_path, "s1", "desc", "steps", check="re-fetch the page; expect 200")
+    d = write_skill(
+        tmp_path, "s1", "desc", "steps", check="re-fetch the page; expect 200"
+    )
     meta, _ = parse_skill_md((d / "SKILL.md").read_text())
     assert meta["check"] == "re-fetch the page; expect 200"
 
@@ -74,7 +87,13 @@ def test_edit_skill_md_rejects_ambiguous_or_missing_old(tmp_path):
 
 
 def test_edit_skill_preserves_bundled_files(tmp_path):
-    write_skill(tmp_path, "s1", "desc", "use helper()", files={"helper.py": "def helper():\n    return 1\n"})
+    write_skill(
+        tmp_path,
+        "s1",
+        "desc",
+        "use helper()",
+        files={"helper.py": "def helper():\n    return 1\n"},
+    )
     edit_skill_md(tmp_path, "s1", [{"old": "helper()", "new": "helper() twice"}])
     assert (tmp_path / "s1" / "helper.py").exists()
 
@@ -87,7 +106,12 @@ def test_lessons_dedupe_count_and_establish(tmp_path):
     e1 = lessons_store.record(path, "Greenhouse boards paginate at 100.", session="a")
     assert e1["count"] == 1
     # same session re-observing: still one observation
-    assert lessons_store.record(path, "Greenhouse boards paginate at 100.", session="a")["count"] == 1
+    assert (
+        lessons_store.record(path, "Greenhouse boards paginate at 100.", session="a")[
+            "count"
+        ]
+        == 1
+    )
     assert lessons_store.established(path) == []
     # a different session establishes it (normalization catches formatting drift)
     e2 = lessons_store.record(path, "greenhouse boards paginate at 100", session="b")
@@ -102,8 +126,13 @@ def test_lessons_dedupe_count_and_establish(tmp_path):
 
 def _session(tmp_path, replies, approver=None):
     llm = ScriptedLLM(replies)
-    s = Session(tmp_path / "sess", llm=llm, skills_dir=tmp_path / "skills",
-                approver=approver, unsafe_in_process=True)
+    s = Session(
+        tmp_path / "sess",
+        llm=llm,
+        skills_dir=tmp_path / "skills",
+        approver=approver,
+        unsafe_in_process=True,
+    )
     return s, llm
 
 
@@ -145,12 +174,17 @@ def test_reflect_records_lesson(tmp_path):
 
 
 def test_reflect_save_skill_routes_through_approval(tmp_path):
-    proposal = json.dumps({
-        "action": "save_skill", "name": "apply-greenhouse",
-        "description": "apply to a greenhouse job", "reason": "recurring",
-        "instructions": "1. fetch the board", "check": "confirmation page shows 'submitted'",
-        "keywords": ["jobs"],
-    })
+    proposal = json.dumps(
+        {
+            "action": "save_skill",
+            "name": "apply-greenhouse",
+            "description": "apply to a greenhouse job",
+            "reason": "recurring",
+            "instructions": "1. fetch the board",
+            "check": "confirmation page shows 'submitted'",
+            "keywords": ["jobs"],
+        }
+    )
     # Denied: no approver
     s, _ = _session(tmp_path, [proposal])
     try:
@@ -180,17 +214,23 @@ def test_reflect_save_skill_routes_through_approval(tmp_path):
 
 def test_reflect_edit_skill_applies_delta(tmp_path):
     write_skill(tmp_path / "skills", "apply-greenhouse", "d", "click #submit-v1")
-    proposal = json.dumps({
-        "action": "edit_skill", "name": "apply-greenhouse", "reason": "selector changed",
-        "edits": [{"old": "#submit-v1", "new": "#submit-v2"}],
-    })
+    proposal = json.dumps(
+        {
+            "action": "edit_skill",
+            "name": "apply-greenhouse",
+            "reason": "selector changed",
+            "edits": [{"old": "#submit-v1", "new": "#submit-v2"}],
+        }
+    )
     s, _ = _session(tmp_path, [proposal], approver=lambda req: True)
     try:
         s.messages.append({"role": "user", "content": "t"})
         s.trace.record("task", "apply")
         summary = s.reflect()
         assert "edited skill" in summary
-        _, body = parse_skill_md((tmp_path / "skills" / "apply-greenhouse" / "SKILL.md").read_text())
+        _, body = parse_skill_md(
+            (tmp_path / "skills" / "apply-greenhouse" / "SKILL.md").read_text()
+        )
         assert "#submit-v2" in body
     finally:
         s.close()
@@ -204,7 +244,11 @@ def test_agent_edit_skill_builtin_is_gated(tmp_path):
     s, _ = _session(tmp_path, [])
     try:
         with pytest.raises(PermissionDenied):
-            s.broker.call("skills", "edit_skill", name="s1",
-                          edits=[{"old": "old text here", "new": "new"}])
+            s.broker.call(
+                "skills",
+                "edit_skill",
+                name="s1",
+                edits=[{"old": "old text here", "new": "new"}],
+            )
     finally:
         s.close()

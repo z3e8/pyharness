@@ -116,22 +116,32 @@ class LLMCapability:
             # window into a long or retrying call: a periodic streaming
             # heartbeat, each failure with the clock that fired, and each
             # retry as it actually launches ("start" only fires when one does).
-            outcome, attempt, attempts = info["outcome"], info["attempt"], info["attempts"]
+            outcome, attempt, attempts = (
+                info["outcome"],
+                info["attempt"],
+                info["attempts"],
+            )
             if outcome == "streaming":
                 self._emit(
                     f"{label} — streaming, ~{info['output_tokens']} tokens ({info['elapsed_s']:.0f}s)",
-                    phase="progress", tier=eff_tier, attempt=attempt,
+                    phase="progress",
+                    tier=eff_tier,
+                    attempt=attempt,
                 )
             elif outcome == "failed":
                 cause = info.get("clock_fired") or info.get("error")
                 self._emit(
                     f"{label} — attempt {attempt}/{attempts} failed ({cause}, {info['elapsed_s']}s)",
-                    phase="progress", tier=eff_tier, attempt=attempt,
+                    phase="progress",
+                    tier=eff_tier,
+                    attempt=attempt,
                 )
             elif outcome == "start" and attempt > 1:
                 self._emit(
                     f"{label} — retry {attempt}/{attempts}",
-                    phase="progress", tier=eff_tier, attempt=attempt,
+                    phase="progress",
+                    tier=eff_tier,
+                    attempt=attempt,
                 )
 
         completion = self.llm.complete(
@@ -203,7 +213,11 @@ class LLMCapability:
                 return Result(
                     True,
                     self._complete(
-                        prompt, tier, system or WORKER_SYSTEM, ctx, max_tokens,
+                        prompt,
+                        tier,
+                        system or WORKER_SYSTEM,
+                        ctx,
+                        max_tokens,
                         label=f"map_llm[{index}]",
                     ),
                 )
@@ -212,7 +226,9 @@ class LLMCapability:
 
         n = len(prompts)
         eff_tier = tier or self.default_tier
-        self._emit(f"map_llm — 0/{n} done", phase="start", done=0, total=n, tier=eff_tier)
+        self._emit(
+            f"map_llm — 0/{n} done", phase="start", done=0, total=n, tier=eff_tier
+        )
         # Throttle to ~10 progress lines regardless of fan-out size, so a large
         # batch shows steady movement without flooding either surface.
         step = max(1, n // 10)
@@ -220,7 +236,9 @@ class LLMCapability:
         results: list[Result | None] = [None] * len(prompts)
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             futures = {
-                pool.submit(work, i, p, contexts[i] if contexts is not None else context): i
+                pool.submit(
+                    work, i, p, contexts[i] if contexts is not None else context
+                ): i
                 for i, p in enumerate(prompts)
             }
             done = 0

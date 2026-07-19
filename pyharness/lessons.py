@@ -47,7 +47,9 @@ def load(path: str | Path) -> list[dict]:
 
 def _save(path: Path, lessons: list[dict]) -> None:
     if len(lessons) > _MAX_LESSONS:
-        lessons = sorted(lessons, key=lambda e: (-e["count"], -e["last_at"]))[:_MAX_LESSONS]
+        lessons = sorted(lessons, key=lambda e: (-e["count"], -e["last_at"]))[
+            :_MAX_LESSONS
+        ]
         lessons.sort(key=lambda e: e["first_at"])
     ensure_private_dir(path.parent)  # ~/.pyharness (0700)
     path.write_text(json.dumps({"lessons": lessons}, indent=2) + "\n")

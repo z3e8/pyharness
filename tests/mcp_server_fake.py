@@ -17,7 +17,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "message": {"type": "string", "description": "text to echo"},
-                "shout": {"type": "boolean", "description": "uppercase it", "default": False},
+                "shout": {
+                    "type": "boolean",
+                    "description": "uppercase it",
+                    "default": False,
+                },
             },
             "required": ["message"],
         },
@@ -110,7 +114,9 @@ def main():
             continue  # a response to a server-initiated request (e.g. our ping)
         else:
             result = {}
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": result}) + "\n")
+        sys.stdout.write(
+            json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": result}) + "\n"
+        )
         sys.stdout.flush()
 
 

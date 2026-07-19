@@ -48,7 +48,12 @@ class EgressBlocked(Exception):
 
 
 def _strict() -> bool:
-    return os.environ.get(BLOCK_PRIVATE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get(BLOCK_PRIVATE_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _resolve_host(host: str) -> list[tuple]:
@@ -111,7 +116,9 @@ def check_url(url: str) -> str:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
     if scheme not in _ALLOWED_SCHEMES:
-        raise EgressBlocked(f"scheme {scheme or '(none)'!r} is not permitted (only http/https)")
+        raise EgressBlocked(
+            f"scheme {scheme or '(none)'!r} is not permitted (only http/https)"
+        )
     host = parts.hostname
     if not host:
         raise EgressBlocked(f"url {url!r} has no host")

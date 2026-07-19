@@ -115,7 +115,9 @@ class StdioTransport:
             except queue.Empty:
                 continue  # loop re-checks the deadline and raises
             if reply is None:  # reader hit EOF — the server is gone
-                raise MCPError(f"MCP server closed the connection{self._stderr_suffix()}")
+                raise MCPError(
+                    f"MCP server closed the connection{self._stderr_suffix()}"
+                )
             if reply.get("id") == message["id"]:
                 return reply
             # else: a stale reply to an earlier timed-out request; drop it.
@@ -167,7 +169,9 @@ class StdioTransport:
     def _write(self, message: dict) -> None:
         with self._write_lock:
             if self._proc.stdin is None or self._proc.poll() is not None:
-                raise MCPError(f"MCP server process is not running{self._stderr_suffix()}")
+                raise MCPError(
+                    f"MCP server process is not running{self._stderr_suffix()}"
+                )
             self._proc.stdin.write(json.dumps(message) + "\n")
             self._proc.stdin.flush()
 
@@ -180,7 +184,9 @@ class HttpTransport:
     both are handled. A `Mcp-Session-Id` header issued at `initialize` is echoed
     on every subsequent request to keep the server-side session."""
 
-    def __init__(self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 30.0):
+    def __init__(
+        self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 30.0
+    ):
         import httpx  # provided transitively via the anthropic dependency
 
         # A remote MCP URL is an outbound target like any other — an internal or
@@ -196,7 +202,9 @@ class HttpTransport:
 
     def request(self, message: dict) -> dict:
         check_url(self._url)  # re-vet per request: DNS may have rebound since mount
-        with self._client.stream("POST", self._url, json=message, headers=self._headers()) as resp:
+        with self._client.stream(
+            "POST", self._url, json=message, headers=self._headers()
+        ) as resp:
             resp.raise_for_status()
             self._capture_session(resp)
             ctype = resp.headers.get("content-type", "")
@@ -209,7 +217,9 @@ class HttpTransport:
 
     def notify(self, message: dict) -> None:
         check_url(self._url)  # re-vet per request: DNS may have rebound since mount
-        with self._client.stream("POST", self._url, json=message, headers=self._headers()) as resp:
+        with self._client.stream(
+            "POST", self._url, json=message, headers=self._headers()
+        ) as resp:
             resp.raise_for_status()
             self._capture_session(resp)
             resp.read()  # drain; servers reply 202 Accepted with no body
@@ -241,7 +251,7 @@ def _iter_sse(resp):
                 yield json.loads("\n".join(data))
                 data = []
         elif line.startswith("data:"):
-            data.append(line[len("data:"):].lstrip())
+            data.append(line[len("data:") :].lstrip())
         # comment lines (":...") and other fields (event:, id:) are ignored
     if data:
         yield json.loads("\n".join(data))

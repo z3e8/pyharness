@@ -3,7 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from pyharness import ActionCategory, Budget, Decision, Policy, Registry, Vault, Workspace
+from pyharness import (
+    ActionCategory,
+    Budget,
+    Decision,
+    Policy,
+    Registry,
+    Vault,
+    Workspace,
+)
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
 from pyharness.broker.capabilities import (
@@ -174,10 +182,13 @@ def test_broker_writes_paired_two_phase_audit_records(tmp_path):
     broker = _broker(tmp_path)
     broker.register(FilesCapability(Workspace(tmp_path)))
     broker.namespace()["write"]("a.txt", "x")
-    start, end = [json.loads(line) for line in
-                  (tmp_path / "audit.jsonl").read_text().splitlines()]
+    start, end = [
+        json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+    ]
     assert start["action"] == end["action"] == "files.write"
-    assert start["phase"] == "start" and "a.txt" in start["args"]  # intent, pre-execution
+    assert (
+        start["phase"] == "start" and "a.txt" in start["args"]
+    )  # intent, pre-execution
     assert end["phase"] == "end" and end["ok"] is True
     assert verify_chain(tmp_path / "audit.jsonl")[0]
 
@@ -213,13 +224,17 @@ def test_broker_denies_and_failures_still_pair_start_with_end(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         broker.call("boom", "interrupt")  # a Ctrl-C landing mid-execution
 
-    entries = [json.loads(line) for line in
-               (tmp_path / "audit.jsonl").read_text().splitlines()]
+    entries = [
+        json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+    ]
     phases = [(e["action"], e.get("phase")) for e in entries]
     assert phases == [
-        ("files.write", "start"), ("files.write", "end"),
-        ("boom.go", "start"), ("boom.go", "end"),
-        ("boom.interrupt", "start"), ("boom.interrupt", "end"),
+        ("files.write", "start"),
+        ("files.write", "end"),
+        ("boom.go", "start"),
+        ("boom.go", "end"),
+        ("boom.interrupt", "start"),
+        ("boom.interrupt", "end"),
     ]
     deny_end, refusal_end, interrupt_end = entries[1], entries[3], entries[5]
     assert deny_end["decision"] == "deny" and deny_end["ok"] is False
@@ -254,8 +269,10 @@ def test_abort_inflight_closes_the_record_of_a_stuck_call(tmp_path):
     assert running.wait(5)
     try:
         assert broker.abort_inflight() == ["stuck.wait"]
-        entries = [json.loads(line) for line in
-                   (tmp_path / "audit.jsonl").read_text().splitlines()]
+        entries = [
+            json.loads(line)
+            for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+        ]
         # The stuck call exists in the chain: its intent record plus the
         # teardown-appended outcome record.
         assert [e.get("phase") for e in entries] == ["start", "end"]
@@ -295,8 +312,12 @@ def test_session_close_records_aborted_inflight_actions(tmp_path):
         thread.start()
         assert running.wait(5)
         session.close()
-        entries = [json.loads(line) for line in
-                   (session.workspace.root / "audit.jsonl").read_text().splitlines()]
+        entries = [
+            json.loads(line)
+            for line in (session.workspace.root / "audit.jsonl")
+            .read_text()
+            .splitlines()
+        ]
         aborted = [e for e in entries if e.get("error") == "aborted"]
         assert [e["action"] for e in aborted] == ["stuck.wait"]
     finally:
@@ -312,7 +333,9 @@ def test_policy_approval(tmp_path):
         seen["category"] = request.category
         return True
 
-    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver)
+    broker = _broker(
+        tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver
+    )
     broker.register(FilesCapability(Workspace(tmp_path)))
     broker.namespace()["write"]("x.txt", "y")
     assert seen["action"] == "files.write"
@@ -364,8 +387,10 @@ def test_non_core_capability_is_gated_but_not_a_builtin(tmp_path):
     import json
 
     broker.call("files", "write", "note.txt", "data")
-    actions = [json.loads(line).get("action") for line in
-               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    actions = [
+        json.loads(line).get("action")
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
     assert "files.write" in actions
 
 
@@ -376,16 +401,23 @@ def test_as_tool_module_surfaces_a_capability_through_the_registry(tmp_path):
         approved.append(request.action)
         return True
 
-    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
-                     approver=approver)
+    broker = _broker(
+        tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver
+    )
     broker.register(FilesCapability(Workspace(tmp_path)), core=False)
     reg = Registry()
-    reg.register(broker.as_tool_module("files", summary="Workspace files."),
-                 source="core", name="files")
+    reg.register(
+        broker.as_tool_module("files", summary="Workspace files."),
+        source="core",
+        name="files",
+    )
 
     # describe_tool shows the real signatures/docstrings, not the (*args, **kwargs) proxy.
     details = reg.describe("files")
-    assert "read(path: 'str'" in details and "write(path: 'str', content: 'str')" in details
+    assert (
+        "read(path: 'str'" in details
+        and "write(path: 'str', content: 'str')" in details
+    )
     # Loading and calling routes through the broker: the write is gated + approved.
     module = reg.use("files")
     module.write("note.txt", "data")
@@ -397,7 +429,20 @@ def test_llm_worker_session_cap():
     from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+        def complete(
+            self,
+            *,
+            system,
+            messages,
+            tier="cheap",
+            tools=None,
+            max_tokens=None,
+            on_token=None,
+            on_thinking=None,
+            on_attempt=None,
+            cache_anchor=None,
+            total_deadline_s=None,
+        ):
             from pyharness.llm.client import Completion
 
             return Completion(text="ok", tool_calls=[], content=[])
@@ -416,13 +461,28 @@ def test_llm_workers_emit_progress_events():
     from pyharness.broker.capabilities import LLMCapability
 
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+        def complete(
+            self,
+            *,
+            system,
+            messages,
+            tier="cheap",
+            tools=None,
+            max_tokens=None,
+            on_token=None,
+            on_thinking=None,
+            on_attempt=None,
+            cache_anchor=None,
+            total_deadline_s=None,
+        ):
             from pyharness.llm.client import Completion
 
             return Completion(text="ok", tool_calls=[], content=[])
 
     events = []
-    cap = LLMCapability(StubLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+    cap = LLMCapability(
+        StubLLM(), on_event=lambda k, t="", **e: events.append((k, t, e))
+    )
 
     # A single llm() brackets the call with a start and a done heartbeat, so the
     # otherwise-silent CLI shows the worker running.
@@ -436,7 +496,10 @@ def test_llm_workers_emit_progress_events():
     events.clear()
     cap.map_llm(["a", "b", "c"])
     worker = [(t, e) for k, t, e in events if k == "worker"]
-    assert worker[0] == ("map_llm — 0/3 done", {"phase": "start", "done": 0, "total": 3, "tier": "cheap"})
+    assert worker[0] == (
+        "map_llm — 0/3 done",
+        {"phase": "start", "done": 0, "total": 3, "tier": "cheap"},
+    )
     assert worker[-1][0] == "map_llm — 3/3 done"
     assert worker[-1][1]["done"] == 3 and worker[-1][1]["phase"] == "progress"
     assert {e["total"] for _, e in worker} == {3}
@@ -444,7 +507,20 @@ def test_llm_workers_emit_progress_events():
 
 def _recording_stub_llm(calls):
     class StubLLM:
-        def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+        def complete(
+            self,
+            *,
+            system,
+            messages,
+            tier="cheap",
+            tools=None,
+            max_tokens=None,
+            on_token=None,
+            on_thinking=None,
+            on_attempt=None,
+            cache_anchor=None,
+            total_deadline_s=None,
+        ):
             from pyharness.llm.client import Completion
 
             calls.append((messages[0]["content"], max_tokens))
@@ -506,7 +582,10 @@ def test_encrypted_file_roundtrip_and_wrong_passphrase(tmp_path):
 
     path = tmp_path / "secrets.enc"
     EncryptedFile(path, "correct horse").save({"github": "ghp_123", "openai": "sk-xyz"})
-    assert EncryptedFile(path, "correct horse").load() == {"github": "ghp_123", "openai": "sk-xyz"}
+    assert EncryptedFile(path, "correct horse").load() == {
+        "github": "ghp_123",
+        "openai": "sk-xyz",
+    }
     assert EncryptedFile(path, "correct horse").names() == ["github", "openai"]
     assert (path.stat().st_mode & 0o777) == 0o600
 
@@ -545,7 +624,9 @@ def test_secret_sink_resolves_records_and_redacts():
     assert sink.resolve("pw") == "hunter2"  # cleartext for the injection point
     # Every string the agent reads back is masked, one level deep into mappings.
     assert sink.redact("you typed hunter2") == "you typed ***"
-    assert sink.redacted({"url": "http://x?t=hunter2", "n": 1, "h": {"echo": "hunter2"}}) == {
+    assert sink.redacted(
+        {"url": "http://x?t=hunter2", "n": 1, "h": {"echo": "hunter2"}}
+    ) == {
         "url": "http://x?t=***",
         "n": 1,
         "h": {"echo": "***"},
@@ -562,7 +643,14 @@ def test_secret_sink_without_vault_raises():
 
 
 class _FakeResp:
-    def __init__(self, status=200, text="ok", url="http://x", content_type="text/plain", content=None):
+    def __init__(
+        self,
+        status=200,
+        text="ok",
+        url="http://x",
+        content_type="text/plain",
+        content=None,
+    ):
         import datetime
 
         self.status_code = status
@@ -607,7 +695,10 @@ def test_web_fetch_injects_auth_parent_side(tmp_path, fake_httpx):
     web = WebCapability(http=http)
 
     web.fetch("http://x", auth="k")
-    assert fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"] == "Bearer S3CRET"
+    assert (
+        fake_httpx.instances[-1].calls[-1]["headers"]["Authorization"]
+        == "Bearer S3CRET"
+    )
 
     web.fetch("http://x", auth="k", auth_style="header", auth_name="X-API-Key")
     assert fake_httpx.instances[-1].calls[-1]["headers"]["X-API-Key"] == "S3CRET"
@@ -699,7 +790,9 @@ def test_parse_affordances_form_fields():
     fields = {f["name"]: f for f in form["fields"]}
     assert fields["user[email]"]["label"] == "Email address"
     assert fields["user[password]"]["required"] is True
-    assert fields["csrf"]["type"] == "hidden" and fields["csrf"]["value"] == "tok-abc123"
+    assert (
+        fields["csrf"]["type"] == "hidden" and fields["csrf"]["value"] == "tok-abc123"
+    )
     assert fields["plan"]["options"] == ["free", "pro"]
     # the submit button is captured as `submit`, not as a fillable field
     assert "" not in fields
@@ -824,7 +917,7 @@ def test_web_fetch_falls_back_when_extract_content_declines(tmp_path, monkeypatc
 # A JS-rendered shell as fetch sees it: a big nav, an empty mount point, and no
 # body text — the shape the thin-extraction warning exists to flag.
 _NAV_ONLY_HTML = (
-    '<html><head><title>App</title></head><body><nav>'
+    "<html><head><title>App</title></head><body><nav>"
     + "".join(f'<a href="/section/{i}">S{i}</a>' for i in range(30))
     + '</nav><div id="root"></div></body></html>'
 )
@@ -832,7 +925,7 @@ _NAV_ONLY_HTML = (
 # A real article that also carries a large nav: plenty of links, but the body
 # is substantial — must NOT trigger the warning.
 _ARTICLE_HTML = (
-    '<html><head><title>Guide</title></head><body><nav>'
+    "<html><head><title>Guide</title></head><body><nav>"
     + "".join(f'<a href="/topic/{i}">T{i}</a>' for i in range(30))
     + "</nav><article>"
     + "".join(
@@ -911,15 +1004,21 @@ def test_web_fetch_extracts_html_but_passes_other_types_through(tmp_path, monkey
     web = WebCapability(http=HttpSessionCapability(Workspace(tmp_path)))
 
     monkeypatch.setattr(
-        httpx, "Client",
-        client_returning("text/html; charset=utf-8", "<html><body><script>x</script><p>Hello <b>world</b></p></body></html>"),
+        httpx,
+        "Client",
+        client_returning(
+            "text/html; charset=utf-8",
+            "<html><body><script>x</script><p>Hello <b>world</b></p></body></html>",
+        ),
     )
     out = web.fetch("http://x")
     assert "Hello" in out and "world" in out  # content extracted...
     assert "<" not in out and "script" not in out  # ...markup and noise stripped
 
     # A non-HTML body is returned verbatim, not run through extraction.
-    monkeypatch.setattr(httpx, "Client", client_returning("application/json", '{"a": 1}'))
+    monkeypatch.setattr(
+        httpx, "Client", client_returning("application/json", '{"a": 1}')
+    )
     assert web.fetch("http://x") == '{"a": 1}'
 
 
@@ -955,7 +1054,9 @@ def test_http_one_shot_uses_fresh_client_each_call(tmp_path, fake_httpx):
 
 def test_http_injects_secret_into_body(tmp_path, fake_httpx):
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    http.request(None, "POST", "http://x", json={"user": "me"}, secret_fields={"password": "pw"})
+    http.request(
+        None, "POST", "http://x", json={"user": "me"}, secret_fields={"password": "pw"}
+    )
     body = fake_httpx.instances[-1].calls[-1]["json"]
     assert body == {"user": "me", "password": "hunter2"}
 
@@ -987,10 +1088,18 @@ def test_http_masks_injected_secret_echoed_in_response(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(httpx, "Client", _EchoClient)
-    http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "hunter2", "pw": "hunter2"}))
+    http = HttpSessionCapability(
+        Workspace(tmp_path), vault=Vault({"k": "hunter2", "pw": "hunter2"})
+    )
     r = http.request(
-        None, "POST", "http://x", auth="k", auth_style="query", auth_name="api_key",
-        json={"user": "me"}, secret_fields={"password": "pw"},
+        None,
+        "POST",
+        "http://x",
+        auth="k",
+        auth_style="query",
+        auth_name="api_key",
+        json={"user": "me"},
+        secret_fields={"password": "pw"},
     )
     assert "hunter2" not in r["url"] and "***" in r["url"]
     assert "hunter2" not in r["text"] and "***" in r["text"]
@@ -1002,7 +1111,9 @@ def test_http_upload_reads_file_parent_side(tmp_path, fake_httpx):
     (ws.dir / "resume.txt").write_text("CV")
     http = HttpSessionCapability(ws)
     http.request(None, "POST", "http://x", files=[["file", "resume.txt"]])
-    assert fake_httpx.instances[-1].calls[-1]["files"] == [("file", ("resume.txt", b"CV"))]
+    assert fake_httpx.instances[-1].calls[-1]["files"] == [
+        ("file", ("resume.txt", b"CV"))
+    ]
 
 
 def test_http_upload_rejects_workspace_escape(tmp_path, fake_httpx):
@@ -1042,7 +1153,10 @@ def test_http_saves_binary_body_to_workspace(tmp_path, monkeypatch):
     # A binary content-type spills to a workspace file (full bytes intact) instead
     # of returning mojibake text; the agent reads/parses the file with its own lib.
     pdf = b"%PDF-1.7\n" + b"\x00\x01\x02" * 1000
-    _serve(monkeypatch, _FakeResp(text="ignored", content_type="application/pdf", content=pdf))
+    _serve(
+        monkeypatch,
+        _FakeResp(text="ignored", content_type="application/pdf", content=pdf),
+    )
     ws = Workspace(tmp_path)
     r = HttpSessionCapability(ws).request(None, "GET", "http://x/report.pdf")
     assert r["text"] is None and r["saved"] is True
@@ -1060,7 +1174,7 @@ def test_http_spills_oversized_text_to_workspace(tmp_path, monkeypatch):
     ws = Workspace(tmp_path)
     r = HttpSessionCapability(ws).request(None, "GET", "http://x")
     assert r["saved"] is True and r["text"] is None
-    assert r["preview"] == body[:payload.PREVIEW_CHARS]
+    assert r["preview"] == body[: payload.PREVIEW_CHARS]
     assert ws.path(r["path"]).read_text() == body  # full text, not the preview
 
 
@@ -1076,17 +1190,24 @@ def test_http_saved_body_redacts_injected_secret(tmp_path, monkeypatch):
     # A secret echoed in a spilled body must be masked on disk, not just in the
     # returned dict — same use-but-don't-view rule as an inline response.
     echoed = b"binary blob with hunter2 inside"
-    _serve(monkeypatch, _FakeResp(text="x", content_type="application/octet-stream", content=echoed))
+    _serve(
+        monkeypatch,
+        _FakeResp(text="x", content_type="application/octet-stream", content=echoed),
+    )
     ws = Workspace(tmp_path)
     http = HttpSessionCapability(ws, vault=Vault({"pw": "hunter2"}))
-    r = http.request(None, "POST", "http://x", json={"u": "me"}, secret_fields={"password": "pw"})
+    r = http.request(
+        None, "POST", "http://x", json={"u": "me"}, secret_fields={"password": "pw"}
+    )
     on_disk = ws.path(r["path"]).read_bytes()
     assert b"hunter2" not in on_disk and b"***" in on_disk
 
 
 def test_policy_approve_if_predicate():
     pol = Policy(approve_if=[lambda a, ar, kw: a == "http.request" and ar[1] == "POST"])
-    assert pol.decide("http.request", ("sid", "POST", "http://x"), {}) is Decision.APPROVE
+    assert (
+        pol.decide("http.request", ("sid", "POST", "http://x"), {}) is Decision.APPROVE
+    )
     assert pol.decide("http.request", ("sid", "GET", "http://x"), {}) is Decision.ALLOW
 
 
@@ -1099,7 +1220,9 @@ def test_mutating_http_requires_approval(tmp_path, fake_httpx):
         prompted.append(request.args[1])
         return False
 
-    broker = _broker(tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver)
+    broker = _broker(
+        tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver
+    )
     broker.register(HttpSessionCapability(Workspace(tmp_path)))
     ns = broker.namespace()
 
@@ -1140,7 +1263,10 @@ def test_totp_rfc6238_vectors():
     from pyharness.security.totp import totp_code
 
     for at, algorithm, expected in _TOTP_VECTORS:
-        assert totp_code(_rfc_seed(algorithm), digits=8, algorithm=algorithm, at=at) == expected
+        assert (
+            totp_code(_rfc_seed(algorithm), digits=8, algorithm=algorithm, at=at)
+            == expected
+        )
 
 
 def test_totp_defaults_six_digits_zero_padded():
@@ -1158,7 +1284,9 @@ def test_totp_normalizes_provisioning_formatting():
     # Provisioning UIs show seeds lowercase, space-grouped, unpadded — all must
     # derive the same code as the canonical form.
     canonical = _rfc_seed("sha1")
-    grouped = " ".join(canonical[i : i + 4] for i in range(0, len(canonical), 4)).lower()
+    grouped = " ".join(
+        canonical[i : i + 4] for i in range(0, len(canonical), 4)
+    ).lower()
     assert totp_code(grouped, at=59) == totp_code(canonical, at=59)
 
 
@@ -1205,8 +1333,12 @@ class _FakePage:
         self._snapshot = snapshot
         self._wait_timeout = False  # when True, wait_for_selector raises TimeoutError
         self.calls: list = []
-        self.keyboard = SimpleNamespace(press=lambda key: self.calls.append(("keyboard.press", key)))
-        self.mouse = SimpleNamespace(wheel=lambda dx, dy: self.calls.append(("wheel", dx, dy)))
+        self.keyboard = SimpleNamespace(
+            press=lambda key: self.calls.append(("keyboard.press", key))
+        )
+        self.mouse = SimpleNamespace(
+            wheel=lambda dx, dy: self.calls.append(("wheel", dx, dy))
+        )
 
     def goto(self, url, wait_until=None):
         self.url = url
@@ -1306,13 +1438,17 @@ def _freeze_totp_time(monkeypatch, at=59):
     # code is the RFC vector for T=59 ("287082" at 6 digits).
     from types import SimpleNamespace
 
-    monkeypatch.setattr("pyharness.security.totp.time", SimpleNamespace(time=lambda: at))
+    monkeypatch.setattr(
+        "pyharness.security.totp.time", SimpleNamespace(time=lambda: at)
+    )
 
 
 def test_browser_fill_totp_types_code_never_seed_or_code(tmp_path, monkeypatch):
     _freeze_totp_time(monkeypatch)
     seed = _rfc_seed("sha1")
-    cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"github_totp": seed}))
+    cap, page = _browser_with_fake(
+        Workspace(tmp_path), vault=Vault({"github_totp": seed})
+    )
     result = cap.fill_totp("sid", "#otp", "github_totp")
     # The derived code was typed into the page; neither it nor the seed returns.
     assert ("fill", "#otp", "287082") in page.calls
@@ -1322,7 +1458,9 @@ def test_browser_fill_totp_types_code_never_seed_or_code(tmp_path, monkeypatch):
 def test_browser_fill_totp_masks_echoed_code_and_gates_look(tmp_path, monkeypatch):
     _freeze_totp_time(monkeypatch)
     cap, page = _browser_with_fake(
-        Workspace(tmp_path), vault=Vault({"github_totp": _rfc_seed("sha1")}), text="code 287082 accepted"
+        Workspace(tmp_path),
+        vault=Vault({"github_totp": _rfc_seed("sha1")}),
+        text="code 287082 accepted",
     )
     cap.fill_totp("sid", "#otp", "github_totp")
     r = cap.read_text("sid")
@@ -1378,7 +1516,11 @@ def test_mutating_browser_requires_approval(tmp_path):
         return False
 
     cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
 
@@ -1411,7 +1553,9 @@ def test_browser_snapshot_masks_injected_secret(tmp_path):
     # A fill_secret value can surface as a textbox value in the aria tree exactly
     # as it can in read_text; it must be masked before it reaches agent code.
     snap = '- textbox "Email" [ref=e5]\n- textbox "Password" [ref=e6]: hunter2'
-    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), snapshot=snap)
+    cap, _ = _browser_with_fake(
+        Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), snapshot=snap
+    )
     cap.fill_secret("sid", "#password", "pw")
     r = cap.snapshot("sid")
     assert "hunter2" not in r["text"] and "***" in r["text"]
@@ -1552,7 +1696,11 @@ def test_browser_g9_verb_gating(tmp_path):
         return True  # allow, so the fake actions proceed
 
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
 
@@ -1632,7 +1780,14 @@ def test_browser_look_gated_only_after_secret_injected(tmp_path):
 # driver stands in for the storage_state round-trip.
 
 _SENTINEL_STATE = {
-    "cookies": [{"name": "sid", "value": "TOP-SECRET-COOKIE", "domain": "linkedin.com", "path": "/"}],
+    "cookies": [
+        {
+            "name": "sid",
+            "value": "TOP-SECRET-COOKIE",
+            "domain": "linkedin.com",
+            "path": "/",
+        }
+    ],
     "origins": [{"origin": "https://linkedin.com", "localStorage": []}],
 }
 
@@ -1676,7 +1831,9 @@ class _FakeProfileBrowser:
 
 def _fake_driver(save_state=None):
     browser = _FakeProfileBrowser(save_state or {"cookies": [], "origins": []})
-    return SimpleNamespace(chromium=SimpleNamespace(launch=lambda headless=True: browser)), browser
+    return SimpleNamespace(
+        chromium=SimpleNamespace(launch=lambda headless=True: browser)
+    ), browser
 
 
 def _store(tmp_path):
@@ -1774,7 +1931,11 @@ def _profile_session(cap, profile="linkedin", state=_SENTINEL_STATE):
 
     ctx = _FakeProfileContext(state)
     cap._sessions["sid"] = _BrowserSession(
-        browser=_FakeClient(), context=ctx, page=_FakePage(), sink=SecretSink(None), profile=profile
+        browser=_FakeClient(),
+        context=ctx,
+        page=_FakePage(),
+        sink=SecretSink(None),
+        profile=profile,
     )
     return ctx
 
@@ -1817,12 +1978,21 @@ def test_close_refreshes_profile_and_audits(tmp_path):
 
     cap.close_browser("sid")
     assert store.load("linkedin") == _SENTINEL_STATE  # rotated state persisted
-    entries = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
     events = [e for e in entries if e.get("event") == "profile_saved"]
-    assert events and events[0]["profile"] == "linkedin" and events[0]["trigger"] == "close"
+    assert (
+        events
+        and events[0]["profile"] == "linkedin"
+        and events[0]["trigger"] == "close"
+    )
     from pyharness.audit import verify_chain
 
-    assert verify_chain(tmp_path / "audit.jsonl")[0]  # the close-time event stays in the hash chain
+    assert verify_chain(tmp_path / "audit.jsonl")[
+        0
+    ]  # the close-time event stays in the hash chain
 
 
 def test_close_all_only_refreshes_profile_sessions(tmp_path):
@@ -1837,7 +2007,10 @@ def test_close_all_only_refreshes_profile_sessions(tmp_path):
 
 
 def test_profile_ops_gating(tmp_path):
-    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS, BrowserCapability
+    from pyharness.broker.capabilities.browser import (
+        MUTATING_ACTIONS,
+        BrowserCapability,
+    )
     from pyharness.core.session import _opens_with_profile
 
     store = _store(tmp_path)
@@ -1850,7 +2023,9 @@ def test_profile_ops_gating(tmp_path):
 
     cap = BrowserCapability(Workspace(tmp_path), profiles=store)
     cap._pw, _ = _fake_driver()
-    policy = Policy(require_approval={"browser.save_profile"}, approve_if=[_opens_with_profile])
+    policy = Policy(
+        require_approval={"browser.save_profile"}, approve_if=[_opens_with_profile]
+    )
     broker = _broker(tmp_path, policy=policy, approver=approver)
     broker.register(cap)
     ns = broker.namespace()
@@ -1901,7 +2076,9 @@ def test_encrypted_file_save_is_atomic_and_0600(tmp_path):
 def test_http_preview_classifies_and_summarizes(tmp_path):
     http = HttpSessionCapability(Workspace(tmp_path))
     # POST: outward, and the summary shows method, url, and body field *names*.
-    cat, summary = http.preview("request", (None, "POST", "http://api/x"), {"json": {"a": 1, "b": 2}})
+    cat, summary = http.preview(
+        "request", (None, "POST", "http://api/x"), {"json": {"a": 1, "b": 2}}
+    )
     assert cat is ActionCategory.OUTWARD
     assert "POST" in summary and "http://api/x" in summary and "a, b" in summary
     # DELETE is the one method the harness knows is irreversible.
@@ -1913,7 +2090,9 @@ def test_http_preview_shows_body_field_names_not_values(tmp_path):
     # The body can hold workspace data; the confirmation names the fields but
     # never dumps their values.
     http = HttpSessionCapability(Workspace(tmp_path))
-    _, summary = http.preview("request", (None, "POST", "http://x"), {"data": {"resume": "PRIVATE"}})
+    _, summary = http.preview(
+        "request", (None, "POST", "http://x"), {"data": {"resume": "PRIVATE"}}
+    )
     assert "resume" in summary and "PRIVATE" not in summary
 
 
@@ -1943,7 +2122,9 @@ def test_broker_records_category_in_audit(tmp_path):
     import json
 
     broker = _broker(
-        tmp_path, policy=Policy(require_approval={"packages.install"}), approver=lambda r: False
+        tmp_path,
+        policy=Policy(require_approval={"packages.install"}),
+        approver=lambda r: False,
     )
     from pyharness.broker.capabilities import PackagesCapability
     from pyharness.core.session_venv import SessionVenv
@@ -1951,7 +2132,9 @@ def test_broker_records_category_in_audit(tmp_path):
     broker.register(PackagesCapability(SessionVenv()))
     with pytest.raises(PermissionDenied):
         broker.namespace()["install"]("requests")
-    entries = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    entries = [
+        json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+    ]
     approve = next(e for e in entries if e.get("decision") == "approve")
     assert approve["category"] == "outward" and approve["approved"] is False
 
@@ -1967,7 +2150,9 @@ def test_shell_subprocess_has_no_secrets(tmp_path, monkeypatch):
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "hunter2")
     monkeypatch.setenv("NOT_LISTED", "dropped")  # default-deny: unknown vars go too
     shell = ShellCapability(Workspace(tmp_path))
-    out = shell.bash('echo "tok=$PYHARNESS_SECRET_TOKEN pass=$PYHARNESS_VAULT_PASSPHRASE x=$NOT_LISTED home=$HOME"')
+    out = shell.bash(
+        'echo "tok=$PYHARNESS_SECRET_TOKEN pass=$PYHARNESS_VAULT_PASSPHRASE x=$NOT_LISTED home=$HOME"'
+    )
     assert "supersecret" not in out
     assert "hunter2" not in out
     assert "dropped" not in out
@@ -1989,7 +2174,9 @@ class _FakeExaClient:
         self.init_kwargs = kwargs
 
     def request(self, method, url, **kwargs):
-        _FakeExaClient.calls.append({"method": method, "url": url, "init": self.init_kwargs, **kwargs})
+        _FakeExaClient.calls.append(
+            {"method": method, "url": url, "init": self.init_kwargs, **kwargs}
+        )
         return SimpleNamespace(
             status_code=type(self).status,
             json=lambda: type(self).body,
@@ -2011,10 +2198,21 @@ def _patch_exa(monkeypatch, *, body=None, status=200):
 
 
 def test_web_search_results_queries_exa_and_parses(monkeypatch):
-    fake = _patch_exa(monkeypatch, body={"results": [
-        {"title": "T1", "url": "https://a.example", "publishedDate": "2026-01-01",
-         "author": "Ann", "score": 0.9, "highlights": ["snip one", "snip two"]},
-    ]})
+    fake = _patch_exa(
+        monkeypatch,
+        body={
+            "results": [
+                {
+                    "title": "T1",
+                    "url": "https://a.example",
+                    "publishedDate": "2026-01-01",
+                    "author": "Ann",
+                    "score": 0.9,
+                    "highlights": ["snip one", "snip two"],
+                },
+            ]
+        },
+    )
     monkeypatch.setenv("EXA_API_KEY", "EXA-SECRET")
     web = WebCapability(http=None)
 
@@ -2025,14 +2223,22 @@ def test_web_search_results_queries_exa_and_parses(monkeypatch):
     assert call["url"] == "https://api.exa.ai/search"
     assert call["headers"] == {"x-api-key": "EXA-SECRET"}
     assert call["json"] == {
-        "query": "harrington jackets", "numResults": 5, "type": "auto",
+        "query": "harrington jackets",
+        "numResults": 5,
+        "type": "auto",
         "contents": {"highlights": True},
     }
     assert call["init"] == {"timeout": 30}  # Exa's own short HTTP timeout
-    assert out == [{
-        "title": "T1", "url": "https://a.example", "snippet": "snip one",
-        "published_date": "2026-01-01", "author": "Ann", "score": 0.9,
-    }]
+    assert out == [
+        {
+            "title": "T1",
+            "url": "https://a.example",
+            "snippet": "snip one",
+            "published_date": "2026-01-01",
+            "author": "Ann",
+            "score": 0.9,
+        }
+    ]
     assert "EXA-SECRET" not in repr(out)  # the key never rides back on the result
 
 
@@ -2053,10 +2259,16 @@ def test_web_search_results_tolerates_sparse_and_empty(monkeypatch):
     _patch_exa(monkeypatch, body={"results": [{"url": "https://x.example"}]})
     monkeypatch.setenv("EXA_API_KEY", "k")
     web = WebCapability(http=None)
-    assert web.search_results("q") == [{
-        "title": None, "url": "https://x.example", "snippet": "",
-        "published_date": None, "author": None, "score": None,
-    }]
+    assert web.search_results("q") == [
+        {
+            "title": None,
+            "url": "https://x.example",
+            "snippet": "",
+            "published_date": None,
+            "author": None,
+            "score": None,
+        }
+    ]
 
     _patch_exa(monkeypatch, body={})
     assert web.search_results("q") == []
@@ -2113,14 +2325,20 @@ def test_grant_ledger_exact_match_and_expiry():
 def test_bool_approver_still_normalizes(tmp_path):
     # A simple approver returning a bare bool keeps working: True -> allow once,
     # False -> deny. This is the regression guard for the contract change.
-    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
-                     approver=lambda r: True)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval={"files.write"}),
+        approver=lambda r: True,
+    )
     broker.register(FilesCapability(Workspace(tmp_path)))
     broker.namespace()["write"]("a.txt", "x")  # allowed once
     assert (Workspace(tmp_path).dir / "a.txt").read_text() == "x"
 
-    broker2 = _broker(tmp_path, policy=Policy(require_approval={"files.write"}),
-                      approver=lambda r: False)
+    broker2 = _broker(
+        tmp_path,
+        policy=Policy(require_approval={"files.write"}),
+        approver=lambda r: False,
+    )
     broker2.register(FilesCapability(Workspace(tmp_path)))
     with pytest.raises(PermissionDenied):
         broker2.namespace()["write"]("b.txt", "y")
@@ -2138,17 +2356,24 @@ def test_scope_none_falls_back_to_per_call(tmp_path):
         assert request.scope is None
         return ApprovalOutcome.GRANT
 
-    broker = _broker(tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver)
+    broker = _broker(
+        tmp_path, policy=Policy(require_approval={"files.write"}), approver=approver
+    )
     broker.register(FilesCapability(Workspace(tmp_path)))
     ns = broker.namespace()
     ns["write"]("a.txt", "x")
     ns["write"]("b.txt", "y")
-    assert prompts == ["files.write", "files.write"]  # prompted both times, nothing minted
+    assert prompts == [
+        "files.write",
+        "files.write",
+    ]  # prompted both times, nothing minted
     # No grant was recorded in the audit chain.
     import json
 
-    entries = [json.loads(line) for line in
-               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
     assert all("grant" not in e for e in entries)
 
 
@@ -2158,18 +2383,26 @@ def test_http_and_browser_scope_extraction(tmp_path):
     http = HttpSessionCapability(Workspace(tmp_path))
     # Host parsed from positional or keyword args, lowercased; only non-DELETE
     # mutating methods are grantable.
-    assert http.scope("request", ("sid", "POST", "http://API.Example.com/x"), {}) == \
-        GrantScope("http", "api.example.com")
-    assert http.scope("request", (), {"method": "PUT", "url": "https://h.com/y"}) == \
-        GrantScope("http", "h.com")
-    assert http.scope("request", ("sid", "DELETE", "http://h.com"), {}) is None  # irreversible
+    assert http.scope(
+        "request", ("sid", "POST", "http://API.Example.com/x"), {}
+    ) == GrantScope("http", "api.example.com")
+    assert http.scope(
+        "request", (), {"method": "PUT", "url": "https://h.com/y"}
+    ) == GrantScope("http", "h.com")
+    assert (
+        http.scope("request", ("sid", "DELETE", "http://h.com"), {}) is None
+    )  # irreversible
     assert http.scope("request", ("sid", "GET", "http://h.com"), {}) is None  # read
-    assert http.scope("request", ("sid", "POST", "not a url"), {}) is None  # unparseable
+    assert (
+        http.scope("request", ("sid", "POST", "not a url"), {}) is None
+    )  # unparseable
 
     cap, _ = _browser_with_fake(Workspace(tmp_path))  # fake page url is http://start
     assert cap.scope("click", ("sid",), {}) == GrantScope("browser", "start")
     assert cap.scope("fill_secret", ("sid",), {}) is None  # credentials always prompt
-    assert cap.scope("fill_totp", ("sid",), {}) is None  # a second factor is a credential too
+    assert (
+        cap.scope("fill_totp", ("sid",), {}) is None
+    )  # a second factor is a credential too
     assert cap.scope("goto", ("sid",), {}) is None  # navigation is not a mutation
     assert cap.scope("click", ("nope",), {}) is None  # no such session
 
@@ -2186,7 +2419,11 @@ def test_grant_covers_repeat_browser_actions(tmp_path):
         return ApprovalOutcome.GRANT
 
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
     ns["click"]("sid", "#a")  # prompts once, mints a browser grant for host "start"
@@ -2195,8 +2432,10 @@ def test_grant_covers_repeat_browser_actions(tmp_path):
 
     import json
 
-    entries = [json.loads(line) for line in
-               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
     assert sum("grant" in e for e in entries) == 1  # one mint
     assert sum(bool(e.get("grant_id")) for e in entries) == 1  # one covered call
     ok, _ = verify_chain(tmp_path / "audit.jsonl")
@@ -2214,7 +2453,11 @@ def test_grant_scoped_to_host(tmp_path):
         return ApprovalOutcome.GRANT
 
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
     ns["click"]("sid", "#a")  # host "start"
@@ -2233,20 +2476,30 @@ def test_delete_never_covered_by_grant(tmp_path, fake_httpx):
         prompts.append((request.args[1], request.scope))
         return ApprovalOutcome.GRANT
 
-    broker = _broker(tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver)
+    broker = _broker(
+        tmp_path, policy=Policy(approve_if=[_is_mutating_http]), approver=approver
+    )
     broker.register(HttpSessionCapability(Workspace(tmp_path)))
     ns = broker.namespace()
-    ns["request"](None, "POST", "http://api.x.com/a")  # mints an http grant for api.x.com
+    ns["request"](
+        None, "POST", "http://api.x.com/a"
+    )  # mints an http grant for api.x.com
     ns["request"](None, "POST", "http://api.x.com/b")  # covered — no prompt
-    ns["request"](None, "DELETE", "http://api.x.com/c")  # irreversible — prompts despite the grant
+    ns["request"](
+        None, "DELETE", "http://api.x.com/c"
+    )  # irreversible — prompts despite the grant
     assert [p[0] for p in prompts] == ["POST", "DELETE"]
     assert prompts[1][1] is None  # DELETE has no grantable scope
 
     import json
 
-    entries = [json.loads(line) for line in
-               (tmp_path / "audit.jsonl").read_text().strip().splitlines()]
-    assert sum("grant" in e for e in entries) == 1  # only the POST minted; the DELETE's GRANT minted nothing
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
+    assert (
+        sum("grant" in e for e in entries) == 1
+    )  # only the POST minted; the DELETE's GRANT minted nothing
 
 
 def test_fill_secret_not_covered_by_browser_grant(tmp_path):
@@ -2260,7 +2513,11 @@ def test_fill_secret_not_covered_by_browser_grant(tmp_path):
         return ApprovalOutcome.GRANT
 
     cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
     ns["click"]("sid", "#a")  # mints a browser grant
@@ -2281,8 +2538,14 @@ def test_fill_totp_not_covered_by_browser_grant(tmp_path, monkeypatch):
         prompts.append(request.action)
         return ApprovalOutcome.GRANT
 
-    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"github_totp": _rfc_seed("sha1")}))
-    broker = _broker(tmp_path, policy=Policy(require_approval=set(MUTATING_ACTIONS)), approver=approver)
+    cap, _ = _browser_with_fake(
+        Workspace(tmp_path), vault=Vault({"github_totp": _rfc_seed("sha1")})
+    )
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
     broker.register(cap)
     ns = broker.namespace()
     ns["click"]("sid", "#a")  # mints a browser grant
@@ -2301,17 +2564,25 @@ def test_look_not_covered_by_browser_grant(tmp_path):
 
     def approver(request):
         prompts.append(request.action)
-        return ApprovalOutcome.DENY if request.action == "browser.look" else ApprovalOutcome.GRANT
+        return (
+            ApprovalOutcome.DENY
+            if request.action == "browser.look"
+            else ApprovalOutcome.GRANT
+        )
 
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    pol = Policy(require_approval=set(MUTATING_ACTIONS),
-                 approve_if=[lambda a, ar, kw: a == "browser.look"])
+    pol = Policy(
+        require_approval=set(MUTATING_ACTIONS),
+        approve_if=[lambda a, ar, kw: a == "browser.look"],
+    )
     broker = _broker(tmp_path, policy=pol, approver=approver)
     broker.register(cap)
     ns = broker.namespace()
     ns["click"]("sid", "#a")  # mints a browser grant
     with pytest.raises(PermissionDenied):
-        ns["look"]("sid")  # gated, not covered by the grant -> prompted (and denied here)
+        ns["look"](
+            "sid"
+        )  # gated, not covered by the grant -> prompted (and denied here)
     assert prompts == ["browser.click", "browser.look"]
     assert cap.scope("look", ("sid",), {}) is None
 
@@ -2321,8 +2592,14 @@ def test_cli_approve_offers_grant_when_scoped(monkeypatch, capsys):
     from pyharness.cli.main import _approve
     from pyharness.security import GrantScope
 
-    req = ApprovalRequest("browser.click", ActionCategory.OUTWARD, "click #x on http://h",
-                          ("sid",), {}, GrantScope("browser", "boards.greenhouse.com"))
+    req = ApprovalRequest(
+        "browser.click",
+        ActionCategory.OUTWARD,
+        "click #x on http://h",
+        ("sid",),
+        {},
+        GrantScope("browser", "boards.greenhouse.com"),
+    )
     monkeypatch.setattr("builtins.input", lambda prompt="": "a")
     assert _approve(req) is ApprovalOutcome.GRANT
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
@@ -2347,11 +2624,19 @@ def test_cli_approve_no_grant_for_irreversible_or_unscoped(monkeypatch):
 
     monkeypatch.setattr("builtins.input", fake_input)
     # Irreversible: no [a] offered; 'a' is not 'y' -> DENY.
-    irr = ApprovalRequest("http.request", ActionCategory.IRREVERSIBLE, "DELETE http://h",
-                          ("sid", "DELETE", "http://h"), {}, GrantScope("http", "h"))
+    irr = ApprovalRequest(
+        "http.request",
+        ActionCategory.IRREVERSIBLE,
+        "DELETE http://h",
+        ("sid", "DELETE", "http://h"),
+        {},
+        GrantScope("http", "h"),
+    )
     assert _approve(irr) is ApprovalOutcome.DENY
     # Unscoped (scope None): plain y/N.
-    uns = ApprovalRequest("files.write", ActionCategory.OUTWARD, "write x", ("x",), {}, None)
+    uns = ApprovalRequest(
+        "files.write", ActionCategory.OUTWARD, "write x", ("x",), {}, None
+    )
     assert _approve(uns) is ApprovalOutcome.DENY
     assert all("[y/a/N]" not in p for p in prompts)  # the grant prompt is never shown
 
@@ -2364,11 +2649,16 @@ def test_notify_emits_event_desktop_and_audits(tmp_path):
 
     events, shown = [], []
     broker = _broker(tmp_path)
-    broker.register(NotifyCapability(
-        on_event=lambda kind, text, **extra: events.append((kind, text, extra)),
-        desktop=shown.append,
-    ))
-    assert broker.namespace()["notify"]("checkpoint saved", level="attention") == "delivered"
+    broker.register(
+        NotifyCapability(
+            on_event=lambda kind, text, **extra: events.append((kind, text, extra)),
+            desktop=shown.append,
+        )
+    )
+    assert (
+        broker.namespace()["notify"]("checkpoint saved", level="attention")
+        == "delivered"
+    )
     assert events == [("notify", "checkpoint saved", {"level": "attention"})]
     assert shown == ["checkpoint saved"]
     entry = broker.audit.tail(1)[0]
@@ -2408,8 +2698,11 @@ def test_notify_is_core_builtin_wired_to_session_events(tmp_path):
     from pyharness.core.session import Session
 
     events = []
-    session = Session(tmp_path, unsafe_in_process=True,
-                      on_event=lambda kind, text: events.append((kind, text)))
+    session = Session(
+        tmp_path,
+        unsafe_in_process=True,
+        on_event=lambda kind, text: events.append((kind, text)),
+    )
     try:
         # No real desktop popups from the test suite.
         session.broker._capabilities["notify"].desktop = None
@@ -2445,18 +2738,45 @@ def test_llm_worker_attempts_surface_as_worker_events():
 
             seen["total_deadline_s"] = total_deadline_s
             on_attempt({"attempt": 1, "attempts": 3, "outcome": "start"})
-            on_attempt({"attempt": 1, "attempts": 3, "outcome": "streaming",
-                        "elapsed_s": 30.0, "events": 40, "output_tokens": 1200})
-            on_attempt({"attempt": 1, "attempts": 3, "outcome": "failed",
-                        "error": "StreamStalled", "clock_fired": "silence",
-                        "elapsed_s": 61.2, "events": 40, "output_tokens": 1200})
+            on_attempt(
+                {
+                    "attempt": 1,
+                    "attempts": 3,
+                    "outcome": "streaming",
+                    "elapsed_s": 30.0,
+                    "events": 40,
+                    "output_tokens": 1200,
+                }
+            )
+            on_attempt(
+                {
+                    "attempt": 1,
+                    "attempts": 3,
+                    "outcome": "failed",
+                    "error": "StreamStalled",
+                    "clock_fired": "silence",
+                    "elapsed_s": 61.2,
+                    "events": 40,
+                    "output_tokens": 1200,
+                }
+            )
             on_attempt({"attempt": 2, "attempts": 3, "outcome": "start"})
-            on_attempt({"attempt": 2, "attempts": 3, "outcome": "ok",
-                        "elapsed_s": 20.0, "events": 10, "output_tokens": 500})
+            on_attempt(
+                {
+                    "attempt": 2,
+                    "attempts": 3,
+                    "outcome": "ok",
+                    "elapsed_s": 20.0,
+                    "events": 10,
+                    "output_tokens": 500,
+                }
+            )
             return Completion(text="ok", tool_calls=[], content=[])
 
     events = []
-    cap = LLMCapability(RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+    cap = LLMCapability(
+        RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e))
+    )
     assert cap.run("q") == "ok"
 
     # Workers are wall-clock bounded so one call can never block the kernel
@@ -2482,7 +2802,9 @@ def test_map_llm_attempt_events_carry_worker_index():
             return Completion(text="ok", tool_calls=[], content=[])
 
     events = []
-    cap = LLMCapability(RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e)))
+    cap = LLMCapability(
+        RetryingLLM(), on_event=lambda k, t="", **e: events.append((k, t, e))
+    )
     assert all(r.ok for r in cap.map_llm(["a", "b"]))
     retries = sorted(t for k, t, _ in events if k == "worker" and "retry" in t)
     assert retries == ["map_llm[0] — retry 2/3", "map_llm[1] — retry 2/3"]

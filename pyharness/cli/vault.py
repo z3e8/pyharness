@@ -69,7 +69,11 @@ def main() -> None:
         if not 1 <= len(positional) <= 2:
             sys.exit(usage)
         name = positional[0]
-        value = positional[1] if len(positional) > 1 else getpass.getpass(f"value for {name!r}: ")
+        value = (
+            positional[1]
+            if len(positional) > 1
+            else getpass.getpass(f"value for {name!r}: ")
+        )
         secrets[name] = {"value": value, "hosts": hosts} if hosts else value
         bound = f", bound to {', '.join(hosts)}" if hosts else ""
         vault.save(secrets)

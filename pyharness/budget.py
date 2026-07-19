@@ -34,7 +34,7 @@ class Budget:
             self.calls += 1
             self.by_model[model] = self.by_model.get(model, 0.0) + cost_usd
 
-    def absorb(self, other: "Budget") -> None:
+    def absorb(self, other: Budget) -> None:
         """Fold another budget's spend into this one — how a spawned child
         session's slice settles into its parent when the child closes. `other`
         may still be recording (an abandoned child force-settled at parent

@@ -35,12 +35,14 @@ def child_main(
         # relative path means. The spawn bootstrap's own imports already ran, so
         # this can't disturb them; later imports resolve via sys.path (absolute).
         import os as _os
+
         try:
             _os.chdir(workdir)
         except OSError:
             pass
     if venv_site_packages:
         import sys as _sys
+
         if venv_site_packages not in _sys.path:
             _sys.path.insert(0, venv_site_packages)
     namespace = {op: _make_proxy(conn, op) for op in op_names}

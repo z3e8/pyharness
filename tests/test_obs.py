@@ -8,8 +8,8 @@ import pytest
 
 from pyharness.broker.capabilities.obs import ObservabilityCapability
 from pyharness.core.session import Session
-from pyharness.obs.index import update_index
 from pyharness.llm.client import Completion
+from pyharness.obs.index import update_index
 
 
 class RecordingLLM:
@@ -19,9 +19,20 @@ class RecordingLLM:
         self.reply = reply
         self.calls: list[dict] = []
 
-    def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None, on_thinking=None, on_attempt=None,
-                 cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system=None,
+        messages,
+        tier="cheap",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         self.calls.append({"system": system, "messages": messages, "tier": tier})
         return Completion(self.reply, [], [{"type": "text", "text": self.reply}])
 
@@ -31,13 +42,27 @@ def _seed_session(root, name, *, task="apply to job", answer="done"):
     d.mkdir(parents=True)
     entries = [
         {"ts": 1.0, "kind": "task", "text": task},
-        {"ts": 2.0, "kind": "llm_call", "text": "I will fetch the page",
-         "model": "m", "tier": "mid", "cost_usd": 0.01, "latency_s": 1.0,
-         "system": "SECRET-PROMPT", "messages": [{"role": "user", "text": "hidden"}]},
+        {
+            "ts": 2.0,
+            "kind": "llm_call",
+            "text": "I will fetch the page",
+            "model": "m",
+            "tier": "mid",
+            "cost_usd": 0.01,
+            "latency_s": 1.0,
+            "system": "SECRET-PROMPT",
+            "messages": [{"role": "user", "text": "hidden"}],
+        },
         {"ts": 3.0, "kind": "code", "text": "print('x')"},
         {"ts": 4.0, "kind": "output", "text": "x"},
-        {"ts": 5.0, "kind": "skill_use", "text": "greenhouse", "skill": "greenhouse",
-         "outcome": "failed", "note": "selector gone"},
+        {
+            "ts": 5.0,
+            "kind": "skill_use",
+            "text": "greenhouse",
+            "skill": "greenhouse",
+            "outcome": "failed",
+            "note": "selector gone",
+        },
         {"ts": 6.0, "kind": "answer", "text": answer},
     ]
     with (d / "trace.jsonl").open("w") as f:
@@ -97,8 +122,13 @@ def test_session_preamble_and_builtins(tmp_path):
     db = tmp_path / "index.db"
     update_index(db, [root])
 
-    s = Session(root / "cli-new", llm=RecordingLLM(), index_db=db,
-                skills_dir=tmp_path / "skills", unsafe_in_process=True)
+    s = Session(
+        root / "cli-new",
+        llm=RecordingLLM(),
+        index_db=db,
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+    )
     try:
         ns = s.broker.namespace()
         assert "stats" in ns and "inspect_session" in ns
@@ -110,8 +140,12 @@ def test_session_preamble_and_builtins(tmp_path):
     finally:
         s.close()
 
-    bare = Session(tmp_path / "bare", llm=RecordingLLM(), skills_dir=tmp_path / "skills",
-                   unsafe_in_process=True)
+    bare = Session(
+        tmp_path / "bare",
+        llm=RecordingLLM(),
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+    )
     try:
         assert bare.agent.preamble_extra == ""
         with pytest.raises(RuntimeError):
@@ -123,8 +157,13 @@ def test_session_preamble_and_builtins(tmp_path):
 def test_close_folds_session_into_index(tmp_path):
     db = tmp_path / "index.db"
     root = tmp_path / ".sessions"
-    s = Session(root / "cli-a", llm=RecordingLLM(), index_db=db,
-                skills_dir=tmp_path / "skills", unsafe_in_process=True)
+    s = Session(
+        root / "cli-a",
+        llm=RecordingLLM(),
+        index_db=db,
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+    )
     s.close()
     from pyharness.obs.index import query
 

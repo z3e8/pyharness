@@ -23,7 +23,9 @@ class Workspace:
 
     @property
     def dir(self) -> Path:
-        return self.shared_dir if self.shared_dir is not None else self.root / "workspace"
+        return (
+            self.shared_dir if self.shared_dir is not None else self.root / "workspace"
+        )
 
     def path(self, path: str | Path) -> Path:
         target = (self.dir / Path(path).expanduser()).resolve()

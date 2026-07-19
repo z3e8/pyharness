@@ -14,6 +14,7 @@ perimeter.
 genuinely needs to reach a subprocess (a proxy setting, a tool's config). It
 can never resurrect the harness's own secret-bearing variables.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,9 +30,25 @@ PASSTHROUGH_ENV = "PYHARNESS_ENV_PASSTHROUGH"
 # workflow-specific belongs in the passthrough list.
 _ALLOW_NAMES = frozenset(
     {
-        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "TZ", "LANG",
-        "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
-        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "TMPDIR",
+        "TZ",
+        "LANG",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
     }
 )
 _ALLOW_PREFIXES = ("LC_",)

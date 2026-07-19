@@ -3,6 +3,7 @@
 Each test pins one closed hole so it stays closed. Grouped by the vulnerability
 class it guards (see agents/security-hardening-2026-07.md).
 """
+
 from __future__ import annotations
 
 import os
@@ -14,17 +15,17 @@ import pytest
 from pyharness import Budget, Decision, Kernel, Policy, Registry, Vault, Workspace
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker, PermissionDenied
-from pyharness.broker.remote import RemoteKernel
 from pyharness.broker.capabilities import (
     FilesCapability,
     HttpSessionCapability,
     InboxCapability,
     WebCapability,
 )
-from pyharness.broker.capabilities.llm import LLMCapability
 from pyharness.broker.capabilities.inbox import _quote
+from pyharness.broker.capabilities.llm import LLMCapability
 from pyharness.broker.capabilities.notify import NotifyCapability
 from pyharness.broker.capabilities.skills import SkillsCapability
+from pyharness.broker.remote import RemoteKernel
 from pyharness.budget import BudgetExceeded
 from pyharness.core.session import Session, _request_carries_secret
 from pyharness.security.egress import EgressBlocked, check_url
@@ -58,6 +59,7 @@ def _broker(tmp_path):
 
 
 # --- MCP stdio transport must not leak the parent's secrets ------------------
+
 
 def test_stdio_transport_starts_from_minimal_env(monkeypatch):
     from pyharness.tools.mcp import transport as T
@@ -105,6 +107,7 @@ def test_stdio_transport_starts_from_minimal_env(monkeypatch):
 
 # --- Unknown tier must fail closed (no arbitrary model / $0 accounting) ------
 
+
 def test_complete_rejects_unknown_tier(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
     from pyharness.llm.client import AnthropicLLM
@@ -113,12 +116,17 @@ def test_complete_rejects_unknown_tier(monkeypatch):
     # A raw model id passed as a tier is the exploit vector — rejected before any
     # network call, so it can neither run an unpriced model nor bill $0.
     with pytest.raises(ValueError):
-        llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-3-5-sonnet")
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}], tier="claude-3-5-sonnet"
+        )
     with pytest.raises(ValueError):
-        llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8")
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8"
+        )
 
 
 # --- Bare-name op dispatch must be unambiguous -------------------------------
+
 
 def test_call_op_resolves_core_over_noncore(tmp_path):
     b = _broker(tmp_path)
@@ -150,25 +158,40 @@ def test_call_op_rejects_unknown_and_ambiguous(tmp_path):
 
 # --- A secret attached to a request always needs approval --------------------
 
+
 def test_request_carries_secret_predicate():
-    assert _request_carries_secret("http.request", (None, "GET", "http://x"), {"auth": "k"})
-    assert _request_carries_secret("http.request", (None, "GET", "http://x"), {"secret_fields": {"p": "k"}})
+    assert _request_carries_secret(
+        "http.request", (None, "GET", "http://x"), {"auth": "k"}
+    )
+    assert _request_carries_secret(
+        "http.request", (None, "GET", "http://x"), {"secret_fields": {"p": "k"}}
+    )
     assert not _request_carries_secret("http.request", (None, "GET", "http://x"), {})
-    assert _request_carries_secret("web.fetch", ("http://x", "k"), {})  # auth positional
+    assert _request_carries_secret(
+        "web.fetch", ("http://x", "k"), {}
+    )  # auth positional
     assert _request_carries_secret("web.fetch", ("http://x",), {"auth": "k"})
     assert not _request_carries_secret("web.fetch", ("http://x",), {})
 
 
 def test_http_preview_names_secret_without_value(tmp_path):
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
-    _, summary = http.preview("request", (None, "GET", "http://x"), {"auth": "k", "auth_style": "header"})
+    _, summary = http.preview(
+        "request", (None, "GET", "http://x"), {"auth": "k", "auth_style": "header"}
+    )
     assert "auth=k" in summary and "S3CRET" not in summary
 
 
 def test_secret_carrying_read_is_grantable_per_host(tmp_path):
     http = HttpSessionCapability(Workspace(tmp_path))
-    scope = http.scope("request", (None, "GET", "https://api.example.com/x"), {"auth": "k"})
-    assert scope is not None and scope.action_class == "http" and scope.target == "api.example.com"
+    scope = http.scope(
+        "request", (None, "GET", "https://api.example.com/x"), {"auth": "k"}
+    )
+    assert (
+        scope is not None
+        and scope.action_class == "http"
+        and scope.target == "api.example.com"
+    )
     # a plain unauthenticated GET is free, so it needs no grant scope
     assert http.scope("request", (None, "GET", "https://api.example.com/x"), {}) is None
 
@@ -183,26 +206,39 @@ def test_secret_carrying_request_never_follows_redirects(tmp_path, monkeypatch):
 
     def handler(request):
         if request.url.host == "198.51.100.10":
-            return httpx.Response(302, headers={"location": "http://198.51.100.11/elsewhere"})
+            return httpx.Response(
+                302, headers={"location": "http://198.51.100.11/elsewhere"}
+            )
         return httpx.Response(200, text="other origin")
 
     seen = _mock_transport_client(monkeypatch, handler)
     http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"k": "S3CRET"}))
     result = http.request(
-        None, "GET", "http://198.51.100.10/start", auth="k", auth_style="header", auth_name="X-Key"
+        None,
+        "GET",
+        "http://198.51.100.10/start",
+        auth="k",
+        auth_style="header",
+        auth_name="X-Key",
     )
     assert result["status"] == 302  # the 3xx returns as-is; the agent re-decides auth
-    assert seen == ["http://198.51.100.10/start"]  # credential never resent to the Location
-    result = http.request(None, "GET", "http://198.51.100.10/start")  # no secret → followed
+    assert seen == [
+        "http://198.51.100.10/start"
+    ]  # credential never resent to the Location
+    result = http.request(
+        None, "GET", "http://198.51.100.10/start"
+    )  # no secret → followed
     assert result["status"] == 200 and result["text"] == "other origin"
 
 
 # --- Screenshot leaks a secret's pixels the same way look does ---------------
 
+
 def test_screenshot_gated_after_injected_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
     session = Session(tmp_path, unsafe_in_process=True)
     try:
+
         class _StubBrowser:
             injected = True
 
@@ -214,15 +250,21 @@ def test_screenshot_gated_after_injected_secret(tmp_path, monkeypatch):
 
         stub = _StubBrowser()
         session.browser = stub
-        assert session.policy.decide("browser.screenshot", ("sid",), {}) is Decision.APPROVE
+        assert (
+            session.policy.decide("browser.screenshot", ("sid",), {})
+            is Decision.APPROVE
+        )
         assert session.policy.decide("browser.look", ("sid",), {}) is Decision.APPROVE
         stub.injected = False  # no secret typed → both are free reads
-        assert session.policy.decide("browser.screenshot", ("sid",), {}) is Decision.ALLOW
+        assert (
+            session.policy.decide("browser.screenshot", ("sid",), {}) is Decision.ALLOW
+        )
     finally:
         session.close()
 
 
 # --- shell.bash is approval-gated by default (readiness C1) ------------------
+
 
 def test_shell_bash_requires_approval_by_default(tmp_path, monkeypatch):
     # bash runs an arbitrary program parent-side; the default policy gates it
@@ -240,6 +282,7 @@ def test_shell_bash_requires_approval_by_default(tmp_path, monkeypatch):
 
 
 # --- the default kernel is the sandboxed child (readiness H3) ----------------
+
 
 def test_default_session_kernel_is_out_of_process(tmp_path, monkeypatch):
     # A bare Session() must never exec() agent code in the host process — that
@@ -265,6 +308,7 @@ def test_in_process_kernel_requires_explicit_unsafe_opt_in(tmp_path, monkeypatch
 
 # --- Secret masking must catch URL-encoded forms -----------------------------
 
+
 def test_sink_masks_percent_encoded_secret():
     sink = SecretSink(Vault({"k": "p@ss/w0rd+x"}))
     sink.resolve("k")
@@ -276,9 +320,12 @@ def test_sink_masks_percent_encoded_secret():
 
 # --- SSRF egress guard -------------------------------------------------------
 
+
 def test_egress_blocks_metadata_and_nonhttp_scheme():
     with pytest.raises(EgressBlocked):
-        check_url("http://169.254.169.254/latest/meta-data/")  # cloud metadata (link-local)
+        check_url(
+            "http://169.254.169.254/latest/meta-data/"
+        )  # cloud metadata (link-local)
     with pytest.raises(EgressBlocked):
         check_url("file:///etc/passwd")
     with pytest.raises(EgressBlocked):
@@ -288,7 +335,9 @@ def test_egress_blocks_metadata_and_nonhttp_scheme():
 
 def test_egress_private_ranges_gated_by_strict_flag(monkeypatch):
     monkeypatch.delenv("PYHARNESS_BLOCK_PRIVATE_NETWORK", raising=False)
-    assert check_url("http://127.0.0.1:8080/")  # loopback allowed by default (local dev)
+    assert check_url(
+        "http://127.0.0.1:8080/"
+    )  # loopback allowed by default (local dev)
     assert check_url("http://10.0.0.5/")
     monkeypatch.setenv("PYHARNESS_BLOCK_PRIVATE_NETWORK", "true")
     with pytest.raises(EgressBlocked):
@@ -374,6 +423,7 @@ def test_index_dir_and_db_are_owner_only(tmp_path):
 
 # --- SSRF via redirect: every hop is re-vetted, not just the initial url ------
 
+
 def test_http_redirect_to_internal_address_is_blocked_on_the_hop(tmp_path, monkeypatch):
     import httpx
 
@@ -398,7 +448,9 @@ def test_http_redirects_to_permitted_hosts_still_follow(tmp_path, monkeypatch):
 
     def handler(request):
         if request.url.path == "/start":
-            return httpx.Response(302, headers={"location": "http://198.51.100.11/final"})
+            return httpx.Response(
+                302, headers={"location": "http://198.51.100.11/final"}
+            )
         return httpx.Response(200, text="landed")
 
     seen = _mock_transport_client(monkeypatch, handler)
@@ -414,7 +466,9 @@ def test_http_redirect_loop_is_capped(tmp_path, monkeypatch):
 
     def handler(request):
         n = int(request.url.path.lstrip("/"))
-        return httpx.Response(302, headers={"location": f"http://198.51.100.10/{n + 1}"})
+        return httpx.Response(
+            302, headers={"location": f"http://198.51.100.10/{n + 1}"}
+        )
 
     seen = _mock_transport_client(monkeypatch, handler)
     http = HttpSessionCapability(Workspace(tmp_path))
@@ -455,6 +509,7 @@ def test_browser_route_handler_revets_every_request():
 
 # --- IMAP command injection --------------------------------------------------
 
+
 def test_inbox_quote_rejects_control_chars():
     with pytest.raises(ValueError):
         _quote("inbox\r\nA1 UID STORE 1 +FLAGS (\\Deleted)")
@@ -469,15 +524,19 @@ def test_inbox_read_rejects_nonnumeric_id(tmp_path):
 
 # --- notify cannot emit terminal control sequences ---------------------------
 
+
 def test_notify_strips_control_and_ansi():
     seen: dict = {}
-    cap = NotifyCapability(on_event=lambda kind, text, **e: seen.update(text=text), desktop=None)
+    cap = NotifyCapability(
+        on_event=lambda kind, text, **e: seen.update(text=text), desktop=None
+    )
     cap.notify("hello\x1b[2J\x07 world")
     assert "\x1b" not in seen["text"] and "\x07" not in seen["text"]
     assert "hello" in seen["text"] and "world" in seen["text"]
 
 
 # --- A skill cannot shadow a core capability name ----------------------------
+
 
 def test_save_skill_refuses_core_capability_name(tmp_path):
     reg = Registry()
@@ -498,6 +557,7 @@ def test_skill_name_rejects_traversal(tmp_path):
 
 
 # --- An LLM-worker fan-out cannot overshoot the budget ------------------------
+
 
 def test_llm_workers_check_budget_before_each_completion():
     budget = Budget(limit_usd=1.0)

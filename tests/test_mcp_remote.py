@@ -47,7 +47,9 @@ class _Handler(BaseHTTPRequestHandler):
             result = {"content": [{"type": "text", "text": "pong"}]}
         else:
             result = {}
-        payload = json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": result}).encode()
+        payload = json.dumps(
+            {"jsonrpc": "2.0", "id": msg_id, "result": result}
+        ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Mcp-Session-Id", "test-session")

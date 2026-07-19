@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyharness import Budget
 from pyharness.core.agent import Agent, render_context
@@ -16,7 +16,20 @@ class ScriptedLLM:
         self.systems = []
         self.anchors = []
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="smart",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         self.calls.append(list(messages))
         self.tiers.append(tier)
         self.systems.append(system)
@@ -26,30 +39,38 @@ class ScriptedLLM:
 
 def _tool_completion(code):
     call = ToolCall(id="t1", name="run_python", input={"code": code})
-    return Completion(text="", tool_calls=[call], content=[{"k": "v"}], stop_reason="tool_use")
+    return Completion(
+        text="", tool_calls=[call], content=[{"k": "v"}], stop_reason="tool_use"
+    )
 
 
 def _text_completion(text):
-    return Completion(text=text, tool_calls=[], content=[{"k": "v"}], stop_reason="end_turn")
+    return Completion(
+        text=text, tool_calls=[], content=[{"k": "v"}], stop_reason="end_turn"
+    )
 
 
 def test_agent_runs_code_then_answers(tmp_path):
     events = []
-    llm = ScriptedLLM([
-        _tool_completion("write('hello.txt', 'hi there')\nprint('written')"),
-        _text_completion("Wrote the file."),
-    ])
+    llm = ScriptedLLM(
+        [
+            _tool_completion("write('hello.txt', 'hi there')\nprint('written')"),
+            _text_completion("Wrote the file."),
+        ]
+    )
+    from pyharness.audit import AuditLog
     from pyharness.broker import Broker
     from pyharness.broker.capabilities import FilesCapability
-    from pyharness.audit import AuditLog
-    from pyharness.security.policy import Policy
     from pyharness.core.workspace import Workspace
+    from pyharness.security.policy import Policy
 
     ws = Workspace(tmp_path)
     broker = Broker(Policy(), AuditLog(tmp_path / "a.jsonl"), Budget())
     broker.register(FilesCapability(ws))
     kernel = Kernel(broker.namespace())
-    agent = Agent(llm, kernel, Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        llm, kernel, Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
 
     answer = agent.run("create hello.txt", [])
 
@@ -60,12 +81,15 @@ def test_agent_runs_code_then_answers(tmp_path):
 
 def test_empty_code_cell_surfaces_a_hint_not_a_silent_noop(tmp_path):
     events = []
-    llm = ScriptedLLM([
-        _tool_completion(""),  # run_python with empty code
-        _text_completion("ok"),
-    ])
-    agent = Agent(llm, Kernel({}), Budget(),
-                  on_event=lambda k, t, **kw: events.append((k, t)))
+    llm = ScriptedLLM(
+        [
+            _tool_completion(""),  # run_python with empty code
+            _text_completion("ok"),
+        ]
+    )
+    agent = Agent(
+        llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
 
     assert agent.run("do nothing", []) == "ok"
     output = dict((k, t) for k, t in events if k == "output")["output"]
@@ -74,11 +98,14 @@ def test_empty_code_cell_surfaces_a_hint_not_a_silent_noop(tmp_path):
 
 def test_missing_code_key_surfaces_a_hint(tmp_path):
     call = ToolCall(id="t1", name="run_python", input={})  # no "code" key at all
-    completion = Completion(text="", tool_calls=[call], content=[{"k": "v"}], stop_reason="tool_use")
+    completion = Completion(
+        text="", tool_calls=[call], content=[{"k": "v"}], stop_reason="tool_use"
+    )
     events = []
     llm = ScriptedLLM([completion, _text_completion("ok")])
-    agent = Agent(llm, Kernel({}), Budget(),
-                  on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
 
     assert agent.run("do nothing", []) == "ok"
     output = dict((k, t) for k, t in events if k == "output")["output"]
@@ -114,7 +141,20 @@ def test_agent_splits_system_into_static_and_dynamic_segments():
 class FailingLLM:
     """Raises on complete() to simulate a stream that dies mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="smart",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         raise RuntimeError("stream interrupted")
 
 
@@ -140,7 +180,20 @@ def test_aborted_turn_rolls_back_user_message(tmp_path):
 class InterruptedLLM:
     """Raises KeyboardInterrupt on complete() to simulate a Ctrl-C mid-turn."""
 
-    def complete(self, *, system, messages, tier="smart", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="smart",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         raise KeyboardInterrupt
 
 
@@ -163,7 +216,7 @@ def test_ctrl_c_rolls_back_user_message(tmp_path):
 
 
 def test_render_context_carries_date_platform_and_workspace():
-    now = datetime(2026, 7, 13, 14, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 13, 14, 30, tzinfo=UTC)
     block = render_context("/tmp/ws", now=now)
     assert "2026-07-13 14:30" in block
     assert "Monday" in block
@@ -171,7 +224,7 @@ def test_render_context_carries_date_platform_and_workspace():
 
 
 def test_render_context_omits_workspace_when_unknown():
-    block = render_context(None, now=datetime(2026, 7, 13, tzinfo=timezone.utc))
+    block = render_context(None, now=datetime(2026, 7, 13, tzinfo=UTC))
     assert "Workspace" not in block
 
 
@@ -220,7 +273,6 @@ def test_agent_attaches_image_blocks_from_outbox():
 
 
 def test_agent_persists_images_and_emits_media_events(tmp_path):
-    import base64
 
     from pyharness.core.media import MediaOutbox
 
@@ -229,8 +281,11 @@ def test_agent_persists_images_and_emits_media_events(tmp_path):
     llm = ScriptedLLM([_tool_completion("look()"), _text_completion("done")])
     media_dir = tmp_path / "sess-1" / "media"
     agent = Agent(
-        llm, _LookKernel(outbox), Budget(),
-        media=outbox, media_dir=media_dir,
+        llm,
+        _LookKernel(outbox),
+        Budget(),
+        media=outbox,
+        media_dir=media_dir,
         on_event=lambda k, t, **kw: events.append((k, kw)),
     )
 
@@ -269,7 +324,14 @@ def test_serialize_elides_nested_image_data():
                     "tool_use_id": "t",
                     "content": [
                         {"type": "text", "text": "looked"},
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJDRA=="}},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": "QUJDRA==",
+                            },
+                        },
                     ],
                 }
             ],
@@ -281,11 +343,13 @@ def test_serialize_elides_nested_image_data():
 
 
 def test_kernel_state_persists_across_cells(tmp_path):
-    llm = ScriptedLLM([
-        _tool_completion("n = 41"),
-        _tool_completion("print(n + 1)"),
-        _text_completion("done"),
-    ])
+    llm = ScriptedLLM(
+        [
+            _tool_completion("n = 41"),
+            _tool_completion("print(n + 1)"),
+            _text_completion("done"),
+        ]
+    )
     kernel = Kernel({})
     agent = Agent(llm, kernel, Budget())
 
@@ -297,7 +361,12 @@ def test_kernel_state_persists_across_cells(tmp_path):
 
 
 def _completion(text="", tool_calls=(), stop_reason="end_turn"):
-    return Completion(text=text, tool_calls=list(tool_calls), content=[{"k": "v"}], stop_reason=stop_reason)
+    return Completion(
+        text=text,
+        tool_calls=list(tool_calls),
+        content=[{"k": "v"}],
+        stop_reason=stop_reason,
+    )
 
 
 class BoomKernel:
@@ -340,7 +409,9 @@ def test_max_tokens_text_answer_is_marked_truncated():
 def test_refusal_ends_the_turn_with_an_error_event():
     events = []
     llm = ScriptedLLM([_completion(stop_reason="refusal")])
-    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
 
     answer = agent.run("go", [])
 
@@ -352,7 +423,12 @@ def test_cache_anchor_tracks_the_elision_frontier():
     from pyharness.core.agent import _cache_anchor
 
     def tool_msg(i):
-        return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "out"}]}
+        return {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": f"t{i}", "content": "out"}
+            ],
+        }
 
     msgs = [{"role": "user", "content": "task"}]
     assert _cache_anchor(msgs, 2) is None  # no tool results yet
@@ -366,12 +442,14 @@ def test_cache_anchor_tracks_the_elision_frontier():
 
 
 def test_agent_passes_elision_frontier_as_cache_anchor():
-    llm = ScriptedLLM([
-        _tool_completion("print(1)"),
-        _tool_completion("print(2)"),
-        _tool_completion("print(3)"),
-        _text_completion("done"),
-    ])
+    llm = ScriptedLLM(
+        [
+            _tool_completion("print(1)"),
+            _tool_completion("print(2)"),
+            _tool_completion("print(3)"),
+            _text_completion("done"),
+        ]
+    )
     agent = Agent(llm, Kernel({}), Budget(), keep_outputs=1)
 
     agent.run("task", [])
@@ -396,18 +474,43 @@ class AttemptScriptedLLM(ScriptedLLM):
 
 
 def test_agent_records_llm_attempt_events_on_retries():
-    llm = AttemptScriptedLLM([_text_completion("done")], [
-        {"attempt": 1, "attempts": 3, "outcome": "start"},
-        {"attempt": 1, "attempts": 3, "outcome": "streaming",
-         "elapsed_s": 30.0, "events": 20, "output_tokens": 400},
-        {"attempt": 1, "attempts": 3, "outcome": "failed", "error": "StreamStalled",
-         "clock_fired": "silence", "elapsed_s": 61.0, "events": 40, "output_tokens": 700},
-        {"attempt": 2, "attempts": 3, "outcome": "start"},
-        {"attempt": 2, "attempts": 3, "outcome": "ok",
-         "elapsed_s": 25.0, "events": 12, "output_tokens": 300},
-    ])
+    llm = AttemptScriptedLLM(
+        [_text_completion("done")],
+        [
+            {"attempt": 1, "attempts": 3, "outcome": "start"},
+            {
+                "attempt": 1,
+                "attempts": 3,
+                "outcome": "streaming",
+                "elapsed_s": 30.0,
+                "events": 20,
+                "output_tokens": 400,
+            },
+            {
+                "attempt": 1,
+                "attempts": 3,
+                "outcome": "failed",
+                "error": "StreamStalled",
+                "clock_fired": "silence",
+                "elapsed_s": 61.0,
+                "events": 40,
+                "output_tokens": 700,
+            },
+            {"attempt": 2, "attempts": 3, "outcome": "start"},
+            {
+                "attempt": 2,
+                "attempts": 3,
+                "outcome": "ok",
+                "elapsed_s": 25.0,
+                "events": 12,
+                "output_tokens": 300,
+            },
+        ],
+    )
     events = []
-    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
     assert agent.run("answer", []) == "done"
 
     # The trace shows the retry chain — failure with its clock, the relaunch,
@@ -422,12 +525,23 @@ def test_agent_records_llm_attempt_events_on_retries():
 
 
 def test_agent_healthy_call_records_no_attempt_events():
-    llm = AttemptScriptedLLM([_text_completion("done")], [
-        {"attempt": 1, "attempts": 3, "outcome": "start"},
-        {"attempt": 1, "attempts": 3, "outcome": "ok",
-         "elapsed_s": 5.0, "events": 12, "output_tokens": 300},
-    ])
+    llm = AttemptScriptedLLM(
+        [_text_completion("done")],
+        [
+            {"attempt": 1, "attempts": 3, "outcome": "start"},
+            {
+                "attempt": 1,
+                "attempts": 3,
+                "outcome": "ok",
+                "elapsed_s": 5.0,
+                "events": 12,
+                "output_tokens": 300,
+            },
+        ],
+    )
     events = []
-    agent = Agent(llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t)))
+    agent = Agent(
+        llm, Kernel({}), Budget(), on_event=lambda k, t, **kw: events.append((k, t))
+    )
     assert agent.run("answer", []) == "done"
     assert not [t for k, t in events if k == "llm_attempt"]

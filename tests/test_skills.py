@@ -28,8 +28,13 @@ def test_parse_frontmatter_and_body():
 
 def test_human_authored_skill_loads_from_disk(tmp_path):
     write_skill(
-        tmp_path, "greet", "Greet a person", "Call hello(name).",
-        files={"impl.py": "def hello(name):\n    '''Say hi.'''\n    return f'hi {name}'\n"},
+        tmp_path,
+        "greet",
+        "Greet a person",
+        "Call hello(name).",
+        files={
+            "impl.py": "def hello(name):\n    '''Say hi.'''\n    return f'hi {name}'\n"
+        },
         keywords=("welcome",),
     )
     reg = Registry()
@@ -50,8 +55,13 @@ def test_human_authored_skill_loads_from_disk(tmp_path):
 
 
 def test_search_does_not_load_skill_code(tmp_path):
-    write_skill(tmp_path, "boom", "explodes on import", "n/a",
-                files={"x.py": "raise RuntimeError('imported too early')\n"})
+    write_skill(
+        tmp_path,
+        "boom",
+        "explodes on import",
+        "n/a",
+        files={"x.py": "raise RuntimeError('imported too early')\n"},
+    )
     reg = Registry()
     load_skills(reg, tmp_path)
     # browsing the catalog must not import bundled code
@@ -79,7 +89,9 @@ def test_save_skill_capability_registers_now_and_reloads_later(tmp_path):
     reg = Registry()
     cap = SkillsCapability(reg, tmp_path)
     msg = cap.save_skill(
-        "dedupe", "Dedupe a list", "Call run(items).",
+        "dedupe",
+        "Dedupe a list",
+        "Call run(items).",
         files={"impl.py": "def run(items):\n    return list(dict.fromkeys(items))\n"},
     )
     assert "saved skill 'dedupe'" in msg
@@ -108,13 +120,16 @@ def test_resave_drops_stale_bundled_code(tmp_path):
     # re-save with a renamed helper; the old file must not linger
     cap.save_skill("t", "v2", "use new()", files={"b.py": "def new():\n    return 2\n"})
     assert not (tmp_path / "t" / "a.py").exists()
-    mod = Registry(); load_skills(mod, tmp_path)  # fresh load = exactly the last save
+    mod = Registry()  # fresh load = exactly the last save
+    load_skills(mod, tmp_path)
     assert mod.use("t").new() == 2
     assert not hasattr(mod.use("t"), "old")
 
 
 def test_skills_are_search_only_not_featured(tmp_path):
-    write_skill(tmp_path, "rare", "a rarely used procedure", "do it", keywords=("widget",))
+    write_skill(
+        tmp_path, "rare", "a rarely used procedure", "do it", keywords=("widget",)
+    )
     reg = Registry()
     load_skills(reg, tmp_path)
     # not in the default browse — skills don't crowd the common-tools listing
@@ -174,7 +189,12 @@ def test_record_use_rejects_bad_outcome_and_unknown_skill(tmp_path):
 def test_journal_is_bounded(tmp_path):
     write_skill(tmp_path, "loop", "repeated", "go")
     for i in range(_MAX_USES + 5):
-        record_use(tmp_path / "loop", "worked", note=f"run {i}", now=f"2026-01-01T00:00:{i:02d}")
+        record_use(
+            tmp_path / "loop",
+            "worked",
+            note=f"run {i}",
+            now=f"2026-01-01T00:00:{i:02d}",
+        )
     uses = read_journal(tmp_path / "loop")["uses"]
     assert len(uses) == _MAX_USES
     assert uses[-1]["note"] == f"run {_MAX_USES + 4}"  # newest kept, oldest dropped
@@ -200,12 +220,18 @@ def test_resave_de_verifies_but_keeps_log(tmp_path):
 
 def test_save_skill_requires_approval_by_default(tmp_path):
     skills = tmp_path / "skills"
-    denied = Session(tmp_path / "a", skills_dir=skills, unsafe_in_process=True)  # no approver
+    denied = Session(
+        tmp_path / "a", skills_dir=skills, unsafe_in_process=True
+    )  # no approver
     with pytest.raises(PermissionDenied):
         denied.broker.namespace()["save_skill"]("x", "d", "i")
     denied.close()
 
-    allowed = Session(tmp_path / "b", skills_dir=skills, approver=lambda *a: True,
-                      unsafe_in_process=True)
+    allowed = Session(
+        tmp_path / "b",
+        skills_dir=skills,
+        approver=lambda *a: True,
+        unsafe_in_process=True,
+    )
     assert "saved skill 'x'" in allowed.broker.namespace()["save_skill"]("x", "d", "i")
     allowed.close()

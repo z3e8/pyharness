@@ -2,6 +2,7 @@
 by agent code — not from the child's os.environ, nor from a bash subprocess. The
 child has no LLM client (completions route through the broker), so it needs none
 of them."""
+
 from pyharness.core.session import Session
 
 

@@ -32,7 +32,9 @@ MUTATING_ACTIONS = frozenset(
 # Ops whose second positional arg is the element selector (used by preview() to
 # describe the target). press/upload take other positional args first, so they
 # rely on the ref=/selector= keyword instead.
-_SELECTOR_POS_OPS = frozenset({"click", "fill", "fill_secret", "fill_totp", "select_option"})
+_SELECTOR_POS_OPS = frozenset(
+    {"click", "fill", "fill_secret", "fill_totp", "select_option"}
+)
 
 # Credential-releasing ops: never grant-covered (scope() returns None), so each
 # one prompts on its own even inside a granted domain.
@@ -62,7 +64,9 @@ class _BrowserSession:
     sink drives read-back redaction; the cleartext it holds never leaves the
     parent."""
 
-    def __init__(self, browser, context, page, sink: SecretSink, profile: str | None = None):
+    def __init__(
+        self, browser, context, page, sink: SecretSink, profile: str | None = None
+    ):
         self.browser = browser
         self.context = context
         self.page = page
@@ -166,12 +170,18 @@ class BrowserCapability:
         and capped — a crafted accessible name cannot impersonate harness output."""
         if op == "open_browser":
             profile = kwargs.get("profile") or (args[0] if args else None)
-            return ActionCategory.OUTWARD, f"open a browser logged in as profile {profile!r}{self._profile_domains(profile)}"
+            return (
+                ActionCategory.OUTWARD,
+                f"open a browser logged in as profile {profile!r}{self._profile_domains(profile)}",
+            )
         if op == "save_profile":
             name = kwargs.get("name") or (args[1] if len(args) >= 2 else None)
             session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
             where = f" from {session.sink.redact(session.page.url)}" if session else ""
-            return ActionCategory.LOCAL, f"save this browser's login state as encrypted profile {name!r}{where}"
+            return (
+                ActionCategory.LOCAL,
+                f"save this browser's login state as encrypted profile {name!r}{where}",
+            )
         session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
         ref = kwargs.get("ref")
         selector = kwargs.get("selector")
@@ -290,7 +300,9 @@ class BrowserCapability:
         context.route("**/*", _egress_route_handler)
         page = context.new_page()
         session_id = uuid4().hex
-        self._sessions[session_id] = _BrowserSession(browser, context, page, SecretSink(self.vault), profile=profile)
+        self._sessions[session_id] = _BrowserSession(
+            browser, context, page, SecretSink(self.vault), profile=profile
+        )
         return session_id
 
     def save_profile(self, session_id: str, name: str) -> dict:
@@ -351,7 +363,9 @@ class BrowserCapability:
         Waits for `domcontentloaded` rather than the full `load` event: a heavy
         page whose trackers and lazy media never quiesce would otherwise time out
         even though its content is already present."""
-        check_url(url)  # SSRF guard: no link-local/metadata (or private, if strict) targets
+        check_url(
+            url
+        )  # SSRF guard: no link-local/metadata (or private, if strict) targets
         session = self._session(session_id)
         resp = session.page.goto(url, wait_until="domcontentloaded")
         session.last_snapshot = None  # new page: every prior ref is now meaningless
@@ -393,10 +407,20 @@ class BrowserCapability:
         raw = session.page.aria_snapshot(mode="ai")
         text = session.sink.redact(raw)
         session.last_snapshot = text  # refs and preview() resolve against this
-        body = deliver(ws=self.ws, content_type="text/plain", text=text, save=save, default_name="snapshot.yaml")
-        return session.sink.redacted({"url": session.page.url, "title": session.page.title(), **body})
+        body = deliver(
+            ws=self.ws,
+            content_type="text/plain",
+            text=text,
+            save=save,
+            default_name="snapshot.yaml",
+        )
+        return session.sink.redacted(
+            {"url": session.page.url, "title": session.page.title(), **body}
+        )
 
-    def _target(self, session: _BrowserSession, selector: str | None, ref: str | None) -> str:
+    def _target(
+        self, session: _BrowserSession, selector: str | None, ref: str | None
+    ) -> str:
         """Resolve an element target to a Playwright selector string, accepting a
         CSS/text `selector` or a snapshot `ref` (exactly one). A ref becomes an
         `aria-ref=` selector; it is validated against the current snapshot first so
@@ -417,7 +441,9 @@ class BrowserCapability:
             )
         return f"aria-ref={ref}"
 
-    def click(self, session_id: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+    def click(
+        self, session_id: str, selector: str | None = None, *, ref: str | None = None
+    ) -> dict:
         """Click an element, targeted by a snapshot `ref` (preferred — take a
         `snapshot()` first) or a CSS/text `selector`. State-changing — gated for
         approval."""
@@ -426,7 +452,12 @@ class BrowserCapability:
         return self._state(session, title=session.page.title())
 
     def fill(
-        self, session_id: str, selector: str | None = None, value: str | None = None, *, ref: str | None = None
+        self,
+        session_id: str,
+        selector: str | None = None,
+        value: str | None = None,
+        *,
+        ref: str | None = None,
     ) -> dict:
         """Type `value` into a field, targeted by a snapshot `ref` (preferred) or a
         CSS/text `selector`. For credentials use `fill_secret` instead, so the
@@ -436,7 +467,12 @@ class BrowserCapability:
         return self._state(session)
 
     def fill_secret(
-        self, session_id: str, selector: str | None = None, secret_name: str | None = None, *, ref: str | None = None
+        self,
+        session_id: str,
+        selector: str | None = None,
+        secret_name: str | None = None,
+        *,
+        ref: str | None = None,
     ) -> dict:
         """Type a named vault secret into a field, targeted by a snapshot `ref`
         (preferred) or a CSS/text `selector`. The cleartext is resolved
@@ -452,7 +488,12 @@ class BrowserCapability:
         return self._state(session)
 
     def fill_totp(
-        self, session_id: str, selector: str | None = None, secret_name: str | None = None, *, ref: str | None = None
+        self,
+        session_id: str,
+        selector: str | None = None,
+        secret_name: str | None = None,
+        *,
+        ref: str | None = None,
     ) -> dict:
         """Type the current 2FA code derived from a named vault TOTP seed (e.g.
         "github_totp" — `secrets()` lists what exists) into a field, targeted by a
@@ -465,7 +506,9 @@ class BrowserCapability:
             secret_name, target_host=urlsplit(session.page.url).hostname
         )
         code = totp_code(seed)
-        session.sink.track(code)  # the page may echo the code back; mask it like the seed
+        session.sink.track(
+            code
+        )  # the page may echo the code back; mask it like the seed
         session.page.fill(self._target(session, selector, ref), code)
         return self._state(session)
 
@@ -485,11 +528,22 @@ class BrowserCapability:
         State-changing — gated for approval."""
         session = self._session(session_id)
         target = self._target(session, selector, ref)
-        chosen = {k: v for k, v in (("value", value), ("label", label), ("index", index)) if v is not None}
+        chosen = {
+            k: v
+            for k, v in (("value", value), ("label", label), ("index", index))
+            if v is not None
+        }
         session.page.select_option(target, **chosen)
         return self._state(session)
 
-    def press(self, session_id: str, key: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+    def press(
+        self,
+        session_id: str,
+        key: str,
+        selector: str | None = None,
+        *,
+        ref: str | None = None,
+    ) -> dict:
         """Press a key or chord (`"Enter"`, `"Tab"`, `"Control+A"`). With a `ref`/
         `selector` the key is sent to that element; otherwise to whatever is
         focused. State-changing (Enter submits a form) — gated for approval."""
@@ -508,7 +562,13 @@ class BrowserCapability:
         session.page.mouse.wheel(dx, dy)
         return self._state(session)
 
-    def wait_for(self, session_id: str, selector: str, state: str = "visible", timeout_ms: int = 10_000) -> dict:
+    def wait_for(
+        self,
+        session_id: str,
+        selector: str,
+        state: str = "visible",
+        timeout_ms: int = 10_000,
+    ) -> dict:
         """Wait until `selector` reaches `state` (`"visible"`/`"attached"`/
         `"hidden"`/`"detached"`). Returns `{... , "found": bool}` — a timeout is a
         clean `found=False`, not a traceback, so polling for an element that may
@@ -523,7 +583,14 @@ class BrowserCapability:
             found = False
         return self._state(session, found=found)
 
-    def upload(self, session_id: str, path: str, selector: str | None = None, *, ref: str | None = None) -> dict:
+    def upload(
+        self,
+        session_id: str,
+        path: str,
+        selector: str | None = None,
+        *,
+        ref: str | None = None,
+    ) -> dict:
         """Attach a workspace file to a file-input, targeted by a snapshot `ref`
         (preferred) or a CSS/text `selector`. `path` is workspace-relative and
         escape-guarded. This stages the file's *contents* into the remote page (a
@@ -535,7 +602,9 @@ class BrowserCapability:
         session.page.set_input_files(target, str(source))
         return self._state(session, uploaded=path)
 
-    def read_text(self, session_id: str, selector: str | None = None, save: str | None = None) -> dict:
+    def read_text(
+        self, session_id: str, selector: str | None = None, save: str | None = None
+    ) -> dict:
         """Read visible text from the page (or the element matching `selector`).
         Any secret this session injected is masked before returning.
 
@@ -546,7 +615,13 @@ class BrowserCapability:
         session = self._session(session_id)
         raw = session.page.inner_text(selector or "body")
         text = session.sink.redact(raw)
-        body = deliver(ws=self.ws, content_type="text/plain", text=text, save=save, default_name="page.txt")
+        body = deliver(
+            ws=self.ws,
+            content_type="text/plain",
+            text=text,
+            save=save,
+            default_name="page.txt",
+        )
         return session.sink.redacted(body)
 
     def screenshot(self, session_id: str, path: str) -> dict:
@@ -575,7 +650,9 @@ class BrowserCapability:
         page."""
         session = self._session(session_id)
         if self.media is None:
-            raise RuntimeError("look() has no image channel in this session; use screenshot() to save to disk")
+            raise RuntimeError(
+                "look() has no image channel in this session; use screenshot() to save to disk"
+            )
         data = session.page.screenshot(type="jpeg", quality=80, full_page=full_page)
         self.media.attach(media_type="image/jpeg", data=data)
         return self._state(session, attached=True, bytes=len(data))

@@ -75,7 +75,9 @@ def test_pick_root_ignores_spawn_children(tmp_path):
     import os
 
     _write(tmp_path / "run-1" / "trace.jsonl", {"kind": "task", "text": "parent"})
-    _write(tmp_path / "run-1-spawn-01" / "trace.jsonl", {"kind": "task", "text": "child"})
+    _write(
+        tmp_path / "run-1-spawn-01" / "trace.jsonl", {"kind": "task", "text": "child"}
+    )
     # The child is the most recently modified, but the root view must stay on the parent.
     os.utime(tmp_path / "run-1" / "trace.jsonl", (1, 1))
     assert _pick_trace(tmp_path) == tmp_path / "run-1" / "trace.jsonl"

@@ -126,7 +126,11 @@ def _reflect(session, *, apply: bool) -> str | None:
         entry = lessons_store.record(
             session.lessons_path, proposal["text"], session=session.workspace.root.name
         )
-        state = "established" if entry["count"] >= lessons_store.ESTABLISHED_AT else "candidate"
+        state = (
+            "established"
+            if entry["count"] >= lessons_store.ESTABLISHED_AT
+            else "candidate"
+        )
         return f"reflection recorded a lesson ({state}): {entry['text']}"
 
     if action == "edit_skill":
@@ -134,19 +138,24 @@ def _reflect(session, *, apply: bool) -> str | None:
         # skill edits. A denial is a decision, not an error.
         try:
             session.broker.call(
-                "skills", "edit_skill",
-                name=proposal["name"], edits=proposal.get("edits") or [],
+                "skills",
+                "edit_skill",
+                name=proposal["name"],
+                edits=proposal.get("edits") or [],
                 reason=proposal.get("reason", ""),
             )
         except Exception as exc:  # noqa: BLE001 — denial or bad edit: report, don't raise
             return f"reflection proposed editing skill {proposal.get('name')!r}: not applied ({exc})"
         _commit_skills(session, f"reflect: edit skill {proposal['name']}", proposal)
-        return f"reflection edited skill {proposal['name']!r} — unverified until it runs"
+        return (
+            f"reflection edited skill {proposal['name']!r} — unverified until it runs"
+        )
 
     if action == "save_skill":
         try:
             session.broker.call(
-                "skills", "save_skill",
+                "skills",
+                "save_skill",
                 name=proposal["name"],
                 description=proposal.get("description", ""),
                 instructions=proposal.get("instructions", ""),
@@ -198,14 +207,28 @@ def _commit_skills(session, message: str, proposal: dict) -> None:
             subprocess.run(
                 ["git", "init", "-q"], cwd=skills_dir, check=True, capture_output=True
             )
-        subprocess.run(["git", "add", "-A"], cwd=skills_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "-A"], cwd=skills_dir, check=True, capture_output=True
+        )
         evidence = proposal.get("reason", "")
         body = f"session: {session.workspace.root.name}\nevidence: {evidence}"
         subprocess.run(
-            ["git", "-c", "user.name=pyharness-reflect",
-             "-c", "user.email=reflect@pyharness.local",
-             "commit", "-q", "-m", message, "-m", body],
-            cwd=skills_dir, check=True, capture_output=True,
+            [
+                "git",
+                "-c",
+                "user.name=pyharness-reflect",
+                "-c",
+                "user.email=reflect@pyharness.local",
+                "commit",
+                "-q",
+                "-m",
+                message,
+                "-m",
+                body,
+            ],
+            cwd=skills_dir,
+            check=True,
+            capture_output=True,
         )
     except Exception:  # noqa: BLE001
         log.debug("skills git versioning failed", exc_info=True)

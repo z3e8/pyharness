@@ -85,8 +85,14 @@ class SkillsCapability:
         validate_skill_name(name)
         self._guard_shadow(name)
         skill_dir = write_skill(
-            self.skills_dir, name, description, instructions,
-            files=files, keywords=tuple(keywords), category=category, check=check,
+            self.skills_dir,
+            name,
+            description,
+            instructions,
+            files=files,
+            keywords=tuple(keywords),
+            category=category,
+            check=check,
         )
         register_skill_dir(self.registry, skill_dir)
         self._on_event("skill_saved", name, skill=name)
@@ -106,7 +112,9 @@ class SkillsCapability:
         self._guard_shadow(name)
         skill_dir = edit_skill_md(self.skills_dir, name, edits)
         register_skill_dir(self.registry, skill_dir)
-        self._on_event("skill_edited", name, skill=name, edits=len(edits), reason=reason)
+        self._on_event(
+            "skill_edited", name, skill=name, edits=len(edits), reason=reason
+        )
         return (
             f"applied {len(edits)} edit(s) to skill {name!r} — unverified until a "
             "run works and you record_skill_use(name, 'worked')."

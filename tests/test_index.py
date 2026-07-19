@@ -22,29 +22,76 @@ def _write_jsonl(path, entries):
 def _make_session(root, name, *, ts=1700000000.0, answer="done", errors=(), skill=None):
     d = root / name
     trace = [
-        {"ts": ts, "kind": "session_start", "text": "", "session_id": "abc", "root": str(d)},
+        {
+            "ts": ts,
+            "kind": "session_start",
+            "text": "",
+            "session_id": "abc",
+            "root": str(d),
+        },
         {"ts": ts + 1, "kind": "task", "text": "apply to the job"},
-        {"ts": ts + 2, "kind": "llm_call", "text": "thinking...", "model": "claude-sonnet-4-6",
-         "tier": "mid", "cost_usd": 0.01, "latency_s": 2.5, "input_tokens": 900, "output_tokens": 80},
+        {
+            "ts": ts + 2,
+            "kind": "llm_call",
+            "text": "thinking...",
+            "model": "claude-sonnet-4-6",
+            "tier": "mid",
+            "cost_usd": 0.01,
+            "latency_s": 2.5,
+            "input_tokens": 900,
+            "output_tokens": 80,
+        },
         {"ts": ts + 3, "kind": "code", "text": "print('hi')"},
         {"ts": ts + 4, "kind": "output", "text": "hi"},
-        {"ts": ts + 4.5, "kind": "action_end", "text": "llm.llm", "ok": False,
-         "error": "StreamStalled('silence')", "elapsed_s": 240.0},
+        {
+            "ts": ts + 4.5,
+            "kind": "action_end",
+            "text": "llm.llm",
+            "ok": False,
+            "error": "StreamStalled('silence')",
+            "elapsed_s": 240.0,
+        },
     ]
     for err in errors:
         trace.append({"ts": ts + 5, "kind": "error", "text": err})
     if skill:
-        trace.append({"ts": ts + 6, "kind": "skill_use", "text": skill,
-                      "skill": skill, "outcome": "worked", "note": ""})
+        trace.append(
+            {
+                "ts": ts + 6,
+                "kind": "skill_use",
+                "text": skill,
+                "skill": skill,
+                "outcome": "worked",
+                "note": "",
+            }
+        )
     if answer is not None:
         trace.append({"ts": ts + 7, "kind": "answer", "text": answer})
-    trace.append({"ts": ts + 8, "kind": "session_end", "text": "", "session_id": "abc",
-                  "spent_usd": 0.02, "calls": 2, "by_model": {}})
+    trace.append(
+        {
+            "ts": ts + 8,
+            "kind": "session_end",
+            "text": "",
+            "session_id": "abc",
+            "spent_usd": 0.02,
+            "calls": 2,
+            "by_model": {},
+        }
+    )
     _write_jsonl(d / "trace.jsonl", trace)
-    _write_jsonl(d / "audit.jsonl", [
-        {"ts": ts + 3.5, "action": "shell.bash", "ok": True, "args": "'ls'"},
-        {"ts": ts + 3.6, "action": "http.request", "decision": "approve", "approved": False, "ok": False},
-    ])
+    _write_jsonl(
+        d / "audit.jsonl",
+        [
+            {"ts": ts + 3.5, "action": "shell.bash", "ok": True, "args": "'ls'"},
+            {
+                "ts": ts + 3.6,
+                "action": "http.request",
+                "decision": "approve",
+                "approved": False,
+                "ok": False,
+            },
+        ],
+    )
     return d
 
 
@@ -84,11 +131,20 @@ def test_index_two_phase_audit_records(tmp_path):
     root = tmp_path / ".sessions"
     d = root / "cli-2p"
     _write_jsonl(d / "trace.jsonl", [{"ts": 10.0, "kind": "task", "text": "t"}])
-    _write_jsonl(d / "audit.jsonl", [
-        {"ts": 10.1, "action": "shell.bash", "phase": "start", "args": "'ls'"},
-        {"ts": 10.2, "action": "shell.bash", "phase": "end", "ok": True, "args": "'ls'"},
-        {"ts": 10.3, "action": "llm.llm", "phase": "start", "args": "'prompt'"},
-    ])
+    _write_jsonl(
+        d / "audit.jsonl",
+        [
+            {"ts": 10.1, "action": "shell.bash", "phase": "start", "args": "'ls'"},
+            {
+                "ts": 10.2,
+                "action": "shell.bash",
+                "phase": "end",
+                "ok": True,
+                "args": "'ls'",
+            },
+            {"ts": 10.3, "action": "llm.llm", "phase": "start", "args": "'prompt'"},
+        ],
+    )
     db = tmp_path / "index.db"
     update_index(db, [root])
 
@@ -97,7 +153,9 @@ def test_index_two_phase_audit_records(tmp_path):
     assert session["aborted_actions"] == 1  # the llm.llm start never ended
     rows = query(db, "SELECT action, phase FROM actions ORDER BY ts")
     assert [(r["action"], r["phase"]) for r in rows] == [
-        ("shell.bash", "start"), ("shell.bash", "end"), ("llm.llm", "start"),
+        ("shell.bash", "start"),
+        ("shell.bash", "end"),
+        ("llm.llm", "start"),
     ]
 
 
@@ -105,8 +163,13 @@ def test_outcome_classification(tmp_path):
     root = tmp_path / ".sessions"
     _make_session(root, "s-answered", ts=100.0)
     _make_session(root, "s-steps", ts=200.0, answer="(stopped: reached max_steps)")
-    _make_session(root, "s-budget", ts=300.0, answer=None,
-                  errors=["BudgetExceeded: budget exhausted: spent $5"])
+    _make_session(
+        root,
+        "s-budget",
+        ts=300.0,
+        answer=None,
+        errors=["BudgetExceeded: budget exhausted: spent $5"],
+    )
     _make_session(root, "s-error", ts=400.0, answer=None, errors=["RuntimeError: boom"])
     _make_session(root, "s-aborted", ts=500.0, answer=None)
     db = tmp_path / "index.db"
@@ -133,7 +196,9 @@ def test_incremental_skip_and_reindex_on_change(tmp_path):
 
     time.sleep(0.01)
     with (d / "trace.jsonl").open("a") as f:
-        f.write(json.dumps({"ts": 1700000010.0, "kind": "task", "text": "again"}) + "\n")
+        f.write(
+            json.dumps({"ts": 1700000010.0, "kind": "task", "text": "again"}) + "\n"
+        )
     assert update_index(db, [])["indexed"] == 1
     (session,) = query(db, "SELECT tasks FROM sessions")
     assert session["tasks"] == 2  # replaced, not duplicated
@@ -150,7 +215,11 @@ def test_skill_views_and_journal_snapshot(tmp_path):
     update_index(db, [root], skills_dir=skills)
 
     (stat,) = query(db, "SELECT * FROM skill_stats")
-    assert stat["skill"] == "greenhouse" and stat["uses"] == 2 and stat["success_rate"] == 1.0
+    assert (
+        stat["skill"] == "greenhouse"
+        and stat["uses"] == 2
+        and stat["success_rate"] == 1.0
+    )
     runs = query(db, "SELECT run_n, cost_usd FROM skill_run_costs ORDER BY run_n")
     assert [r["run_n"] for r in runs] == [1, 2]
     (skill,) = query(db, "SELECT * FROM skills")
@@ -198,6 +267,15 @@ def test_open_db_sets_wal_and_busy_timeout(tmp_path):
 
 
 def test_schema_help_names_every_table():
-    for table in ("sessions", "llm_calls", "cells", "actions", "skill_uses",
-                  "skills", "skill_stats", "skill_run_costs", "error_taxonomy"):
+    for table in (
+        "sessions",
+        "llm_calls",
+        "cells",
+        "actions",
+        "skill_uses",
+        "skills",
+        "skill_stats",
+        "skill_run_costs",
+        "error_taxonomy",
+    ):
         assert table in SCHEMA_HELP

@@ -180,7 +180,9 @@ def verify_chain(path: str | Path) -> tuple[bool, int]:
         recorded_hash = entry.pop("hash", None)
         recorded_prev = entry.pop("prev", None)
         payload = json.dumps(entry, default=str, sort_keys=True)
-        expected = hashlib.sha256(((recorded_prev or "") + payload).encode()).hexdigest()
+        expected = hashlib.sha256(
+            ((recorded_prev or "") + payload).encode()
+        ).hexdigest()
         if recorded_prev != prev or recorded_hash != expected:
             return False, index
         prev = recorded_hash

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Iterable
 from uuid import uuid4
 
-from ..obs import telemetry
 from ..audit import AuditLog
 from ..broker.capabilities import (
     BrowserCapability,
@@ -35,17 +34,17 @@ from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
 from ..llm.client import AnthropicLLM
+from ..obs import telemetry
+from ..obs.trace import TraceLog
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
 from ..security.vault import Vault
 from ..tools.registry import Registry
-from ..obs.trace import TraceLog
 from .agent import Agent
 from .kernel import Kernel
 from .media import MediaOutbox
 from .session_venv import SessionVenv
 from .workspace import Workspace
-
 
 # What a spawned child session may hold. Its body — workspace files, search,
 # LLM-as-function delegation — is always in scope; everything else must be
@@ -157,7 +156,11 @@ class Session:
             self._caps: frozenset[str] | None = None
         else:
             granted = frozenset(capabilities)
-            self._caps = granted | CHILD_BODY | ({"tools"} if granted & _EXTERNAL else frozenset())
+            self._caps = (
+                granted
+                | CHILD_BODY
+                | ({"tools"} if granted & _EXTERNAL else frozenset())
+            )
         self._unsafe_in_process = unsafe_in_process
         self._spawn_seq = 0
         self.trace = TraceLog(self.workspace.root / "trace.jsonl")
@@ -173,7 +176,9 @@ class Session:
             _raw_on_event = on_event
             _display_lock = threading.Lock()
 
-            def on_event(kind: str, text: str, _inner=_raw_on_event, _lock=_display_lock):
+            def on_event(
+                kind: str, text: str, _inner=_raw_on_event, _lock=_display_lock
+            ):
                 with _lock:
                     _inner(kind, text)
 
@@ -306,7 +311,11 @@ class Session:
         # the machine-readable "happening right now" record a live viewer tails;
         # the CLI already renders the human-facing side (code, output, prompts).
         self.broker = Broker(
-            self.policy, self.audit, self.budget, approver=approver, on_event=self.trace.record
+            self.policy,
+            self.audit,
+            self.budget,
+            approver=approver,
+            on_event=self.trace.record,
         )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
@@ -315,7 +324,11 @@ class Session:
         # loop (drains it into image content blocks after each cell).
         self.media = MediaOutbox()
         self.browser = BrowserCapability(
-            self.workspace, vault=self.vault, media=self.media, profiles=self.profiles, audit=self.audit
+            self.workspace,
+            vault=self.vault,
+            media=self.media,
+            profiles=self.profiles,
+            audit=self.audit,
         )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope for a
@@ -346,7 +359,9 @@ class Session:
             # Skill authorship/outcomes land in the trace (not the display stream)
             # so the session index can attribute skill uses to sessions.
             core_caps.append(
-                SkillsCapability(self.registry, self.skills_dir, on_event=self.trace.record)
+                SkillsCapability(
+                    self.registry, self.skills_dir, on_event=self.trace.record
+                )
             )
         if self._has("history"):
             core_caps.append(HistoryCapability(self.audit))
@@ -371,21 +386,98 @@ class Session:
         # learned skills. One coherent, discoverable surface for everything
         # external; gating is identical to a builtin's.
         tool_caps = [
-            (WebCapability(http=self.http),
-             "Read the web: search_results (a raw ranked list to fan out over), and fetch a single URL.",
-             "web", ("web", "http", "fetch", "search", "results", "url", "download", "browse", "internet")),
-            (self.http,
-             "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
-             "web", ("http", "request", "post", "put", "session", "api", "cookie", "upload", "rest")),
-            (self.browser,
-             "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page. Login without seeing credentials: fill_secret types a vault secret, fill_totp types the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile).",
-             "web", ("browser", "playwright", "snapshot", "ref", "aria", "click", "fill", "select", "press", "upload", "look", "screenshot", "page", "dom", "headless", "form", "profile", "login", "cookie", "persistent", "identity", "totp", "2fa", "otp", "mfa")),
-            (InboxCapability(self.workspace, vault=self.vault),
-             "Read-only email over IMAP: list/search message metadata, read one message as clean text + links (attachments land in the workspace). No send/delete/flag — reads leave the mailbox untouched.",
-             "email", ("inbox", "email", "imap", "mail", "message", "verification", "magic", "link", "code", "2fa", "otp", "confirmation", "receipt", "attachment", "unread")),
-            (PackagesCapability(self.session_venv),
-             "Install Python packages into the session for later import.",
-             "packages", ("install", "pip", "package", "dependency", "library", "import")),
+            (
+                WebCapability(http=self.http),
+                "Read the web: search_results (a raw ranked list to fan out over), and fetch a single URL.",
+                "web",
+                (
+                    "web",
+                    "http",
+                    "fetch",
+                    "search",
+                    "results",
+                    "url",
+                    "download",
+                    "browse",
+                    "internet",
+                ),
+            ),
+            (
+                self.http,
+                "Stateful HTTP: open a session (cookies persist), POST/PUT, upload files.",
+                "web",
+                (
+                    "http",
+                    "request",
+                    "post",
+                    "put",
+                    "session",
+                    "api",
+                    "cookie",
+                    "upload",
+                    "rest",
+                ),
+            ),
+            (
+                self.browser,
+                "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page. Login without seeing credentials: fill_secret types a vault secret, fill_totp types the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile).",
+                "web",
+                (
+                    "browser",
+                    "playwright",
+                    "snapshot",
+                    "ref",
+                    "aria",
+                    "click",
+                    "fill",
+                    "select",
+                    "press",
+                    "upload",
+                    "look",
+                    "screenshot",
+                    "page",
+                    "dom",
+                    "headless",
+                    "form",
+                    "profile",
+                    "login",
+                    "cookie",
+                    "persistent",
+                    "identity",
+                    "totp",
+                    "2fa",
+                    "otp",
+                    "mfa",
+                ),
+            ),
+            (
+                InboxCapability(self.workspace, vault=self.vault),
+                "Read-only email over IMAP: list/search message metadata, read one message as clean text + links (attachments land in the workspace). No send/delete/flag — reads leave the mailbox untouched.",
+                "email",
+                (
+                    "inbox",
+                    "email",
+                    "imap",
+                    "mail",
+                    "message",
+                    "verification",
+                    "magic",
+                    "link",
+                    "code",
+                    "2fa",
+                    "otp",
+                    "confirmation",
+                    "receipt",
+                    "attachment",
+                    "unread",
+                ),
+            ),
+            (
+                PackagesCapability(self.session_venv),
+                "Install Python packages into the session for later import.",
+                "packages",
+                ("install", "pip", "package", "dependency", "library", "import"),
+            ),
         ]
         for capability, summary, category, keywords in tool_caps:
             if not self._has(capability.name):
@@ -393,8 +485,10 @@ class Session:
             self.broker.register(capability, core=False)
             self.registry.register(
                 self.broker.as_tool_module(capability.name, summary=summary),
-                source="core", name=capability.name,
-                keywords=keywords, category=category,
+                source="core",
+                name=capability.name,
+                keywords=keywords,
+                category=category,
             )
 
         # Default (out-of-process): agent code runs in a restricted child and
@@ -421,7 +515,9 @@ class Session:
             on_event=on_event_traced,
             media=self.media,
             media_dir=self.workspace.root / "media",
-            preamble_extra=preamble if preamble is not None else self._render_history_preamble(),
+            preamble_extra=preamble
+            if preamble is not None
+            else self._render_history_preamble(),
             keep_outputs=keep_outputs,
         )
         self.messages: list[dict] = []
@@ -429,7 +525,9 @@ class Session:
         # owner's thread and an abandoning parent can both reach it.
         self._closed = False
         self._close_lock = threading.Lock()
-        self.trace.record("session_start", session_id=self.id, root=str(self.workspace.root))
+        self.trace.record(
+            "session_start", session_id=self.id, root=str(self.workspace.root)
+        )
 
     def _has(self, name: str) -> bool:
         """Whether this session holds a capability: parents hold everything,
@@ -458,7 +556,9 @@ class Session:
             "notify": "notify",
             "tools": "search_tools/describe_tool/use_tool/add_mcp_server",
         }
-        held = CHILD_BODY | granted | ({"tools"} if granted & _EXTERNAL else frozenset())
+        held = (
+            CHILD_BODY | granted | ({"tools"} if granted & _EXTERNAL else frozenset())
+        )
         builtins = ", ".join(v for k, v in builtins_by_cap.items() if k in held)
         mounted = sorted(granted & _EXTERNAL)
         tools_line = (
@@ -534,15 +634,22 @@ class Session:
         parent_approver = self.broker.approver
         approver = None
         if parent_approver is not None:
+
             def approver(request, _name=short):  # noqa: E306
-                return parent_approver(replace(request, summary=f"[{_name}] {request.summary}"))
+                return parent_approver(
+                    replace(request, summary=f"[{_name}] {request.summary}")
+                )
 
         # The child's own events land in its trace (the live viewer lanes them
         # from there); the milestones additionally surface on the parent's
         # display stream so the terminal shows background children progressing.
         def child_display(kind: str, text: str, _name=short) -> None:
             if self._display_event is None or kind not in (
-                "task", "code", "answer", "error", "notify"
+                "task",
+                "code",
+                "answer",
+                "error",
+                "notify",
             ):
                 return
             brief = " ".join(text.split())
@@ -551,8 +658,13 @@ class Session:
             self._display_event("spawn_progress", line)
 
         self.trace.record(
-            "spawn", task, child=name, tools=sorted(granted),
-            budget_usd=limit, max_steps=max_steps, tier=tier,
+            "spawn",
+            task,
+            child=name,
+            tools=sorted(granted),
+            budget_usd=limit,
+            max_steps=max_steps,
+            tier=tier,
         )
         child = Session(
             child_root,
@@ -572,7 +684,9 @@ class Session:
             workspace_dir=self.workspace.dir,
             preamble=self._child_preamble(granted),
         )
-        child.trace.record("spawned_by", parent=self.id, parent_name=self.workspace.root.name)
+        child.trace.record(
+            "spawned_by", parent=self.id, parent_name=self.workspace.root.name
+        )
 
         # The child's slice settles into the parent exactly once — normally
         # below when the child thread finishes, or parent-side via _abandon()

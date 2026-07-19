@@ -4,6 +4,7 @@ pyharness therefore refuses to start a kernel on such a platform by default;
 PYHARNESS_ALLOW_UNSANDBOXED=true opts in explicitly, with a one-time loud
 stderr warning. Platform support is mocked both ways so these tests exercise
 the gate on any host OS."""
+
 from __future__ import annotations
 
 import pytest

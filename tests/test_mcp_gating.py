@@ -38,7 +38,9 @@ def _setup(tmp_path, approver=None):
     registry = Registry()
     registry.add_mcp_server("demo", sys.executable, (str(FAKE),))
     policy = Policy(approve_if=[unvetted_mcp_call(lambda: registry)])
-    broker = Broker(policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver)
+    broker = Broker(
+        policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver
+    )
     cap = ToolsCapability(registry, broker=broker)
     broker.register(cap)
     return registry, broker, cap
@@ -164,8 +166,12 @@ def _mount_setup(tmp_path, approver=None, config_path=None, vault=None):
         require_approval={"tools.add_mcp_server"},
         approve_if=[unvetted_mcp_call(lambda: registry)],
     )
-    broker = Broker(policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver)
-    cap = ToolsCapability(registry, broker=broker, vault=vault, mcp_config_path=config_path)
+    broker = Broker(
+        policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver
+    )
+    cap = ToolsCapability(
+        registry, broker=broker, vault=vault, mcp_config_path=config_path
+    )
     broker.register(cap)
     return registry, broker, cap
 
@@ -242,7 +248,10 @@ def test_add_mcp_server_save_refuses_cleartext_credentials(tmp_path):
     try:
         with pytest.raises(ValueError, match="secret:NAME"):
             cap.add_mcp_server(
-                "demo", url="https://x/mcp", headers={"Authorization": "Bearer abc"}, save=True
+                "demo",
+                url="https://x/mcp",
+                headers={"Authorization": "Bearer abc"},
+                save=True,
             )
         assert not config_path.exists()
         assert registry.info("demo") is None  # nothing mounted either
@@ -261,7 +270,9 @@ def test_add_mcp_server_save_requires_a_config_path(tmp_path):
 
 def test_session_wires_mcp_gating_in_process(tmp_path):
     config = {"mcpServers": {"demo": {"command": sys.executable, "args": [str(FAKE)]}}}
-    session = Session(tmp_path, mcp_config=config, unsafe_in_process=True)  # no approver
+    session = Session(
+        tmp_path, mcp_config=config, unsafe_in_process=True
+    )  # no approver
     try:
         use_tool = session.broker.namespace()["use_tool"]
         demo = use_tool("demo")

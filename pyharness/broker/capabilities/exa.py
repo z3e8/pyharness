@@ -6,6 +6,7 @@ boundary like every other side effect; the Exa key is held by the parent and nev
 crosses into agent code (see `PROVIDER_SECRET_ENV` in `llm/client.py`). Kept thin
 so `web.py` stays composition-only.
 """
+
 from __future__ import annotations
 
 from importlib import import_module

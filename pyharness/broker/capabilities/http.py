@@ -33,7 +33,9 @@ _GRANTABLE_METHODS = MUTATING_METHODS - {"DELETE"}
 _MAX_REDIRECTS = 20
 
 
-def _apply_secret_auth(headers: dict, params: dict, *, secret: str, style: str, name, user) -> None:
+def _apply_secret_auth(
+    headers: dict, params: dict, *, secret: str, style: str, name, user
+) -> None:
     """Attach a resolved secret to the outgoing request the way `auth_style`
     selects. Mirrors the four styles `web.fetch` has always supported; the secret
     is already cleartext here (resolved parent-side), never seen by agent code."""
@@ -93,20 +95,32 @@ class HttpSessionCapability:
         *names* (never values — those can be workspace data). Naming the credential
         lets the human catch a token being sent to the wrong host. A DELETE is
         classed IRREVERSIBLE; other mutating methods are OUTWARD."""
-        method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
+        method = str(
+            kwargs.get("method") or (args[1] if len(args) >= 2 else "")
+        ).upper()
         url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
-        body = kwargs.get("json") if kwargs.get("json") is not None else kwargs.get("data")
+        body = (
+            kwargs.get("json") if kwargs.get("json") is not None else kwargs.get("data")
+        )
         summary = f"{method} {url}"
         creds: list[str] = []
         if kwargs.get("auth"):
-            creds.append(f"auth={kwargs['auth']} via {kwargs.get('auth_style', 'bearer')}")
+            creds.append(
+                f"auth={kwargs['auth']} via {kwargs.get('auth_style', 'bearer')}"
+            )
         if kwargs.get("secret_fields"):
-            creds.append("secret fields: " + ", ".join(map(str, kwargs["secret_fields"])))
+            creds.append(
+                "secret fields: " + ", ".join(map(str, kwargs["secret_fields"]))
+            )
         if creds:
             summary += " [" + "; ".join(creds) + "]"
         if isinstance(body, dict) and body:
             summary += f" (body: {', '.join(map(str, body))})"
-        category = ActionCategory.IRREVERSIBLE if method == "DELETE" else ActionCategory.OUTWARD
+        category = (
+            ActionCategory.IRREVERSIBLE
+            if method == "DELETE"
+            else ActionCategory.OUTWARD
+        )
         return category, summary
 
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
@@ -118,9 +132,13 @@ class HttpSessionCapability:
         grantable → always prompts)."""
         if op != "request":
             return None
-        method = str(kwargs.get("method") or (args[1] if len(args) >= 2 else "")).upper()
+        method = str(
+            kwargs.get("method") or (args[1] if len(args) >= 2 else "")
+        ).upper()
         carries_secret = bool(kwargs.get("auth") or kwargs.get("secret_fields"))
-        if method == "DELETE" or (method not in _GRANTABLE_METHODS and not carries_secret):
+        if method == "DELETE" or (
+            method not in _GRANTABLE_METHODS and not carries_secret
+        ):
             return None
         url = kwargs.get("url") or (args[2] if len(args) >= 3 else "")
         host = urlsplit(url).hostname if url else None
@@ -185,7 +203,9 @@ class HttpSessionCapability:
         workspace and returned as `path`/`bytes`/`preview` with `text=None`. Either
         way the full data is available: inline as a variable, or on disk for the
         agent's own Python to read. See `payload.deliver`."""
-        check_url(url)  # SSRF guard: no link-local/metadata (or private, if strict) targets
+        check_url(
+            url
+        )  # SSRF guard: no link-local/metadata (or private, if strict) targets
         headers = dict(headers or {})
         params = dict(params or {})
         sink = SecretSink(self.vault)
@@ -257,12 +277,16 @@ class HttpSessionCapability:
                 # egress check and the chain ceiling. A secret-carrying request
                 # never enters the loop: the 3xx returns as-is (see above).
                 hops = 0
-                while getattr(resp, "has_redirect_location", False) and resp.next_request is not None:
+                while (
+                    getattr(resp, "has_redirect_location", False)
+                    and resp.next_request is not None
+                ):
                     hops += 1
                     if hops > _MAX_REDIRECTS:
                         httpx = import_module("httpx")
                         raise httpx.TooManyRedirects(
-                            f"exceeded {_MAX_REDIRECTS} redirects", request=resp.next_request
+                            f"exceeded {_MAX_REDIRECTS} redirects",
+                            request=resp.next_request,
                         )
                     check_url(str(resp.next_request.url))  # SSRF guard, re-run per hop
                     resp = client.send(resp.next_request, follow_redirects=False)
@@ -272,7 +296,9 @@ class HttpSessionCapability:
 
         try:
             elapsed = getattr(resp, "elapsed", None)
-        except RuntimeError:  # httpx raises until the stream is closed (mocked transports)
+        except (
+            RuntimeError
+        ):  # httpx raises until the stream is closed (mocked transports)
             elapsed = None
         content_type = resp.headers.get("content-type", "")
         text = resp.text
@@ -312,7 +338,9 @@ class HttpSessionCapability:
                 "url": str(resp.url),
                 "headers": dict(resp.headers),
                 "content_type": content_type,
-                "elapsed_ms": round(elapsed.total_seconds() * 1000) if elapsed else None,
+                "elapsed_ms": round(elapsed.total_seconds() * 1000)
+                if elapsed
+                else None,
                 "title": title,
                 "links": links,
                 "forms": forms,

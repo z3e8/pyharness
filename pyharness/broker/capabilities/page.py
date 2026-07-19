@@ -18,6 +18,7 @@ Three layers, each degrading independently so a fetch never fails on bad markup:
 dict unchanged, so an agent driving HTTP directly parses them without re-reading
 the markdown.
 """
+
 from __future__ import annotations
 
 import re
@@ -29,9 +30,34 @@ from urllib.parse import urldefrag, urljoin
 # line boundary — used by the stdlib fallback reducer below.
 _HTML_SKIP_TAGS = frozenset({"script", "style", "noscript", "template", "svg", "head"})
 _HTML_BLOCK_TAGS = frozenset(
-    {"p", "div", "section", "article", "header", "footer", "nav", "main", "aside",
-     "li", "ul", "ol", "table", "tr", "br", "hr", "h1", "h2", "h3", "h4", "h5",
-     "h6", "blockquote", "pre", "figure", "figcaption"}
+    {
+        "p",
+        "div",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "nav",
+        "main",
+        "aside",
+        "li",
+        "ul",
+        "ol",
+        "table",
+        "tr",
+        "br",
+        "hr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "blockquote",
+        "pre",
+        "figure",
+        "figcaption",
+    }
 )
 
 # Display caps. The full deduped link list rides back on the result dict (big data
@@ -134,7 +160,9 @@ def _clean(text: str) -> str:
     return " ".join((text or "").split())
 
 
-def parse_affordances(html: str, base_url: str) -> tuple[str | None, list[dict], list[dict]]:
+def parse_affordances(
+    html: str, base_url: str
+) -> tuple[str | None, list[dict], list[dict]]:
     """Parse the page's title, links, and forms from static HTML with lxml.
 
     Returns `(title, links, forms)`. Links are deduped by resolved target and
@@ -209,7 +237,9 @@ def _extract_forms(doc, base: str) -> list[dict]:
                 field["value"] = el.get("value")
             if el.tag == "select":
                 options = [
-                    o.get("value") if o.get("value") is not None else _clean(o.text_content())
+                    o.get("value")
+                    if o.get("value") is not None
+                    else _clean(o.text_content())
                     for o in el.xpath(".//option")
                 ]
                 field["options"] = options[:_MAX_SELECT_OPTIONS]
@@ -279,7 +309,11 @@ def _render_field(field: dict) -> str:
         parts.append(f"value={field['value']!r}")
     if "options" in field:
         shown = ", ".join(map(str, field["options"]))
-        more = f" … (+{field['options_truncated']} more)" if field.get("options_truncated") else ""
+        more = (
+            f" … (+{field['options_truncated']} more)"
+            if field.get("options_truncated")
+            else ""
+        )
         parts.append(f"options: {shown}{more}")
     return "  ".join(parts)
 

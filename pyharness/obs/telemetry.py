@@ -156,14 +156,17 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
 
     try:
         from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         resource = Resource.create(
             {
-                "service.name": service_name or os.environ.get("OTEL_SERVICE_NAME", "pyharness"),
+                "service.name": service_name
+                or os.environ.get("OTEL_SERVICE_NAME", "pyharness"),
                 "service.version": _version(),
             }
         )
@@ -178,7 +181,9 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
         # the collector, the Langfuse profile).
         if _truthy(os.environ.get("PYHARNESS_TELEMETRY_METRICS", "false")):
             from opentelemetry import metrics
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter,
+            )
             from opentelemetry.sdk.metrics import MeterProvider
             from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
@@ -190,7 +195,9 @@ def setup_telemetry(*, service_name: str | None = None, force: bool = False) -> 
             _meter = metrics.get_meter("pyharness")
             _init_instruments()
 
-        _capture_content = _truthy(os.environ.get("PYHARNESS_TELEMETRY_CAPTURE_CONTENT", "true"))
+        _capture_content = _truthy(
+            os.environ.get("PYHARNESS_TELEMETRY_CAPTURE_CONTENT", "true")
+        )
         _enabled = True
         log.info("telemetry enabled → %s", endpoint or "(default OTLP endpoint)")
     except Exception:  # noqa: BLE001 — telemetry must never break the agent
@@ -222,7 +229,9 @@ def _init_instruments() -> None:
         "gen_ai.client.operation.duration", unit="s", description="LLM call latency"
     )
     _instruments["tool_calls"] = _meter.create_counter(
-        "pyharness.tool.calls", unit="1", description="Capability calls through the broker"
+        "pyharness.tool.calls",
+        unit="1",
+        description="Capability calls through the broker",
     )
     _instruments["tool_duration"] = _meter.create_histogram(
         "pyharness.tool.duration", unit="s", description="Capability call latency"
@@ -286,7 +295,9 @@ def code_cell_span(code: str):
 
 
 @contextmanager
-def llm_span(model: str, tier: str, system: str | None = None, messages: list | None = None):
+def llm_span(
+    model: str, tier: str, system: str | None = None, messages: list | None = None
+):
     """GenAI client span for one LLM completion. Call `record_llm()` inside once
     usage is known; latency is recorded here on exit.
 
@@ -320,7 +331,9 @@ def llm_span(model: str, tier: str, system: str | None = None, messages: list | 
         _add("errors", 1, {"source": "llm"})
         raise
     finally:
-        _record("llm_duration", time.perf_counter() - start, {_GEN_AI_REQUEST_MODEL: model})
+        _record(
+            "llm_duration", time.perf_counter() - start, {_GEN_AI_REQUEST_MODEL: model}
+        )
         cm.__exit__(None, None, None)
 
 
@@ -362,7 +375,11 @@ def record_llm(
         _add("llm_tokens", input_tokens, {**by_model, "gen_ai.token.type": "input"})
         _add("llm_tokens", output_tokens, {**by_model, "gen_ai.token.type": "output"})
         if cache_read:
-            _add("llm_tokens", cache_read, {**by_model, "gen_ai.token.type": "cache_read"})
+            _add(
+                "llm_tokens",
+                cache_read,
+                {**by_model, "gen_ai.token.type": "cache_read"},
+            )
     except Exception:  # noqa: BLE001
         log.debug("record_llm failed", exc_info=True)
 
@@ -386,11 +403,15 @@ def tool_span(action: str):
     try:
         yield span
     finally:
-        _record("tool_duration", time.perf_counter() - start, {"pyharness.action": action})
+        _record(
+            "tool_duration", time.perf_counter() - start, {"pyharness.action": action}
+        )
         cm.__exit__(None, None, None)
 
 
-def record_tool(span, *, action: str, decision: str, ok: bool, error: str | None = None) -> None:
+def record_tool(
+    span, *, action: str, decision: str, ok: bool, error: str | None = None
+) -> None:
     """Record the outcome of a capability call on its span and the call/denial
     metrics. `span` may be None (telemetry off)."""
     if not _enabled:
@@ -431,7 +452,11 @@ _MSG_LIMIT = 16000
 def _block_text(block) -> str:
     """Flatten one content block (dict or SDK object) to a readable string."""
     t = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
-    get = (lambda k, d=None: block.get(k, d)) if isinstance(block, dict) else (lambda k, d=None: getattr(block, k, d))
+    get = (
+        (lambda k, d=None: block.get(k, d))
+        if isinstance(block, dict)
+        else (lambda k, d=None: getattr(block, k, d))
+    )
     if t == "text":
         return get("text", "") or ""
     if t == "tool_use":
@@ -456,13 +481,21 @@ def _set_input_messages(span, system: str | None, messages: list | None) -> None
     idx = 0
     if system:
         span.set_attribute(f"llm.input_messages.{idx}.message.role", "system")
-        span.set_attribute(f"llm.input_messages.{idx}.message.content", system[:_MSG_LIMIT])
+        span.set_attribute(
+            f"llm.input_messages.{idx}.message.content", system[:_MSG_LIMIT]
+        )
         idx += 1
     for m in messages or []:
-        role = m.get("role", "user") if isinstance(m, dict) else getattr(m, "role", "user")
-        text = _content_to_str(m.get("content") if isinstance(m, dict) else getattr(m, "content", ""))
+        role = (
+            m.get("role", "user") if isinstance(m, dict) else getattr(m, "role", "user")
+        )
+        text = _content_to_str(
+            m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+        )
         span.set_attribute(f"llm.input_messages.{idx}.message.role", role)
-        span.set_attribute(f"llm.input_messages.{idx}.message.content", text[:_MSG_LIMIT])
+        span.set_attribute(
+            f"llm.input_messages.{idx}.message.content", text[:_MSG_LIMIT]
+        )
         idx += 1
 
 
@@ -475,13 +508,18 @@ def _set_output_message(span, output_text: str | None, tool_calls: list | None) 
         name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
         inp = tc.get("input") if isinstance(tc, dict) else getattr(tc, "input", {})
         parts.append(f"[tool_use {name}] {json.dumps(dict(inp or {}), default=str)}")
-        span.set_attribute(f"llm.output_messages.0.message.tool_calls.{i}.tool_call.function.name", name or "")
+        span.set_attribute(
+            f"llm.output_messages.0.message.tool_calls.{i}.tool_call.function.name",
+            name or "",
+        )
         span.set_attribute(
             f"llm.output_messages.0.message.tool_calls.{i}.tool_call.function.arguments",
             json.dumps(dict(inp or {}), default=str)[:_MSG_LIMIT],
         )
     span.set_attribute("llm.output_messages.0.message.role", "assistant")
-    span.set_attribute("llm.output_messages.0.message.content", ("\n".join(parts))[:_MSG_LIMIT])
+    span.set_attribute(
+        "llm.output_messages.0.message.content", ("\n".join(parts))[:_MSG_LIMIT]
+    )
 
 
 def _add(name: str, amount, attrs: dict) -> None:

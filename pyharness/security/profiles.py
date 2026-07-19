@@ -38,7 +38,7 @@ class ProfileStore:
         self._passphrase = passphrase
 
     @classmethod
-    def from_env(cls) -> "ProfileStore | None":
+    def from_env(cls) -> ProfileStore | None:
         """Build the default store, or ``None`` when no passphrase is configured.
 
         Profiles hold credential-grade cookies, so a missing passphrase fails

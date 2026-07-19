@@ -10,11 +10,11 @@ import threading
 import time
 from types import SimpleNamespace
 
+import anthropic
 import httpx
 import pytest
-
-import anthropic
 from anthropic.types import (
+    InputJSONDelta,
     Message,
     MessageDeltaUsage,
     RawContentBlockDeltaEvent,
@@ -27,7 +27,8 @@ from anthropic.types import (
     TextDelta,
     ThinkingDelta,
     ToolUseBlock,
-    InputJSONDelta,
+)
+from anthropic.types import (
     Usage as APIUsage,
 )
 from anthropic.types.raw_message_delta_event import Delta
@@ -44,7 +45,6 @@ from pyharness.llm.client import (
     _cache_marked_system,
     _ipv4_first_client,
 )
-
 
 # ---- raw-event builders ------------------------------------------------------
 
@@ -74,7 +74,8 @@ def _block_start(index=0, block=None):
     return RawContentBlockStartEvent.construct(
         type="content_block_start",
         index=index,
-        content_block=block or TextBlock.construct(type="text", text="", citations=None),
+        content_block=block
+        or TextBlock.construct(type="text", text="", citations=None),
     )
 
 
@@ -98,7 +99,9 @@ def _json_event(partial_json, index=0):
     return RawContentBlockDeltaEvent.construct(
         type="content_block_delta",
         index=index,
-        delta=InputJSONDelta.construct(type="input_json_delta", partial_json=partial_json),
+        delta=InputJSONDelta.construct(
+            type="input_json_delta", partial_json=partial_json
+        ),
     )
 
 
@@ -109,7 +112,9 @@ def _block_stop(index=0):
 def _msg_delta(stop_reason="end_turn", output_tokens=5):
     return RawMessageDeltaEvent.construct(
         type="message_delta",
-        delta=Delta.construct(stop_reason=stop_reason, stop_sequence=None, stop_details=None),
+        delta=Delta.construct(
+            stop_reason=stop_reason, stop_sequence=None, stop_details=None
+        ),
         usage=MessageDeltaUsage.construct(
             output_tokens=output_tokens,
             input_tokens=None,
@@ -224,30 +229,47 @@ def _status_error(status):
 
 
 def test_mid_stream_timeout_is_retried_until_success(monkeypatch):
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("silent stream")),
-        FakeRawStream(events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("silent stream")),
-        FakeRawStream(events=_ok_events(tokens=("answer",))),
-    ])
-    completion = llm.complete(messages=[{"role": "user", "content": "hi"}], tier="cheap")
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[_msg_start(), _block_start()],
+                exc=httpx.ReadTimeout("silent stream"),
+            ),
+            FakeRawStream(
+                events=[_msg_start(), _block_start()],
+                exc=httpx.ReadTimeout("silent stream"),
+            ),
+            FakeRawStream(events=_ok_events(tokens=("answer",))),
+        ],
+    )
+    completion = llm.complete(
+        messages=[{"role": "user", "content": "hi"}], tier="cheap"
+    )
     assert completion.text == "answer"
     assert len(llm._client.messages.calls) == 3
 
 
 def test_overloaded_status_is_retried(monkeypatch):
-    llm = _llm(monkeypatch, [
-        FakeRawStream(exc=_status_error(529)),
-        FakeRawStream(events=_ok_events()),
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(exc=_status_error(529)),
+            FakeRawStream(events=_ok_events()),
+        ],
+    )
     assert llm.complete(messages=[{"role": "user", "content": "hi"}]).text == "ok"
     assert len(llm._client.messages.calls) == 2
 
 
 def test_bad_request_is_not_retried(monkeypatch):
-    llm = _llm(monkeypatch, [
-        FakeRawStream(exc=_status_error(400)),
-        FakeRawStream(events=_ok_events()),  # must never be reached
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(exc=_status_error(400)),
+            FakeRawStream(events=_ok_events()),  # must never be reached
+        ],
+    )
     with pytest.raises(anthropic.APIStatusError):
         llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert len(llm._client.messages.calls) == 1
@@ -257,11 +279,16 @@ def test_exhausted_retries_raise_stalled_with_attempt_history(monkeypatch):
     # Wire silence surfaces as the reader's ReadTimeout and is classified as
     # the silence clock; after the last attempt the error carries a
     # per-attempt summary so triage never needs a debugger.
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start(), _text_event("ab")],
-                      exc=httpx.ReadTimeout("dead"))
-        for _ in range(STREAM_ATTEMPTS)
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[_msg_start(), _block_start(), _text_event("ab")],
+                exc=httpx.ReadTimeout("dead"),
+            )
+            for _ in range(STREAM_ATTEMPTS)
+        ],
+    )
     with pytest.raises(StreamStalled) as err:
         llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert err.value.clock == "silence"
@@ -271,24 +298,38 @@ def test_exhausted_retries_raise_stalled_with_attempt_history(monkeypatch):
 
 
 def test_retry_emits_display_marker_not_answer_text(monkeypatch):
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start(), _text_event("par"), _text_event("tial")],
-                      exc=httpx.ReadTimeout("dead")),
-        FakeRawStream(events=_ok_events(tokens=("clean ", "answer"))),
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[
+                    _msg_start(),
+                    _block_start(),
+                    _text_event("par"),
+                    _text_event("tial"),
+                ],
+                exc=httpx.ReadTimeout("dead"),
+            ),
+            FakeRawStream(events=_ok_events(tokens=("clean ", "answer"))),
+        ],
+    )
     seen = []
     completion = llm.complete(
         messages=[{"role": "user", "content": "hi"}], on_token=seen.append
     )
     assert completion.text == "clean answer"
     assert any("[stream failed" in chunk for chunk in seen)
-    assert seen.index("tial") < [i for i, c in enumerate(seen) if "[stream failed" in c][0]
+    assert (
+        seen.index("tial") < [i for i, c in enumerate(seen) if "[stream failed" in c][0]
+    )
 
 
 def test_unknown_tier_fails_closed(monkeypatch):
     llm = _llm(monkeypatch, [])
     with pytest.raises(ValueError, match="unknown tier"):
-        llm.complete(messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8")
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}], tier="claude-opus-4-8"
+        )
 
 
 def test_max_tokens_nonpositive_is_rejected(monkeypatch):
@@ -298,7 +339,9 @@ def test_max_tokens_nonpositive_is_rejected(monkeypatch):
     for bad in (0, -5):
         with pytest.raises(ValueError, match="positive integer"):
             llm.complete(
-                messages=[{"role": "user", "content": "hi"}], tier="cheap", max_tokens=bad
+                messages=[{"role": "user", "content": "hi"}],
+                tier="cheap",
+                max_tokens=bad,
             )
     assert llm._client.messages.calls == []  # never reached the transport
 
@@ -340,7 +383,8 @@ def test_ipv4_pin_uses_the_pinned_transport_when_v4_connects(monkeypatch):
     sentinel = object()
     monkeypatch.setattr(transport._pinned, "handle_request", lambda req: sentinel)
     monkeypatch.setattr(
-        transport._unpinned, "handle_request",
+        transport._unpinned,
+        "handle_request",
         lambda req: pytest.fail("unpinned transport used while v4 was healthy"),
     )
     req = httpx.Request("POST", "https://api.anthropic.test/v1/messages")
@@ -365,7 +409,8 @@ def test_ipv4_pin_falls_back_to_unpinned_on_connect_error(monkeypatch):
 
     # Subsequent requests skip the dead pin entirely (no further v4 attempt).
     monkeypatch.setattr(
-        transport._pinned, "handle_request",
+        transport._pinned,
+        "handle_request",
         lambda req: pytest.fail("retired v4 pin was retried"),
     )
     assert transport.handle_request(req) is sentinel
@@ -379,7 +424,10 @@ def test_request_carries_cache_markers(monkeypatch):
     messages = [
         {"role": "user", "content": "task"},
         {"role": "assistant", "content": [{"type": "text", "text": "step"}]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "out"}]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "out"}],
+        },
     ]
     llm.complete(system="sys prompt", messages=messages, tier="cheap")
 
@@ -398,14 +446,26 @@ def test_request_carries_cache_markers(monkeypatch):
 def test_cache_marked_system_segments_get_a_breakpoint_each():
     blocks = _cache_marked_system(["static prose", "\n\ndynamic preamble"])
     assert blocks == [
-        {"type": "text", "text": "static prose", "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": "\n\ndynamic preamble", "cache_control": {"type": "ephemeral"}},
+        {
+            "type": "text",
+            "text": "static prose",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {
+            "type": "text",
+            "text": "\n\ndynamic preamble",
+            "cache_control": {"type": "ephemeral"},
+        },
     ]
 
 
 def test_cache_marked_system_string_is_one_block():
     assert _cache_marked_system("just a string") == [
-        {"type": "text", "text": "just a string", "cache_control": {"type": "ephemeral"}}
+        {
+            "type": "text",
+            "text": "just a string",
+            "cache_control": {"type": "ephemeral"},
+        }
     ]
 
 
@@ -434,8 +494,22 @@ def test_cache_anchor_marks_the_anchor_message(monkeypatch):
     llm = _llm(monkeypatch, [FakeRawStream(events=_ok_events())])
     messages = [
         {"role": "user", "content": "task"},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "[output elided: 900 chars]"}]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "fresh output"}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": "[output elided: 900 chars]",
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t2", "content": "fresh output"}
+            ],
+        },
     ]
     llm.complete(messages=messages, tier="cheap", cache_anchor=1)
 
@@ -474,7 +548,9 @@ def test_thinking_deltas_reach_on_thinking_not_on_token(monkeypatch):
 
     events = [
         _msg_start(),
-        _block_start(block=ThinkingBlock.construct(type="thinking", thinking="", signature="")),
+        _block_start(
+            block=ThinkingBlock.construct(type="thinking", thinking="", signature="")
+        ),
         _think_event("mull "),
         _think_event(""),
         _think_event("it over"),
@@ -510,7 +586,11 @@ def test_thinking_config_per_tier(monkeypatch):
 def test_tool_use_input_is_reassembled(monkeypatch):
     events = [
         _msg_start(),
-        _block_start(block=ToolUseBlock.construct(type="tool_use", id="t1", name="run_python", input={})),
+        _block_start(
+            block=ToolUseBlock.construct(
+                type="tool_use", id="t1", name="run_python", input={}
+            )
+        ),
         _json_event('{"code": '),
         _json_event('"print(1)"}'),
         _block_stop(),
@@ -532,10 +612,15 @@ def test_silent_death_is_classified_as_silence(monkeypatch):
     # Wire silence surfaces as the reader thread's ReadTimeout (pings are
     # bytes, so a healthy-but-quiet stream cannot trip it) and is renamed to
     # the silence clock.
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("dead")),
-        FakeRawStream(events=_ok_events(tokens=("saved",))),
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("dead")
+            ),
+            FakeRawStream(events=_ok_events(tokens=("saved",))),
+        ],
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.text == "saved"
     assert len(llm._client.messages.calls) == 2
@@ -543,7 +628,10 @@ def test_silent_death_is_classified_as_silence(monkeypatch):
 
 def test_wedged_stream_is_killed_by_the_stall_clock(monkeypatch):
     monkeypatch.setattr("pyharness.llm.client.STALL_TIMEOUT_S", 0.05)
-    llm = _llm(monkeypatch, [HangingRawStream(), FakeRawStream(events=_ok_events(tokens=("saved",)))])
+    llm = _llm(
+        monkeypatch,
+        [HangingRawStream(), FakeRawStream(events=_ok_events(tokens=("saved",)))],
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.text == "saved"
     assert len(llm._client.messages.calls) == 2
@@ -552,7 +640,10 @@ def test_wedged_stream_is_killed_by_the_stall_clock(monkeypatch):
 def test_runaway_stream_hits_the_attempt_deadline(monkeypatch):
     monkeypatch.setattr("pyharness.llm.client.ATTEMPT_DEADLINE_BASE_S", 0.1)
     monkeypatch.setattr("pyharness.llm.client.ATTEMPT_DEADLINE_PER_TOKEN_S", 0.0)
-    llm = _llm(monkeypatch, [BabblingRawStream(), FakeRawStream(events=_ok_events(tokens=("saved",)))])
+    llm = _llm(
+        monkeypatch,
+        [BabblingRawStream(), FakeRawStream(events=_ok_events(tokens=("saved",)))],
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.text == "saved"
     assert len(llm._client.messages.calls) == 2
@@ -569,7 +660,9 @@ def test_slow_but_progressing_stream_is_not_killed(monkeypatch):
                 time.sleep(0.02)
                 yield ev
 
-    llm = _llm(monkeypatch, [TricklingStream(events=_ok_events(tokens=tuple("slowly")))])
+    llm = _llm(
+        monkeypatch, [TricklingStream(events=_ok_events(tokens=tuple("slowly")))]
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.text == "slowly"
 
@@ -577,10 +670,13 @@ def test_slow_but_progressing_stream_is_not_killed(monkeypatch):
 def test_truncated_stream_is_retried_not_returned(monkeypatch):
     # A stream that ends cleanly but before message completion is a half
     # answer — it must retry, never pass for the real thing.
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start(), _text_event("half")]),
-        FakeRawStream(events=_ok_events(tokens=("whole",))),
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(events=[_msg_start(), _block_start(), _text_event("half")]),
+            FakeRawStream(events=_ok_events(tokens=("whole",))),
+        ],
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.text == "whole"
     assert len(llm._client.messages.calls) == 2
@@ -595,12 +691,19 @@ def test_attempt_deadline_scales_with_max_tokens():
 def test_total_deadline_stops_further_attempts(monkeypatch):
     # With ~10s of total budget left, the ~30s retry headroom rule stops the
     # call after the first failure instead of burning two more attempts.
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("dead")),
-        FakeRawStream(events=_ok_events()),  # must never be reached
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[_msg_start(), _block_start()], exc=httpx.ReadTimeout("dead")
+            ),
+            FakeRawStream(events=_ok_events()),  # must never be reached
+        ],
+    )
     with pytest.raises(StreamStalled) as err:
-        llm.complete(messages=[{"role": "user", "content": "hi"}], total_deadline_s=10.0)
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}], total_deadline_s=10.0
+        )
     assert err.value.clock == "total_deadline"
     assert "attempt 1" in str(err.value)
     assert len(llm._client.messages.calls) == 1
@@ -618,8 +721,11 @@ def test_failed_attempts_are_metered_into_the_budget(monkeypatch):
     budget = Budget()
     streams = [
         FakeRawStream(
-            events=[_msg_start(input_tokens=100, cache_read=50), _block_start(),
-                    _text_event("x" * 40)],
+            events=[
+                _msg_start(input_tokens=100, cache_read=50),
+                _block_start(),
+                _text_event("x" * 40),
+            ],
             exc=httpx.ReadTimeout("dead"),
         )
         for _ in range(STREAM_ATTEMPTS)
@@ -631,12 +737,16 @@ def test_failed_attempts_are_metered_into_the_budget(monkeypatch):
     # tokens (40 chars / 4) at haiku pricing.
     per_attempt = 100 * 1e-6 + 50 * 0.1 * 1e-6 + 10 * 5e-6
     assert budget.spent_usd == pytest.approx(STREAM_ATTEMPTS * per_attempt)
-    assert budget.by_model == {"claude-haiku-4-5": pytest.approx(STREAM_ATTEMPTS * per_attempt)}
+    assert budget.by_model == {
+        "claude-haiku-4-5": pytest.approx(STREAM_ATTEMPTS * per_attempt)
+    }
 
 
 def test_successful_usage_is_exact_not_estimated(monkeypatch):
     budget = Budget()
-    llm = _llm(monkeypatch, [FakeRawStream(events=_ok_events(output_tokens=7))], budget=budget)
+    llm = _llm(
+        monkeypatch, [FakeRawStream(events=_ok_events(output_tokens=7))], budget=budget
+    )
     completion = llm.complete(messages=[{"role": "user", "content": "hi"}])
     assert completion.usage.estimated is False
     assert completion.usage.output_tokens == 7
@@ -645,8 +755,12 @@ def test_successful_usage_is_exact_not_estimated(monkeypatch):
 
 def test_partial_usage_is_marked_estimated():
     u = Usage.from_response(
-        SimpleNamespace(input_tokens=5, output_tokens=1,
-                        cache_read_input_tokens=0, cache_creation_input_tokens=0),
+        SimpleNamespace(
+            input_tokens=5,
+            output_tokens=1,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
         "claude-haiku-4-5",
         output_tokens=42,
         estimated=True,
@@ -659,18 +773,26 @@ def test_partial_usage_is_marked_estimated():
 
 
 def test_on_attempt_fires_start_failed_start_ok(monkeypatch):
-    llm = _llm(monkeypatch, [
-        FakeRawStream(events=[_msg_start(), _block_start(), _text_event("abcd")],
-                      exc=httpx.ReadTimeout("dead")),
-        FakeRawStream(events=_ok_events(tokens=("fine",), output_tokens=3)),
-    ])
+    llm = _llm(
+        monkeypatch,
+        [
+            FakeRawStream(
+                events=[_msg_start(), _block_start(), _text_event("abcd")],
+                exc=httpx.ReadTimeout("dead"),
+            ),
+            FakeRawStream(events=_ok_events(tokens=("fine",), output_tokens=3)),
+        ],
+    )
     fired = []
     completion = llm.complete(
         messages=[{"role": "user", "content": "hi"}], on_attempt=fired.append
     )
     assert completion.text == "fine"
     assert [(f["attempt"], f["outcome"]) for f in fired] == [
-        (1, "start"), (1, "failed"), (2, "start"), (2, "ok"),
+        (1, "start"),
+        (1, "failed"),
+        (2, "start"),
+        (2, "ok"),
     ]
     failed = fired[1]
     assert failed["clock_fired"] == "silence"
@@ -687,4 +809,9 @@ def test_on_attempt_errors_never_break_the_call(monkeypatch):
     def explode(info):
         raise RuntimeError("observer bug")
 
-    assert llm.complete(messages=[{"role": "user", "content": "hi"}], on_attempt=explode).text == "ok"
+    assert (
+        llm.complete(
+            messages=[{"role": "user", "content": "hi"}], on_attempt=explode
+        ).text
+        == "ok"
+    )

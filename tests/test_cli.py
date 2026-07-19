@@ -27,9 +27,20 @@ class ScriptedLLM:
     def __init__(self, replies=("",)):
         self.replies = list(replies)
 
-    def complete(self, *, system=None, messages, tier="cheap", tools=None,
-                 max_tokens=None, on_token=None, on_thinking=None, on_attempt=None,
-                 cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system=None,
+        messages,
+        tier="cheap",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         reply = self.replies.pop(0) if self.replies else ""
         return Completion(reply, [], [{"type": "text", "text": reply}])
 
@@ -115,9 +126,14 @@ def _run_kwargs(tmp_path):
 
 def test_run_once_returns_answered_digest(tmp_path):
     digest = _run_once(
-        "say hi", tmp_path / "sess",
-        budget_usd=1.0, approve_all=False, reflect=False, watch=False,
-        llm=ScriptedLLM(["all done"]), **_run_kwargs(tmp_path),
+        "say hi",
+        tmp_path / "sess",
+        budget_usd=1.0,
+        approve_all=False,
+        reflect=False,
+        watch=False,
+        llm=ScriptedLLM(["all done"]),
+        **_run_kwargs(tmp_path),
     )
     assert digest["outcome"] == "answered"
     assert digest["answer"] == "all done"
@@ -130,8 +146,11 @@ def test_headless_run_denies_gated_actions(tmp_path):
     from pyharness.cli.main import _build_session
 
     session = _build_session(
-        tmp_path / "sess", budget_usd=1.0, approver=_headless_approver(False),
-        llm=ScriptedLLM(), **_run_kwargs(tmp_path),
+        tmp_path / "sess",
+        budget_usd=1.0,
+        approver=_headless_approver(False),
+        llm=ScriptedLLM(),
+        **_run_kwargs(tmp_path),
     )
     try:
         with pytest.raises(PermissionDenied):
@@ -149,7 +168,9 @@ def test_exit_codes_cover_every_outcome():
     outcomes = {
         classify_outcome(answer=a, errors=e, tasks=t, stopped_budget=b)
         for a in ("x", "(stopped: reached max_steps)", None)
-        for e in (0, 1) for t in (0, 1) for b in (False, True)
+        for e in (0, 1)
+        for t in (0, 1)
+        for b in (False, True)
     }
     assert outcomes == set(_EXIT_BY_OUTCOME)
     assert _EXIT_BY_OUTCOME["answered"] == 0
@@ -158,8 +179,13 @@ def test_exit_codes_cover_every_outcome():
 def test_run_json_prints_one_envelope(monkeypatch, tmp_path, capsys):
     import pyharness.cli.main as cli
 
-    digest = {"name": "run-1", "outcome": "answered", "answer": "hi",
-              "cost_usd": 0.01, "llm_calls": 1}
+    digest = {
+        "name": "run-1",
+        "outcome": "answered",
+        "answer": "hi",
+        "cost_usd": 0.01,
+        "llm_calls": 1,
+    }
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(cli, "_run_once", lambda *a, **k: digest)
@@ -174,8 +200,13 @@ def test_run_json_prints_one_envelope(monkeypatch, tmp_path, capsys):
 def test_run_exit_code_reflects_outcome(monkeypatch, tmp_path, capsys):
     import pyharness.cli.main as cli
 
-    digest = {"name": "run-1", "outcome": "stopped:budget", "answer": None,
-              "cost_usd": 1.0, "llm_calls": 3}
+    digest = {
+        "name": "run-1",
+        "outcome": "stopped:budget",
+        "answer": None,
+        "cost_usd": 1.0,
+        "llm_calls": 3,
+    }
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(cli, "_run_once", lambda *a, **k: digest)
@@ -194,8 +225,14 @@ def _seed_session(root, name):
     d.mkdir(parents=True)
     entries = [
         {"ts": 1.0, "kind": "task", "text": "probe the thing"},
-        {"ts": 2.0, "kind": "llm_call", "text": "on it", "cost_usd": 0.01,
-         "system": "SECRET-PROMPT", "messages": []},
+        {
+            "ts": 2.0,
+            "kind": "llm_call",
+            "text": "on it",
+            "cost_usd": 0.01,
+            "system": "SECRET-PROMPT",
+            "messages": [],
+        },
         {"ts": 3.0, "kind": "answer", "text": "done"},
     ]
     with (d / "trace.jsonl").open("w") as f:

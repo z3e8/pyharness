@@ -18,11 +18,13 @@ import getpass
 import os
 import sys
 
-from ..security.profiles import PROFILES_DIR_ENV, _DEFAULT_DIR, ProfileStore
+from ..security.profiles import _DEFAULT_DIR, PROFILES_DIR_ENV, ProfileStore
 
 
 def _open() -> ProfileStore:
-    passphrase = os.environ.get("PYHARNESS_VAULT_PASSPHRASE") or getpass.getpass("vault passphrase: ")
+    passphrase = os.environ.get("PYHARNESS_VAULT_PASSPHRASE") or getpass.getpass(
+        "vault passphrase: "
+    )
     root = os.environ.get(PROFILES_DIR_ENV, _DEFAULT_DIR)
     return ProfileStore(root, passphrase)
 
@@ -41,7 +43,9 @@ def _capture(store: ProfileStore, name: str, url: str | None) -> None:
         page = context.new_page()
         if url:
             page.goto(url)
-        input(f"Log in to {name!r} in the browser window, then press Enter here to save... ")
+        input(
+            f"Log in to {name!r} in the browser window, then press Enter here to save... "
+        )
         state = context.storage_state(indexed_db=True)
         browser.close()
     store.save(name, state)
@@ -68,7 +72,11 @@ def main() -> None:
                 print(f"{name}\t(could not read: {exc})")
                 continue
             saved = info.get("saved_at")
-            when = _dt.datetime.fromtimestamp(saved).strftime("%Y-%m-%d %H:%M") if saved else "?"
+            when = (
+                _dt.datetime.fromtimestamp(saved).strftime("%Y-%m-%d %H:%M")
+                if saved
+                else "?"
+            )
             domains = ", ".join(info.get("domains", [])[:5]) or "-"
             print(f"{name}\t{when}\t{info['cookies']} cookie(s)\t{domains}")
         return

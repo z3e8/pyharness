@@ -142,7 +142,7 @@ class Tail:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server: "WatchServer"
+    server: WatchServer
 
     def log_message(self, format, *args):  # noqa: A002 — stdlib signature
         pass  # request logging is noise for a local single-user viewer
@@ -158,7 +158,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path == "/events":
             self._serve_events()
         elif self.path.startswith("/media/"):
-            self._serve_media(self.path[len("/media/"):])
+            self._serve_media(self.path[len("/media/") :])
         else:
             self.send_error(404)
 
@@ -180,7 +180,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         body = path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", mimetypes.guess_type(name)[0] or "application/octet-stream")
+        self.send_header(
+            "Content-Type", mimetypes.guess_type(name)[0] or "application/octet-stream"
+        )
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

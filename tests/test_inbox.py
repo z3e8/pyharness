@@ -5,10 +5,9 @@ UID SEARCH/FETCH, logout) to exercise the real parsing, extraction, and
 security paths: PEEK-only fetches, vault-side credentials, redaction, and
 attachment spill-to-workspace.
 """
+
 from __future__ import annotations
 
-import email
-import email.policy
 import imaplib
 from email.message import EmailMessage
 
@@ -21,7 +20,9 @@ from pyharness.security.vault import Vault
 PASSWORD = "app-pw-123"
 
 
-def _message(subject: str, body: str, *, date: str, html: str | None = None) -> EmailMessage:
+def _message(
+    subject: str, body: str, *, date: str, html: str | None = None
+) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = "Shop <noreply@shop.test>"
     msg["To"] = "agent@example.test"
@@ -69,7 +70,8 @@ class _FakeIMAP:
         self.commands.append((command, args))
         if command == "SEARCH":
             uids = [
-                uid for uid, m in self._folder.items()
+                uid
+                for uid, m in self._folder.items()
                 if args != ("UNSEEN",) or "\\Seen" not in m["flags"]
             ]
             return "OK", [" ".join(uids).encode()]
@@ -83,7 +85,7 @@ class _FakeIMAP:
                     continue
                 headers = m["raw"].split(b"\n\n", 1)[0] + b"\n"
                 meta = (
-                    f'1 (UID {uid} FLAGS ({m["flags"]}) BODYSTRUCTURE {m["bodystructure"]} '
+                    f"1 (UID {uid} FLAGS ({m['flags']}) BODYSTRUCTURE {m['bodystructure']} "
                     f"BODY[HEADER.FIELDS (FROM TO SUBJECT DATE)] {{{len(headers)}}}"
                 ).encode()
                 items += [(meta, headers), b")"]
@@ -107,26 +109,36 @@ def inbox(tmp_path, monkeypatch):
         "Use the magic link: https://site.test/magic?k=1",
         date="Tue, 14 Jul 2026 09:00:00 +0000",
         html=(
-            '<html><body><p>Welcome back.</p>'
+            "<html><body><p>Welcome back.</p>"
             '<a href="https://site.test/magic?k=1">Sign in</a>'
             '<a href="https://site.test/help">Help</a></body></html>'
         ),
     )
-    rich.add_attachment(b"%PDF-1.7 fake", maintype="application", subtype="pdf",
-                        filename="report.pdf")
+    rich.add_attachment(
+        b"%PDF-1.7 fake", maintype="application", subtype="pdf", filename="report.pdf"
+    )
     rich.add_attachment(f"col\nleak {PASSWORD} here\n", filename="../../evil.csv")
     old = _message("Old news", "nothing to see", date="Sun, 01 Feb 2026 08:00:00 +0000")
 
     _FakeIMAP.instances = []
     _FakeIMAP.mailbox = {
         "INBOX": {
-            "3": {"flags": "\\Seen", "raw": old.as_bytes(),
-                  "bodystructure": '("text" "plain" NIL NIL NIL "7bit" 14 1)'},
-            "7": {"flags": "", "raw": plain.as_bytes(),
-                  "bodystructure": '("text" "plain" NIL NIL NIL "7bit" 64 3)'},
-            "9": {"flags": "", "raw": rich.as_bytes(),
-                  "bodystructure": '(("text" "plain") ("application" "pdf" ("name" "report.pdf") '
-                                   'NIL NIL "base64" 13) "mixed" ("attachment" ("filename" "report.pdf")))'},
+            "3": {
+                "flags": "\\Seen",
+                "raw": old.as_bytes(),
+                "bodystructure": '("text" "plain" NIL NIL NIL "7bit" 14 1)',
+            },
+            "7": {
+                "flags": "",
+                "raw": plain.as_bytes(),
+                "bodystructure": '("text" "plain" NIL NIL NIL "7bit" 64 3)',
+            },
+            "9": {
+                "flags": "",
+                "raw": rich.as_bytes(),
+                "bodystructure": '(("text" "plain") ("application" "pdf" ("name" "report.pdf") '
+                'NIL NIL "base64" 13) "mixed" ("attachment" ("filename" "report.pdf")))',
+            },
         }
     }
     monkeypatch.setattr(imaplib, "IMAP4_SSL", _FakeIMAP)
@@ -168,11 +180,22 @@ def test_connection_is_readonly_peek_and_vault_backed(inbox):
 
 
 def test_search_builds_imap_criteria(inbox):
-    inbox.search(query="invoice", from_="noreply@shop.test",
-                 subject="July", since="2026-07-05")
-    command, args = next(c for c in _FakeIMAP.instances[-1].commands if c[0] == "SEARCH")
-    assert args == ("TEXT", '"invoice"', "FROM", '"noreply@shop.test"',
-                    "SUBJECT", '"July"', "SINCE", "05-Jul-2026")
+    inbox.search(
+        query="invoice", from_="noreply@shop.test", subject="July", since="2026-07-05"
+    )
+    command, args = next(
+        c for c in _FakeIMAP.instances[-1].commands if c[0] == "SEARCH"
+    )
+    assert args == (
+        "TEXT",
+        '"invoice"',
+        "FROM",
+        '"noreply@shop.test"',
+        "SUBJECT",
+        '"July"',
+        "SINCE",
+        "05-Jul-2026",
+    )
 
 
 def test_read_plain_body_with_links(inbox):
@@ -189,7 +212,7 @@ def test_read_harvests_html_anchors_and_dedupes(inbox):
     hrefs = [link["href"] for link in msg["links"]]
     assert hrefs.count("https://site.test/magic?k=1") == 1
     assert "https://site.test/help" in hrefs
-    by_href = {l["href"]: l for l in msg["links"]}
+    by_href = {link["href"]: link for link in msg["links"]}
     assert by_href["https://site.test/magic?k=1"]["text"] == "Sign in"
 
 
@@ -204,11 +227,13 @@ def test_read_html_only_message_reduces_to_text(inbox):
         subtype="html",
     )
     _FakeIMAP.mailbox["INBOX"]["11"] = {
-        "flags": "", "raw": only_html.as_bytes(), "bodystructure": '("text" "html")'
+        "flags": "",
+        "raw": only_html.as_bytes(),
+        "bodystructure": '("text" "html")',
     }
     msg = inbox.read("11")
     assert "Welcome" in msg["text"] and "<h1>" not in msg["text"]
-    assert [l["href"] for l in msg["links"]] == ["https://x.test/v?t=1"]
+    assert [link["href"] for link in msg["links"]] == ["https://x.test/v?t=1"]
 
 
 def test_read_spills_attachments_to_workspace(inbox, tmp_path):
@@ -227,10 +252,15 @@ def test_read_spills_attachments_to_workspace(inbox, tmp_path):
 
 
 def test_password_never_surfaces_in_results(inbox):
-    leaky = _message("psst", f"the password is {PASSWORD}, sshh",
-                     date="Tue, 14 Jul 2026 12:00:00 +0000")
+    leaky = _message(
+        "psst",
+        f"the password is {PASSWORD}, sshh",
+        date="Tue, 14 Jul 2026 12:00:00 +0000",
+    )
     _FakeIMAP.mailbox["INBOX"]["12"] = {
-        "flags": "", "raw": leaky.as_bytes(), "bodystructure": '("text" "plain")'
+        "flags": "",
+        "raw": leaky.as_bytes(),
+        "bodystructure": '("text" "plain")',
     }
     msg = inbox.read("12")
     assert PASSWORD not in msg["text"] and "***" in msg["text"]

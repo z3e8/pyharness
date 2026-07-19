@@ -98,7 +98,9 @@ def test_registry_search_wildcard_lists_tools():
     from types import ModuleType
 
     registry = Registry()
-    registry.register(ModuleType("widget"), source="installed")  # doc-less throwaway tool
+    registry.register(
+        ModuleType("widget"), source="installed"
+    )  # doc-less throwaway tool
     listing = registry.search("*")
     assert "# widget" in listing
 
@@ -111,7 +113,9 @@ def test_stdio_request_times_out_instead_of_hanging():
     )
     try:
         with pytest.raises(MCPError, match="did not respond"):
-            transport.request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+            transport.request(
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            )
     finally:
         transport.close()
 
@@ -123,7 +127,9 @@ def test_stdio_failure_includes_stderr_tail():
     transport = StdioTransport(sys.executable, ("-c", code), timeout=5)
     try:
         with pytest.raises(MCPError, match="boom: bad credentials"):
-            transport.request({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+            transport.request(
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            )
     finally:
         transport.close()
 

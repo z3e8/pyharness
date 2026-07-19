@@ -64,8 +64,17 @@ def check_unsandboxed_platform() -> None:
     global _UNSANDBOXED_WARNED
     if os_sandbox_supported():
         return
-    if os.environ.get(ALLOW_UNSANDBOXED_ENV, "").strip().lower() not in ("1", "true", "yes", "on"):
-        windows = " (and on Windows, no resource limits either)" if sys.platform == "win32" else ""
+    if os.environ.get(ALLOW_UNSANDBOXED_ENV, "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        windows = (
+            " (and on Windows, no resource limits either)"
+            if sys.platform == "win32"
+            else ""
+        )
         raise UnsandboxedPlatformError(
             "no OS sandbox is available on this platform — OS-level confinement "
             "is only built for macOS (Seatbelt), so agent-authored code would run "
@@ -170,14 +179,15 @@ def make_child_executable(sbdir: Path, workspace: Path | None = None) -> str | N
     profile.write_text(_seatbelt_profile(workspace))
     launcher = sbdir / "sandboxed-python"
     launcher.write_text(
-        "#!/bin/sh\n"
-        f'exec {_SANDBOX_EXEC} -f "{profile}" "{sys.executable}" "$@"\n'
+        f'#!/bin/sh\nexec {_SANDBOX_EXEC} -f "{profile}" "{sys.executable}" "$@"\n'
     )
     launcher.chmod(0o755)
     return str(launcher)
 
 
-def sandboxed_shell_argv(cmd: str, sbdir: Path, workspace: Path | None = None) -> list[str] | None:
+def sandboxed_shell_argv(
+    cmd: str, sbdir: Path, workspace: Path | None = None
+) -> list[str] | None:
     """Return an argv that runs `cmd` under `/bin/sh -c` inside the same
     Seatbelt profile the out-of-process child gets — no outbound network, writes
     confined to the workspace, the $HOME read jail — or None when this platform

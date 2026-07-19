@@ -80,7 +80,11 @@ class SpawnCapability:
         self._children: dict[str, ChildRun] = {}
 
     def exports(self) -> dict:
-        return {"spawn": self.spawn, "wait": self.wait, "spawn_status": self.spawn_status}
+        return {
+            "spawn": self.spawn,
+            "wait": self.wait,
+            "spawn_status": self.spawn_status,
+        }
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
         """The approval line shows exactly what the child would be granted —

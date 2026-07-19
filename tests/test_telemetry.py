@@ -52,7 +52,9 @@ def test_spans_nest_into_one_trace_with_metrics(tmp_path):
                 )
             with telemetry.code_cell_span("write('x', 'y')"):
                 with telemetry.tool_span("files.write") as ts:
-                    telemetry.record_tool(ts, action="files.write", decision="allow", ok=True)
+                    telemetry.record_tool(
+                        ts, action="files.write", decision="allow", ok=True
+                    )
             telemetry.record_budget(turn, spent_usd=0.0012, calls=1)
 
         spans = exporter.get_finished_spans()
@@ -66,7 +68,10 @@ def test_spans_nest_into_one_trace_with_metrics(tmp_path):
         assert len({s.context.trace_id for s in spans}) == 1
 
         # The capability call nests under the code cell (same-thread dispatch).
-        assert by_name["tool files.write"].parent.span_id == by_name["pyharness.code_cell"].context.span_id
+        assert (
+            by_name["tool files.write"].parent.span_id
+            == by_name["pyharness.code_cell"].context.span_id
+        )
 
         # GenAI + custom attributes landed on the LLM span.
         llm = by_name["chat claude-haiku-4-5"]
@@ -81,8 +86,12 @@ def test_spans_nest_into_one_trace_with_metrics(tmp_path):
         assert turn_span.attributes["pyharness.task"] == "do a thing"
 
         names = _metric_names(reader)
-        assert {"pyharness.llm.calls", "pyharness.llm.cost_usd", "gen_ai.client.token.usage",
-                "pyharness.tool.calls"} <= names
+        assert {
+            "pyharness.llm.calls",
+            "pyharness.llm.cost_usd",
+            "gen_ai.client.token.usage",
+            "pyharness.tool.calls",
+        } <= names
     finally:
         telemetry._enabled = False
 
@@ -95,7 +104,9 @@ def test_llm_span_captures_prompt_and_completion(tmp_path):
             {"role": "assistant", "content": [{"type": "text", "text": "checking"}]},
             {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]},
         ]
-        with telemetry.llm_span("claude-haiku-4-5", "cheap", system="be helpful", messages=messages):
+        with telemetry.llm_span(
+            "claude-haiku-4-5", "cheap", system="be helpful", messages=messages
+        ):
             telemetry.record_llm(
                 model="claude-haiku-4-5",
                 tier="cheap",
@@ -114,7 +125,10 @@ def test_llm_span_captures_prompt_and_completion(tmp_path):
         assert "checking" in attrs["llm.input_messages.2.message.content"]
         # Completion text + tool call on the output side.
         assert "here it is" in attrs["llm.output_messages.0.message.content"]
-        assert attrs["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"] == "run_python"
+        assert (
+            attrs["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"]
+            == "run_python"
+        )
     finally:
         telemetry._enabled = False
 
@@ -123,8 +137,16 @@ def test_content_capture_off_omits_prompt(tmp_path):
     exporter, _ = _enable_in_memory()
     telemetry._capture_content = False
     try:
-        with telemetry.llm_span("m", "cheap", system="secret", messages=[{"role": "user", "content": "hi"}]):
-            telemetry.record_llm(model="m", tier="cheap", input_tokens=1, output_tokens=1, output_text="x")
+        with telemetry.llm_span(
+            "m", "cheap", system="secret", messages=[{"role": "user", "content": "hi"}]
+        ):
+            telemetry.record_llm(
+                model="m",
+                tier="cheap",
+                input_tokens=1,
+                output_tokens=1,
+                output_text="x",
+            )
         attrs = exporter.get_finished_spans()[0].attributes
         assert "llm.input_messages.0.message.content" not in attrs
         assert "llm.output_messages.0.message.content" not in attrs
@@ -152,6 +174,7 @@ def test_body_exception_propagates_through_span(tmp_path):
     # `except` that re-yielded and raised "generator didn't stop after throw()".
     exporter, _ = _enable_in_memory()
     try:
+
         class Boom(Exception):
             pass
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable
 
 
 class Decision(Enum):
@@ -21,7 +21,9 @@ class ActionCategory(Enum):
 
     LOCAL = "local"  # effect stays in the workspace/box; undoable by the agent
     OUTWARD = "outward"  # sends data off-box or acts on a remote page; observable, assume not undoable
-    IRREVERSIBLE = "irreversible"  # a remote effect the harness knows cannot be taken back
+    IRREVERSIBLE = (
+        "irreversible"  # a remote effect the harness knows cannot be taken back
+    )
 
 
 # A predicate judges a call from its full context, not just its name — so a
@@ -53,7 +55,10 @@ class Policy:
 
     @staticmethod
     def _matches(action: str, rules: set[str]) -> bool:
-        return any(action == r or action.startswith(r + ".") or action.split(".")[0] == r for r in rules)
+        return any(
+            action == r or action.startswith(r + ".") or action.split(".")[0] == r
+            for r in rules
+        )
 
     def decide(self, action: str, args: tuple, kwargs: dict) -> Decision:
         if self._matches(action, self.deny):

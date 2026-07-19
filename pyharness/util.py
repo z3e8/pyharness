@@ -25,6 +25,7 @@ def ensure_private_dir(path: str | Path) -> Path:
         pass
     return p
 
+
 # Hard ceiling on how much a single cell's captured stdout/stderr may hold in
 # memory before `truncate` ever runs. A runaway `print` (megabytes to gigabytes
 # in one cell) would otherwise fill an unbounded StringIO entirely, OOMing the
@@ -45,7 +46,7 @@ def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
         return text
     dropped = len(text) - limit
     head = text[: limit * 3 // 4]
-    tail = text[-(limit // 4):]
+    tail = text[-(limit // 4) :]
     return f"{head}\n... [truncated {dropped} chars] ...\n{tail}"
 
 
@@ -83,12 +84,15 @@ class CaptureBuffer(io.TextIOBase):
         if s:
             # One huge write must not blow the tail budget on its own.
             if len(s) > self._half:
-                s = s[-self._half:]
+                s = s[-self._half :]
                 self._tail.clear()
                 self._tail_len = 0
             self._tail.append(s)
             self._tail_len += len(s)
-            while len(self._tail) > 1 and self._tail_len - len(self._tail[0]) >= self._half:
+            while (
+                len(self._tail) > 1
+                and self._tail_len - len(self._tail[0]) >= self._half
+            ):
                 self._tail_len -= len(self._tail.popleft())
         return n
 

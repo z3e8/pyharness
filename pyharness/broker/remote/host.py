@@ -201,7 +201,11 @@ class RemoteKernel:
                 self._discard()
                 return "(kernel protocol error — session state lost)"
             _, op, args, kwargs = msg  # ("call", op, args, kwargs)
-            if not (isinstance(op, str) and isinstance(args, list) and isinstance(kwargs, dict)):
+            if not (
+                isinstance(op, str)
+                and isinstance(args, list)
+                and isinstance(kwargs, dict)
+            ):
                 self._discard()
                 return "(kernel protocol error — session state lost)"
             try:
@@ -212,7 +216,9 @@ class RemoteKernel:
             try:
                 self._conn.send(reply)
             except Exception as exc:  # noqa: BLE001 - e.g. unpicklable result
-                self._conn.send(("err", RuntimeError(f"{op} result not transferable: {exc!r}")))
+                self._conn.send(
+                    ("err", RuntimeError(f"{op} result not transferable: {exc!r}"))
+                )
 
     def _resync_after_abort(self) -> None:
         """Restore the request/reply pairing after the parent unwound out of

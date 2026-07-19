@@ -5,12 +5,13 @@ import queue
 import random
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from importlib import import_module
-from typing import Callable, Protocol, Sequence
+from typing import Protocol
 
-from ..obs import telemetry
 from ..budget import Budget
+from ..obs import telemetry
 
 # Provider credentials the *parent* holds so it can call the LLM or a search
 # provider on the agent's behalf. The child never makes these calls itself — they
@@ -68,7 +69,7 @@ def _thinking_config(model: str) -> dict | None:
     return None
 
 
-def _cache_marked_system(system: "str | Sequence[str] | None") -> list[dict] | None:
+def _cache_marked_system(system: str | Sequence[str] | None) -> list[dict] | None:
     """The request's `system` as cache-marked text blocks, or None when empty.
 
     A single string is one block with a breakpoint at its end. A sequence of
@@ -90,7 +91,9 @@ def _cache_marked_system(system: "str | Sequence[str] | None") -> list[dict] | N
     return blocks or None
 
 
-def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> list[dict]:
+def _cache_marked_messages(
+    messages: list[dict], cache_anchor: int | None
+) -> list[dict]:
     """The request's message list with one `cache_control` breakpoint added,
     without mutating the caller's history — markers left on history dicts would
     accumulate across steps and blow the API's 4-breakpoint-per-request limit.
@@ -103,7 +106,11 @@ def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> li
     the model's minimum cacheable prefix silently don't cache — marker harmless."""
     if not messages:
         return messages
-    idx = cache_anchor if cache_anchor is not None and 0 <= cache_anchor < len(messages) else len(messages) - 1
+    idx = (
+        cache_anchor
+        if cache_anchor is not None and 0 <= cache_anchor < len(messages)
+        else len(messages) - 1
+    )
     target = messages[idx]
     content = target.get("content") if isinstance(target, dict) else None
     if isinstance(content, str):
@@ -119,7 +126,11 @@ def _cache_marked_messages(messages: list[dict], cache_anchor: int | None) -> li
         # SDK content-block objects (assistant turns) or empty content: skip
         # marking rather than guess at a mutation.
         return messages
-    return [*messages[:idx], {**target, "content": marked_content}, *messages[idx + 1:]]
+    return [
+        *messages[:idx],
+        {**target, "content": marked_content},
+        *messages[idx + 1 :],
+    ]
 
 
 @dataclass(frozen=True)
@@ -146,12 +157,16 @@ class Usage:
         model: str,
         output_tokens: int | None = None,
         estimated: bool = False,
-    ) -> "Usage":
+    ) -> Usage:
         """Usage from the API's usage object. For a killed attempt the exact
         output count never arrived, so the caller passes its own
         `output_tokens` estimate and marks the record `estimated`."""
         in_tok = getattr(usage, "input_tokens", 0) or 0
-        out_tok = output_tokens if output_tokens is not None else (getattr(usage, "output_tokens", 0) or 0)
+        out_tok = (
+            output_tokens
+            if output_tokens is not None
+            else (getattr(usage, "output_tokens", 0) or 0)
+        )
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         in_rate, out_rate = PRICING.get(model, (0.0, 0.0))
@@ -182,8 +197,18 @@ class Completion:
 
 class LLM(Protocol):
     def complete(
-        self, *, system, messages, tier=..., tools=..., max_tokens=..., on_token=...,
-        on_thinking=..., on_attempt=..., cache_anchor=..., total_deadline_s=...
+        self,
+        *,
+        system,
+        messages,
+        tier=...,
+        tools=...,
+        max_tokens=...,
+        on_token=...,
+        on_thinking=...,
+        on_attempt=...,
+        cache_anchor=...,
+        total_deadline_s=...,
     ) -> Completion: ...
 
 
@@ -248,6 +273,7 @@ def _ipv4_first_client(httpx, timeout):
     where a v4 source address reaches nothing: on the first `ConnectError` the
     transport retires the pin and retries unpinned, so a v6-only host keeps
     working without the operator having to set PYHARNESS_LLM_IPV6."""
+
     class _IPv4FirstTransport(httpx.BaseTransport):
         def __init__(self):
             self._pinned = httpx.HTTPTransport(local_address="0.0.0.0")
@@ -315,14 +341,18 @@ class AnthropicLLM:
         # v6-only network (first connect failure falls back to unpinned), so
         # PYHARNESS_LLM_IPV6=true is only needed to force default family
         # selection, not to keep a v6-only host working.
-        timeout = httpx.Timeout(connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0)
+        timeout = httpx.Timeout(
+            connect=10.0, read=SILENCE_TIMEOUT_S, write=20.0, pool=10.0
+        )
         client_kwargs: dict = {"timeout": timeout, "max_retries": 2}
         if os.environ.get("PYHARNESS_LLM_IPV6", "").lower() not in ("1", "true", "yes"):
             client_kwargs["http_client"] = _ipv4_first_client(httpx, timeout)
         self._client = anthropic.Anthropic(**client_kwargs)
         self._anthropic = anthropic
         self._httpx = httpx
-        self._accumulate = import_module("anthropic.lib.streaming._messages").accumulate_event
+        self._accumulate = import_module(
+            "anthropic.lib.streaming._messages"
+        ).accumulate_event
         self._budget = budget
         self._max_tokens = max_tokens
 
@@ -334,14 +364,16 @@ class AnthropicLLM:
         output_tokens: int | None = None,
         estimated: bool = False,
     ) -> Usage:
-        u = Usage.from_response(usage, model, output_tokens=output_tokens, estimated=estimated)
+        u = Usage.from_response(
+            usage, model, output_tokens=output_tokens, estimated=estimated
+        )
         if self._budget is not None:
             # Estimated (failed-attempt) spend counts too: the API billed it,
             # so excluding it would let a stall-heavy session overrun its cap.
             self._budget.record(u.model, u.cost_usd)
         return u
 
-    def with_budget(self, budget: Budget) -> "AnthropicLLM":
+    def with_budget(self, budget: Budget) -> AnthropicLLM:
         """A sibling client on the same underlying connection, metering into a
         different Budget — how a spawned child session gets its own slice
         accounted separately from its parent's."""
@@ -365,7 +397,9 @@ class AnthropicLLM:
             return True
         if isinstance(exc, self._httpx.TransportError):
             return True
-        if isinstance(exc, self._anthropic.APIConnectionError):  # includes APITimeoutError
+        if isinstance(
+            exc, self._anthropic.APIConnectionError
+        ):  # includes APITimeoutError
             return True
         if isinstance(exc, self._anthropic.APIStatusError):
             return exc.status_code in _RETRYABLE_STATUS or exc.status_code >= 500
@@ -379,9 +413,9 @@ class AnthropicLLM:
         tier: str = "cheap",
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
-        on_token: "Callable[[str], None] | None" = None,
-        on_thinking: "Callable[[str], None] | None" = None,
-        on_attempt: "Callable[[dict], None] | None" = None,
+        on_token: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
+        on_attempt: Callable[[dict], None] | None = None,
         cache_anchor: int | None = None,
         total_deadline_s: float | None = None,
     ) -> Completion:
@@ -441,25 +475,46 @@ class AnthropicLLM:
             if on_attempt is None:
                 return
             try:
-                on_attempt({"attempt": attempt, "attempts": STREAM_ATTEMPTS, "outcome": outcome, **extra})
+                on_attempt(
+                    {
+                        "attempt": attempt,
+                        "attempts": STREAM_ATTEMPTS,
+                        "outcome": outcome,
+                        **extra,
+                    }
+                )
             except Exception:  # noqa: BLE001
                 pass
 
         for attempt in range(1, STREAM_ATTEMPTS + 1):
             deadline = attempt_deadline
             if total_deadline_s is not None:
-                deadline = min(deadline, total_deadline_s - (time.monotonic() - started))
+                deadline = min(
+                    deadline, total_deadline_s - (time.monotonic() - started)
+                )
             fire("start", attempt)
             stats = {"events": 0, "output_chars": 0, "output_tokens": 0}
             t0 = time.monotonic()
             try:
                 completion = self._complete_once(
-                    kwargs, model, tier, system_text, messages,
-                    on_token, on_thinking, deadline, stats, fire, attempt,
+                    kwargs,
+                    model,
+                    tier,
+                    system_text,
+                    messages,
+                    on_token,
+                    on_thinking,
+                    deadline,
+                    stats,
+                    fire,
+                    attempt,
                 )
                 fire(
-                    "ok", attempt, elapsed_s=round(time.monotonic() - t0, 1),
-                    events=stats["events"], output_tokens=stats["output_tokens"],
+                    "ok",
+                    attempt,
+                    elapsed_s=round(time.monotonic() - t0, 1),
+                    events=stats["events"],
+                    output_tokens=stats["output_tokens"],
                 )
                 return completion
             except Exception as exc:  # noqa: BLE001 — classified below
@@ -473,13 +528,19 @@ class AnthropicLLM:
                     "output_tokens": stats["output_tokens"],
                 }
                 history.append(summary)
-                fire("failed", attempt, **{k: v for k, v in summary.items() if k != "attempt"})
+                fire(
+                    "failed",
+                    attempt,
+                    **{k: v for k, v in summary.items() if k != "attempt"},
+                )
                 if attempt == STREAM_ATTEMPTS or not self._retryable(exc):
                     wrapped = self._with_history(exc, history)
                     if wrapped is exc:
                         raise
                     raise wrapped from exc
-                delay = min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * 2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                delay = min(
+                    _BACKOFF_CAP_S, _BACKOFF_BASE_S * 2 ** (attempt - 1)
+                ) + random.uniform(0, 0.5)
                 if total_deadline_s is not None:
                     # Stop when the next attempt cannot meaningfully fit: the
                     # caller bounded this whole call, and a sliver of leftover
@@ -535,11 +596,11 @@ class AnthropicLLM:
         tier: str,
         system: str | None,
         messages: list[dict],
-        on_token: "Callable[[str], None] | None",
-        on_thinking: "Callable[[str], None] | None",
+        on_token: Callable[[str], None] | None,
+        on_thinking: Callable[[str], None] | None,
         deadline_s: float,
         stats: dict,
-        fire: "Callable[..., None]",
+        fire: Callable[..., None],
         attempt: int,
     ) -> Completion:
         # Stream and reassemble: the SDK refuses non-streaming requests whose
@@ -555,7 +616,9 @@ class AnthropicLLM:
         # retried call shows up as a failed span plus a clean one.
         with telemetry.llm_span(model, tier, system=system, messages=messages):
             raw = self._client.messages.create(**kwargs, stream=True)
-            events: queue.Queue = queue.Queue()  # unbounded: an abandoned reader must never block on put
+            events: queue.Queue = (
+                queue.Queue()
+            )  # unbounded: an abandoned reader must never block on put
             abandoned = threading.Event()
 
             def _read() -> None:
@@ -568,7 +631,9 @@ class AnthropicLLM:
                 except BaseException as exc:  # noqa: BLE001 — handed to the consumer to classify
                     events.put(("error", exc))
 
-            threading.Thread(target=_read, name="llm-stream-reader", daemon=True).start()
+            threading.Thread(
+                target=_read, name="llm-stream-reader", daemon=True
+            ).start()
 
             snapshot = None
             start = last_event = last_beat = time.monotonic()
@@ -578,8 +643,10 @@ class AnthropicLLM:
                     if now - start >= deadline_s:
                         raise StreamStalled(
                             f"stream deadline: attempt still running after {deadline_s:.0f}s",
-                            clock="deadline", events=stats["events"],
-                            output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                            clock="deadline",
+                            events=stats["events"],
+                            output_tokens=stats["output_tokens"],
+                            elapsed_s=now - start,
                         )
                     if now - last_event >= STALL_TIMEOUT_S:
                         # Bytes are still flowing (wire silence would have hit the
@@ -587,14 +654,19 @@ class AnthropicLLM:
                         # server is alive but generation has wedged.
                         raise StreamStalled(
                             f"stream stall: connection alive but no events for {STALL_TIMEOUT_S:.0f}s",
-                            clock="stall", events=stats["events"],
-                            output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                            clock="stall",
+                            events=stats["events"],
+                            output_tokens=stats["output_tokens"],
+                            elapsed_s=now - start,
                         )
                     if now - last_beat >= 30.0:
                         last_beat = now
                         fire(
-                            "streaming", attempt, elapsed_s=round(now - start, 1),
-                            events=stats["events"], output_tokens=stats["output_tokens"],
+                            "streaming",
+                            attempt,
+                            elapsed_s=round(now - start, 1),
+                            events=stats["events"],
+                            output_tokens=stats["output_tokens"],
                         )
                     try:
                         kind, payload = events.get(timeout=1.0)
@@ -606,8 +678,10 @@ class AnthropicLLM:
                             raise StreamStalled(
                                 f"stream silence: no bytes on the wire for {SILENCE_TIMEOUT_S:.0f}s "
                                 "(SSE pings included) — connection is dead",
-                                clock="silence", events=stats["events"],
-                                output_tokens=stats["output_tokens"], elapsed_s=now - start,
+                                clock="silence",
+                                events=stats["events"],
+                                output_tokens=stats["output_tokens"],
+                                elapsed_s=now - start,
                             ) from payload
                         raise payload
                     if kind == "end":
@@ -616,7 +690,8 @@ class AnthropicLLM:
                             # message — a half answer must not pass for a whole one.
                             raise StreamStalled(
                                 "stream truncated: ended before message completion",
-                                clock="truncated", events=stats["events"],
+                                clock="truncated",
+                                events=stats["events"],
                                 output_tokens=stats["output_tokens"],
                                 elapsed_s=time.monotonic() - start,
                             )
@@ -638,10 +713,13 @@ class AnthropicLLM:
                             if on_thinking is not None:
                                 on_thinking(delta.thinking)
                     if ev.type == "message_delta":
-                        stats["output_tokens"] = getattr(snapshot.usage, "output_tokens", 0) or 0
+                        stats["output_tokens"] = (
+                            getattr(snapshot.usage, "output_tokens", 0) or 0
+                        )
                     else:
                         stats["output_tokens"] = max(
-                            stats["output_tokens"], stats["output_chars"] // _CHARS_PER_TOKEN_EST
+                            stats["output_tokens"],
+                            stats["output_chars"] // _CHARS_PER_TOKEN_EST,
                         )
             except BaseException:
                 abandoned.set()
@@ -654,8 +732,10 @@ class AnthropicLLM:
                 # from streamed bytes) so Budget and by_model stay truthful.
                 if snapshot is not None:
                     self._record(
-                        snapshot.usage, model,
-                        output_tokens=stats["output_tokens"], estimated=True,
+                        snapshot.usage,
+                        model,
+                        output_tokens=stats["output_tokens"],
+                        estimated=True,
                     )
                 raise
 

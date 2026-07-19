@@ -69,14 +69,26 @@ def _parser() -> argparse.ArgumentParser:
     add = sub.add_parser("add", help="add a server to the config")
     add.add_argument("name")
     add.add_argument("--command", help="local server: the executable to run")
-    add.add_argument("--arg", action="append", default=[], dest="args",
-                     help="local server: one argument (repeatable; use --arg=-y for dash values)")
+    add.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        dest="args",
+        help="local server: one argument (repeatable; use --arg=-y for dash values)",
+    )
     add.add_argument("--url", help="remote server: the Streamable HTTP endpoint")
     add.add_argument("--env", action="append", default=[], help="K=V (V a secret: ref)")
-    add.add_argument("--header", action="append", default=[], help="K=V (V a secret: ref)")
+    add.add_argument(
+        "--header", action="append", default=[], help="K=V (V a secret: ref)"
+    )
     add.add_argument("--summary", help="one-line description shown by search_tools")
-    add.add_argument("--keyword", action="append", default=[], dest="keywords",
-                     help="discovery keyword (repeatable)")
+    add.add_argument(
+        "--keyword",
+        action="append",
+        default=[],
+        dest="keywords",
+        help="discovery keyword (repeatable)",
+    )
     add.add_argument("--category", help="discovery category (e.g. vcs, chat)")
 
     sub.add_parser("list", help="list configured servers")

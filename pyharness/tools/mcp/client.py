@@ -30,12 +30,18 @@ class MCPClient:
 
     @classmethod
     def stdio(
-        cls, command: str, args: tuple[str, ...] = (), *, env=None, cwd=None, timeout: float = 30.0
-    ) -> "MCPClient":
+        cls,
+        command: str,
+        args: tuple[str, ...] = (),
+        *,
+        env=None,
+        cwd=None,
+        timeout: float = 30.0,
+    ) -> MCPClient:
         return cls(StdioTransport(command, args, env=env, cwd=cwd, timeout=timeout))
 
     @classmethod
-    def http(cls, url: str, *, headers=None, timeout: float = 30.0) -> "MCPClient":
+    def http(cls, url: str, *, headers=None, timeout: float = 30.0) -> MCPClient:
         return cls(HttpTransport(url, headers=headers, timeout=timeout))
 
     def list_tools(self) -> list[dict]:
@@ -78,7 +84,12 @@ class MCPClient:
     def _request(self, method: str, params: dict | None = None) -> dict:
         self._next_id += 1
         reply = self._transport.request(
-            {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
+            {
+                "jsonrpc": "2.0",
+                "id": self._next_id,
+                "method": method,
+                "params": params or {},
+            }
         )
         if "error" in reply:
             raise MCPError(f"{method}: {reply['error']}")
@@ -119,7 +130,13 @@ def wrap_mcp_server(
 ) -> ModuleType:
     """Connect to an MCP server and return it as a tool module."""
     client = connect(
-        command=command, args=tuple(args), url=url, env=env, headers=headers, cwd=cwd, timeout=timeout
+        command=command,
+        args=tuple(args),
+        url=url,
+        env=env,
+        headers=headers,
+        cwd=cwd,
+        timeout=timeout,
     )
     return build_module(client, name, summary=summary)
 

@@ -3,14 +3,14 @@ from __future__ import annotations
 import functools
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from types import ModuleType
-from typing import Callable
 
-from ..obs import telemetry
 from ..audit import AuditLog
 from ..budget import Budget
+from ..obs import telemetry
 from ..security.grants import GrantLedger, GrantScope
 from ..security.policy import ActionCategory, Decision, Policy
 from ..util import summarize_args
@@ -34,7 +34,7 @@ class ApprovalOutcome(Enum):
     GRANT = "grant"
 
 
-def _normalize(result: "ApprovalOutcome | bool | None") -> "ApprovalOutcome":
+def _normalize(result: ApprovalOutcome | bool | None) -> ApprovalOutcome:
     if isinstance(result, ApprovalOutcome):
         return result
     return ApprovalOutcome.ONCE if result else ApprovalOutcome.DENY
@@ -156,7 +156,9 @@ class Broker:
         by name; must match `namespace()`, so it applies the same core/hidden
         filter."""
         return [
-            op for (cap, op) in self._ops if cap in self._core and (cap, op) not in self._hidden
+            op
+            for (cap, op) in self._ops
+            if cap in self._core and (cap, op) not in self._hidden
         ]
 
     def as_tool_module(self, cap: str, *, summary: str = "") -> ModuleType:
@@ -173,8 +175,12 @@ class Broker:
             if c != cap:
                 continue
             proxy = self._proxy(cap, op)
-            functools.wraps(func)(proxy)  # copy __doc__/__wrapped__ (signature) from the real op
-            proxy.__module__ = cap  # so Registry._public_functions lists it as this module's
+            functools.wraps(func)(
+                proxy
+            )  # copy __doc__/__wrapped__ (signature) from the real op
+            proxy.__module__ = (
+                cap  # so Registry._public_functions lists it as this module's
+            )
             setattr(module, op, proxy)
         return module
 
@@ -196,10 +202,14 @@ class Broker:
         if not caps:
             raise KeyError(f"unknown operation {op!r}")
         if len(caps) > 1:
-            raise KeyError(f"operation {op!r} is ambiguous across capabilities {sorted(caps)}")
+            raise KeyError(
+                f"operation {op!r} is ambiguous across capabilities {sorted(caps)}"
+            )
         return self.call(caps[0], op, *args, **kwargs)
 
-    def _approval_request(self, cap: str, op: str, action: str, args, kwargs) -> ApprovalRequest:
+    def _approval_request(
+        self, cap: str, op: str, action: str, args, kwargs
+    ) -> ApprovalRequest:
         """Describe a gated call for the human. A capability that owns gated ops
         provides `preview(op, args, kwargs) -> (category, summary)` so the
         arg-shape knowledge stays with the capability; anything else falls back to
@@ -241,14 +251,19 @@ class Broker:
         # action killed in flight then still exists in the tamper-evident chain
         # — as a start closed by `abort_inflight`, or as an unpaired start when
         # the process died too hard even for that.
-        self.audit.record(action=action, phase="start", args=summarize_args(args, kwargs))
+        self.audit.record(
+            action=action, phase="start", args=summarize_args(args, kwargs)
+        )
         token = object()
         with self._inflight_lock:
             self._inflight[token] = (action, started)
 
         def _end(**fields) -> None:
             self._emit(
-                "action_end", action, elapsed_s=round(time.perf_counter() - started, 3), **fields
+                "action_end",
+                action,
+                elapsed_s=round(time.perf_counter() - started, 3),
+                **fields,
             )
 
         try:
@@ -272,13 +287,19 @@ class Broker:
             self._inflight.pop(token, None)
             return True
 
-    def _dispatch(self, cap: str, op: str, action: str, args, kwargs, _end, token) -> object:
+    def _dispatch(
+        self, cap: str, op: str, action: str, args, kwargs, _end, token
+    ) -> object:
         with telemetry.tool_span(action) as span:
             decision = self.policy.decide(action, args, kwargs)
             if decision is Decision.DENY:
                 if self._settle(token):
-                    self.audit.record(action=action, phase="end", decision="deny", ok=False)
-                    telemetry.record_tool(span, action=action, decision="deny", ok=False)
+                    self.audit.record(
+                        action=action, phase="end", decision="deny", ok=False
+                    )
+                    telemetry.record_tool(
+                        span, action=action, decision="deny", ok=False
+                    )
                     _end(ok=False, decision="deny")
                 raise PermissionDenied(f"policy denied {action}")
             if decision is Decision.APPROVE:
@@ -335,7 +356,9 @@ class Broker:
                         fields.update(phase="end", ok=False)
                         if self._settle(token):
                             self.audit.record(**fields)
-                            telemetry.record_tool(span, action=action, decision="approve", ok=False)
+                            telemetry.record_tool(
+                                span, action=action, decision="approve", ok=False
+                            )
                             _end(ok=False, decision="approve")
                         raise PermissionDenied(f"not approved: {action}")
                     # Approve/grant: a non-terminal decision record (no phase);
@@ -348,9 +371,13 @@ class Broker:
             func = self._ops[(cap, op)]
             try:
                 result = func(*args, **kwargs)
-            except BaseException as exc:  # incl. KeyboardInterrupt — record, then re-raise
+            except (
+                BaseException
+            ) as exc:  # incl. KeyboardInterrupt — record, then re-raise
                 if self._settle(token):
-                    self.audit.record(action=action, phase="end", ok=False, error=repr(exc))
+                    self.audit.record(
+                        action=action, phase="end", ok=False, error=repr(exc)
+                    )
                     telemetry.record_tool(
                         span, action=action, decision="allow", ok=False, error=repr(exc)
                     )
@@ -358,7 +385,10 @@ class Broker:
                 raise
             if self._settle(token):
                 self.audit.record(
-                    action=action, phase="end", ok=True, args=summarize_args(args, kwargs)
+                    action=action,
+                    phase="end",
+                    ok=True,
+                    args=summarize_args(args, kwargs),
                 )
                 telemetry.record_tool(span, action=action, decision="allow", ok=True)
                 _end(ok=True)

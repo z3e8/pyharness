@@ -31,8 +31,11 @@ class SessionVenv:
         # instead of hanging forever.
         try:
             result = subprocess.run(
-                [str(self.dir / "bin" / "python"), "-c",
-                 "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                [
+                    str(self.dir / "bin" / "python"),
+                    "-c",
+                    "import sysconfig; print(sysconfig.get_path('purelib'))",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,

@@ -17,6 +17,7 @@ class RemoteError(Exception):
     round-trips) carrying the original type name and message. See
     `host._safe_exc`."""
 
+
 # Wire protocol between the parent (kernel/broker) and the child (agent userland).
 #
 # parent -> child:

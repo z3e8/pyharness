@@ -3,9 +3,9 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Callable
 
 from . import builtin
 
@@ -16,7 +16,9 @@ class ToolInfo:
     summary: str
     module: ModuleType | None = None  # None until a lazy tool is resolved
     source: str = "core"  # core | installed | learned
-    kind: str = "module"  # module | mcp — lets gating spot an MCP target without resolving it
+    kind: str = (
+        "module"  # module | mcp — lets gating spot an MCP target without resolving it
+    )
     loader: Callable[[], ModuleType] | None = None  # set for lazy (e.g. MCP) tools
     error: str | None = None  # last failure, if a lazy load could not connect
     keywords: tuple[str, ...] = ()  # synonyms/aliases, so intent words still match
@@ -24,8 +26,12 @@ class ToolInfo:
     featured: bool = False  # surfaced by default and ranked first (the common set)
     instructions: str | None = None  # a learned skill's procedure, shown by describe()
     verified: bool = True  # a learned skill starts False, earning trust on a real run
-    uses: tuple[dict, ...] = ()  # a learned skill's recent-use log (bounded, oldest first)
-    check: str | None = None  # a learned skill's own success test ("how do I know it worked")
+    uses: tuple[
+        dict, ...
+    ] = ()  # a learned skill's recent-use log (bounded, oldest first)
+    check: str | None = (
+        None  # a learned skill's own success test ("how do I know it worked")
+    )
 
 
 class Registry:
@@ -68,7 +74,9 @@ class Registry:
         or declared on the module as `__keywords__` / `__category__` /
         `__featured__`; explicit arguments win."""
         name = name or module.__name__.rsplit(".", 1)[-1]
-        summary = (module.__doc__ or "").strip().splitlines()[0] if module.__doc__ else ""
+        summary = (
+            (module.__doc__ or "").strip().splitlines()[0] if module.__doc__ else ""
+        )
         self._tools[name] = ToolInfo(
             name,
             summary,
@@ -103,13 +111,25 @@ class Registry:
         from .mcp import wrap_mcp_server
 
         module = wrap_mcp_server(
-            name, command, args, url=url, env=env, headers=headers, cwd=cwd,
-            summary=summary, timeout=timeout,
+            name,
+            command,
+            args,
+            url=url,
+            env=env,
+            headers=headers,
+            cwd=cwd,
+            summary=summary,
+            timeout=timeout,
         )
         self._mcp_clients.append(module._mcp_client)
         return self.register(
-            module, source="installed", name=name, kind="mcp",
-            keywords=keywords, category=category, featured=featured,
+            module,
+            source="installed",
+            name=name,
+            kind="mcp",
+            keywords=keywords,
+            category=category,
+            featured=featured,
         )
 
     def register_lazy(
@@ -129,8 +149,14 @@ class Registry:
         by `search`), so a server that is slow or down can neither delay nor abort
         registration, and merely browsing the catalog never connects it."""
         self._tools[name] = ToolInfo(
-            name, summary, source=source, loader=loader, kind=kind,
-            keywords=tuple(keywords), category=category, featured=featured,
+            name,
+            summary,
+            source=source,
+            loader=loader,
+            kind=kind,
+            keywords=tuple(keywords),
+            category=category,
+            featured=featured,
         )
         return name
 
@@ -158,13 +184,22 @@ class Registry:
         earns trust only when a real run is logged (`verified`, `uses`), so a
         freshly written procedure can't masquerade as a proven one."""
         self._tools[name] = ToolInfo(
-            name, description, source="learned", loader=loader,
-            instructions=instructions, keywords=tuple(keywords),
-            category=category, verified=verified, uses=tuple(uses), check=check,
+            name,
+            description,
+            source="learned",
+            loader=loader,
+            instructions=instructions,
+            keywords=tuple(keywords),
+            category=category,
+            verified=verified,
+            uses=tuple(uses),
+            check=check,
         )
         return name
 
-    def set_skill_usage(self, name: str, verified: bool, uses: tuple[dict, ...]) -> None:
+    def set_skill_usage(
+        self, name: str, verified: bool, uses: tuple[dict, ...]
+    ) -> None:
         """Update a registered skill's trust state in place, so a `record_use`
         this session is reflected in `search`/`describe` without a reload."""
         info = self._tools.get(name)
@@ -190,7 +225,9 @@ class Registry:
             self._mcp_clients.append(client)
         return module
 
-    def search(self, query: str = "", *, limit: int = 10, include_all: bool = False) -> str:
+    def search(
+        self, query: str = "", *, limit: int = 10, include_all: bool = False
+    ) -> str:
         """Return ranked **headers** for matching tools — name, summary, and
         tags (source, category, status) — never function signatures and never
         connecting a lazy tool. Use `describe()` to expand one tool.
@@ -225,9 +262,11 @@ class Registry:
         if more > 0:
             notes.append(
                 f"+{more} more — narrow the query or call "
-                f'search_tools({query!r}, include_all=True).'
+                f"search_tools({query!r}, include_all=True)."
             )
-        notes.append("describe_tool(name) shows a tool's functions; use_tool(name) loads it.")
+        notes.append(
+            "describe_tool(name) shows a tool's functions; use_tool(name) loads it."
+        )
         return "\n".join(lines) + "\n\n" + "\n".join(notes)
 
     def describe(self, name: str) -> str:
@@ -267,7 +306,9 @@ class Registry:
             raise KeyError(f"tool {name!r} not found; try search_tools()")
         module = self._resolve(self._tools[name])
         if module is None:
-            raise RuntimeError(f"tool {name!r} is unavailable: {self._tools[name].error}")
+            raise RuntimeError(
+                f"tool {name!r} is unavailable: {self._tools[name].error}"
+            )
         return module
 
     def _header(self, info: ToolInfo) -> str:
@@ -298,7 +339,7 @@ class Registry:
             body = "\n".join(self._header(i) for i in featured)
             return (
                 f"(no tool matched {q!r}; showing the common tools — try other "
-                f'keywords or search_tools(..., include_all=True))\n\n{body}'
+                f"keywords or search_tools(..., include_all=True))\n\n{body}"
             )
         return (
             f"(no tool matched {q!r}; try other keywords or "

@@ -3,13 +3,13 @@ from __future__ import annotations
 import base64
 import platform
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
-from ..obs import telemetry
 from ..budget import Budget
 from ..llm.client import TIERS
+from ..obs import telemetry
 from .kernel import Kernel
 
 SYSTEM_PROMPT = """\
@@ -238,7 +238,9 @@ Guidance:
 """
 
 
-def render_context(workspace_root: str | Path | None, *, now: datetime | None = None) -> str:
+def render_context(
+    workspace_root: str | Path | None, *, now: datetime | None = None
+) -> str:
     """The dynamic session preamble appended to SYSTEM_PROMPT each turn. Static
     prose carries the rules; this carries the world-state the model would
     otherwise burn turns discovering — the date (its training cutoff silently
@@ -251,7 +253,9 @@ def render_context(workspace_root: str | Path | None, *, now: datetime | None = 
         f"- Platform: {platform.system().lower()} / {platform.machine()}",
     ]
     if workspace_root is not None:
-        lines.append(f"- Workspace: {workspace_root} — your relative paths resolve here")
+        lines.append(
+            f"- Workspace: {workspace_root} — your relative paths resolve here"
+        )
     return "\n".join(lines)
 
 
@@ -263,7 +267,9 @@ RUN_PYTHON_TOOL = {
     ),
     "input_schema": {
         "type": "object",
-        "properties": {"code": {"type": "string", "description": "Python source to execute."}},
+        "properties": {
+            "code": {"type": "string", "description": "Python source to execute."}
+        },
         "required": ["code"],
     },
 }
@@ -371,7 +377,9 @@ class Agent:
                 # heartbeats are redundant next to live llm_token events.
                 outcome = info.get("outcome")
                 attempt, attempts = info.get("attempt"), info.get("attempts")
-                if outcome == "streaming" or (attempt == 1 and outcome in ("start", "ok")):
+                if outcome == "streaming" or (
+                    attempt == 1 and outcome in ("start", "ok")
+                ):
                     return
                 if outcome == "failed":
                     cause = info.get("clock_fired") or info.get("error")
@@ -415,7 +423,9 @@ class Agent:
                 tier=self.tier,
                 system=system,
                 messages=prompt_snapshot,
-                tool_calls=[{"name": tc.name, "input": tc.input} for tc in completion.tool_calls],
+                tool_calls=[
+                    {"name": tc.name, "input": tc.input} for tc in completion.tool_calls
+                ],
                 cost_usd=round(self.budget.spent_usd - cost_before, 6),
                 latency_s=round(time.time() - t0, 3),
                 input_tokens=usage.input_tokens if usage else None,
@@ -428,7 +438,10 @@ class Agent:
                 # Safety refusal: not retryable with the same prompt; surface
                 # it as this turn's answer rather than pretending it finished.
                 self.on_event("error", "LLM refusal: the model declined to continue")
-                return completion.text or "(stopped: refusal — the model declined this request)"
+                return (
+                    completion.text
+                    or "(stopped: refusal — the model declined this request)"
+                )
 
             if not completion.tool_calls:
                 if completion.stop_reason == "max_tokens":
@@ -445,20 +458,25 @@ class Agent:
                 # tool_use still needs a paired tool_result (or the API rejects
                 # the next request), so answer each with an error and let the
                 # model re-issue the work in smaller steps.
-                self.on_event("note", "tool call truncated at the output-token limit — not executed")
-                messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": call.id,
-                            "is_error": True,
-                            "content": "(not executed: the response hit the output-token "
-                                       "limit mid-call — re-issue this work in smaller steps)",
-                        }
-                        for call in completion.tool_calls
-                    ],
-                })
+                self.on_event(
+                    "note",
+                    "tool call truncated at the output-token limit — not executed",
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": call.id,
+                                "is_error": True,
+                                "content": "(not executed: the response hit the output-token "
+                                "limit mid-call — re-issue this work in smaller steps)",
+                            }
+                            for call in completion.tool_calls
+                        ],
+                    }
+                )
                 continue
 
             if completion.text:
@@ -494,7 +512,11 @@ class Agent:
                 images = self.media.drain() if self.media is not None else []
                 if images and self.media_dir is not None:
                     self._persist_media(images, step)
-                content = metered if not images else [{"type": "text", "text": metered}, *images]
+                content = (
+                    metered
+                    if not images
+                    else [{"type": "text", "text": metered}, *images]
+                )
                 results.append(
                     {"type": "tool_result", "tool_use_id": call.id, "content": content}
                 )
@@ -518,7 +540,9 @@ class Agent:
                 ext = media_type.rsplit("/", 1)[-1].replace("jpeg", "jpg")
                 name = f"turn{step:03d}-{i}.{ext}"
                 (self.media_dir / name).write_bytes(base64.b64decode(source["data"]))
-                self.on_event("media", "", src=f"/media/{session}/{name}", media_type=media_type)
+                self.on_event(
+                    "media", "", src=f"/media/{session}/{name}", media_type=media_type
+                )
         except Exception:  # noqa: BLE001 — observability, never a blocker
             pass
 
@@ -559,7 +583,9 @@ def _elide_old_outputs(messages: list[dict], keep_recent: int) -> None:
         for m in messages
         if m.get("role") == "user"
         and isinstance(m.get("content"), list)
-        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+        and any(
+            isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"]
+        )
     ]
     for msg in tool_msgs[:-keep_recent]:
         for block in msg["content"]:
@@ -582,7 +608,9 @@ def _cache_anchor(messages: list[dict], keep_recent: int) -> int | None:
         for i, m in enumerate(messages)
         if m.get("role") == "user"
         and isinstance(m.get("content"), list)
-        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+        and any(
+            isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"]
+        )
     ]
     if len(tool_idxs) <= keep_recent:
         return None
@@ -600,7 +628,9 @@ def _elided(content):
             "re-print what you need]"
         )
     if isinstance(content, list):
-        images = sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image")
+        images = sum(
+            1 for b in content if isinstance(b, dict) and b.get("type") == "image"
+        )
         chars = sum(
             len(b.get("text", ""))
             for b in content
@@ -624,7 +654,11 @@ def _elide_image_data(obj):
     if isinstance(obj, dict):
         if obj.get("type") == "image" and isinstance(obj.get("source"), dict):
             source = obj["source"]
-            return {"type": "image", "media_type": source.get("media_type"), "bytes": len(source.get("data", ""))}
+            return {
+                "type": "image",
+                "media_type": source.get("media_type"),
+                "bytes": len(source.get("data", "")),
+            }
         return {key: _elide_image_data(value) for key, value in obj.items()}
     if isinstance(obj, list):
         return [_elide_image_data(item) for item in obj]
@@ -648,9 +682,20 @@ def _serialize_messages(msgs: list[dict]) -> list[dict]:
                     if t == "text":
                         parts.append({"type": "text", "text": block.text})
                     elif t == "tool_use":
-                        parts.append({"type": "tool_use", "name": block.name, "input": dict(block.input)})
+                        parts.append(
+                            {
+                                "type": "tool_use",
+                                "name": block.name,
+                                "input": dict(block.input),
+                            }
+                        )
                     elif t == "thinking":
-                        parts.append({"type": "thinking", "thinking": getattr(block, "thinking", "")[:500]})
+                        parts.append(
+                            {
+                                "type": "thinking",
+                                "thinking": getattr(block, "thinking", "")[:500],
+                            }
+                        )
                     else:
                         parts.append({"type": t})
                 else:

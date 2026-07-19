@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Callable
+from collections.abc import Callable
 
 # Strip C0 control characters (keeping tab and newline) from agent-authored notify
 # text before it is rendered. Left unfiltered, an ESC (\x1b) lets the agent emit

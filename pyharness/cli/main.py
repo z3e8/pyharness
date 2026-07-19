@@ -12,11 +12,11 @@ from pathlib import Path
 from ..broker.dispatch import ApprovalOutcome, ApprovalRequest
 from ..budget import Budget, BudgetExceeded
 from ..core.session import Session
-from ..security.policy import ActionCategory
-from ..security.profiles import PROFILES_DIR_ENV
-from ..security.profiles import _DEFAULT_DIR as _PROFILES_DEFAULT_DIR
-from ..security.vault import _DEFAULT_FILE
 from ..obs.transcript import latest_session, render_transcript, session_digest
+from ..security.policy import ActionCategory
+from ..security.profiles import _DEFAULT_DIR as _PROFILES_DEFAULT_DIR
+from ..security.profiles import PROFILES_DIR_ENV
+from ..security.vault import _DEFAULT_FILE
 
 _COLORS = {"code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
@@ -132,7 +132,12 @@ _GRANT_CLASS_LABEL = {
 def _reflect_enabled(env: Mapping[str, str]) -> bool:
     """Post-session reflection is opt-in: only an explicit truthy
     PYHARNESS_REFLECT runs the LLM pass at exit."""
-    return env.get("PYHARNESS_REFLECT", "").strip().lower() in ("1", "true", "yes", "on")
+    return env.get("PYHARNESS_REFLECT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _approve(request: ApprovalRequest) -> ApprovalOutcome:
@@ -140,12 +145,27 @@ def _approve(request: ApprovalRequest) -> ApprovalOutcome:
     print(f"  {request.summary}")
     # A grant is offered only when the harness marked the call grantable and it is
     # not irreversible (those always re-ask).
-    grantable = request.scope is not None and request.category is not ActionCategory.IRREVERSIBLE
+    grantable = (
+        request.scope is not None
+        and request.category is not ActionCategory.IRREVERSIBLE
+    )
     if not grantable:
-        note = "  (irreversible — always asks)\n" if request.category is ActionCategory.IRREVERSIBLE else ""
-        return ApprovalOutcome.ONCE if input(f"{note}  allow? [y/N] ").strip().lower() == "y" else ApprovalOutcome.DENY
-    label = _GRANT_CLASS_LABEL.get(request.scope.action_class, request.scope.action_class)
-    print(f"  [y] this once  [a] all {label} on {request.scope.target} this session  [N] no")
+        note = (
+            "  (irreversible — always asks)\n"
+            if request.category is ActionCategory.IRREVERSIBLE
+            else ""
+        )
+        return (
+            ApprovalOutcome.ONCE
+            if input(f"{note}  allow? [y/N] ").strip().lower() == "y"
+            else ApprovalOutcome.DENY
+        )
+    label = _GRANT_CLASS_LABEL.get(
+        request.scope.action_class, request.scope.action_class
+    )
+    print(
+        f"  [y] this once  [a] all {label} on {request.scope.target} this session  [N] no"
+    )
     answer = input("  allow? [y/a/N] ").strip().lower()
     if answer == "a":
         return ApprovalOutcome.GRANT
@@ -165,7 +185,9 @@ def _headless_approver(approve_all: bool):
     return approve
 
 
-def _build_session(root: Path, *, budget_usd: float, approver, on_event=None, **overrides) -> Session:
+def _build_session(
+    root: Path, *, budget_usd: float, approver, on_event=None, **overrides
+) -> Session:
     """One Session construction shared by `repl` and `run`. `overrides` (llm,
     unsafe_in_process, skills_dir, …) are a test seam; the CLI never passes them.
     The kernel default is already the sandboxed out-of-process child."""
@@ -190,11 +212,18 @@ def _start_watch(root: Path) -> None:
     daemon thread (dies with the process). Fail-open — no port, no viewer, but
     always a session. The URL goes to stderr so `run --json` stdout stays
     machine-clean."""
-    if os.environ.get("PYHARNESS_WATCH", "true").strip().lower() in ("0", "false", "no", "off"):
+    if os.environ.get("PYHARNESS_WATCH", "true").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
         return
     from ..obs.watch import start_in_thread
 
-    url = start_in_thread(root, port=int(os.environ.get("PYHARNESS_WATCH_PORT", "6061")))
+    url = start_in_thread(
+        root, port=int(os.environ.get("PYHARNESS_WATCH_PORT", "6061"))
+    )
     if url:
         print(f"\033[2m[watch] live view → {url}{_RESET}", file=sys.stderr)
 
@@ -212,13 +241,24 @@ _EXIT_BY_OUTCOME = {
 }
 
 
-def _run_once(task: str, root: Path, *, budget_usd: float, approve_all: bool,
-              reflect: bool, watch: bool = True, **overrides) -> dict:
+def _run_once(
+    task: str,
+    root: Path,
+    *,
+    budget_usd: float,
+    approve_all: bool,
+    reflect: bool,
+    watch: bool = True,
+    **overrides,
+) -> dict:
     """Run one task headlessly and return the session digest. Exceptions from
     the turn are already recorded in the trace by Session.run and classified by
     the digest — this only makes sure the session always closes."""
     session = _build_session(
-        root, budget_usd=budget_usd, approver=_headless_approver(approve_all), **overrides
+        root,
+        budget_usd=budget_usd,
+        approver=_headless_approver(approve_all),
+        **overrides,
     )
     if watch:
         _start_watch(root)
@@ -246,7 +286,8 @@ def _cmd_run(args: argparse.Namespace) -> None:
     root = Path(args.dir) if args.dir else Path(f".sessions/run-{ts}")
     try:
         digest = _run_once(
-            args.task, root,
+            args.task,
+            root,
             budget_usd=args.budget,
             approve_all=args.approve_all,
             reflect=args.reflect or _reflect_enabled(os.environ),
@@ -295,8 +336,20 @@ def _cmd_show(args: argparse.Namespace) -> None:
     if args.json:
         print(json.dumps(digest))
         return
-    for key in ("name", "outcome", "task", "tasks", "steps", "llm_calls", "errors",
-                "failed_actions", "actions", "denials", "aborted_actions", "cost_usd"):
+    for key in (
+        "name",
+        "outcome",
+        "task",
+        "tasks",
+        "steps",
+        "llm_calls",
+        "errors",
+        "failed_actions",
+        "actions",
+        "denials",
+        "aborted_actions",
+        "cost_usd",
+    ):
         print(f"{key}: {digest[key]}")
     answer = digest["answer"]
     if answer is not None:
@@ -348,7 +401,9 @@ def _cmd_repl(args: argparse.Namespace) -> None:
                 continue
             # The answer already streamed live via llm_token; just close its line
             # and print the spend summary. Reprinting it here would double-render.
-            print(f"\n\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}")
+            print(
+                f"\n\033[2m[spent ${session.budget.spent_usd:.4f} over {session.budget.calls} calls]{_RESET}"
+            )
     finally:
         # Post-session reflection (direction 5): a cheap separate pass over the
         # trace that may propose one improvement — skill writes still prompt for
@@ -370,30 +425,54 @@ def main() -> None:
 
     p_repl = sub.add_parser("repl", help="interactive agent (the default)")
     p_repl.add_argument(
-        "dir", nargs="?",
+        "dir",
+        nargs="?",
         help="session root (default: PYHARNESS_WORKSPACE or a fresh .sessions/cli-<ts>)",
     )
 
     p_run = sub.add_parser("run", help="run one task headlessly and print the answer")
     p_run.add_argument("task", help="the task to run")
-    p_run.add_argument("--dir", help="session root (default: a fresh .sessions/run-<ts>)")
-    p_run.add_argument("--budget", type=float, default=5.0, metavar="USD",
-                       help="spend cap in USD (default: 5)")
-    p_run.add_argument("--json", action="store_true",
-                       help="print the session digest as JSON instead of the answer")
-    p_run.add_argument("--approve-all", action="store_true",
-                       help="auto-approve gated actions (default: deny them)")
-    p_run.add_argument("--reflect", action="store_true",
-                       help="run the post-session reflection pass (or set PYHARNESS_REFLECT)")
+    p_run.add_argument(
+        "--dir", help="session root (default: a fresh .sessions/run-<ts>)"
+    )
+    p_run.add_argument(
+        "--budget",
+        type=float,
+        default=5.0,
+        metavar="USD",
+        help="spend cap in USD (default: 5)",
+    )
+    p_run.add_argument(
+        "--json",
+        action="store_true",
+        help="print the session digest as JSON instead of the answer",
+    )
+    p_run.add_argument(
+        "--approve-all",
+        action="store_true",
+        help="auto-approve gated actions (default: deny them)",
+    )
+    p_run.add_argument(
+        "--reflect",
+        action="store_true",
+        help="run the post-session reflection pass (or set PYHARNESS_REFLECT)",
+    )
 
     p_show = sub.add_parser("show", help="inspect a past session without an API key")
-    p_show.add_argument("session", nargs="?",
-                        help="session dir or name under --root (default: the latest)")
-    p_show.add_argument("--root", default=".sessions",
-                        help="sessions directory (default: .sessions)")
+    p_show.add_argument(
+        "session",
+        nargs="?",
+        help="session dir or name under --root (default: the latest)",
+    )
+    p_show.add_argument(
+        "--root", default=".sessions", help="sessions directory (default: .sessions)"
+    )
     view = p_show.add_mutually_exclusive_group()
-    view.add_argument("--transcript", action="store_true",
-                      help="print the flattened transcript (prompt snapshots dropped)")
+    view.add_argument(
+        "--transcript",
+        action="store_true",
+        help="print the flattened transcript (prompt snapshots dropped)",
+    )
     view.add_argument("--json", action="store_true", help="print the digest as JSON")
 
     args = parser.parse_args(sys.argv[1:] or ["repl"])

@@ -36,7 +36,20 @@ requires_sandbox = pytest.mark.skipif(
 class StubLLM:
     """A worker that always succeeds, so map_llm results are deterministic."""
 
-    def complete(self, *, system, messages, tier="cheap", tools=None, max_tokens=None, on_token=None, on_thinking=None, on_attempt=None, cache_anchor=None, total_deadline_s=None):
+    def complete(
+        self,
+        *,
+        system,
+        messages,
+        tier="cheap",
+        tools=None,
+        max_tokens=None,
+        on_token=None,
+        on_thinking=None,
+        on_attempt=None,
+        cache_anchor=None,
+        total_deadline_s=None,
+    ):
         return Completion(text="worked", tool_calls=[], content=[])
 
 
@@ -174,8 +187,7 @@ def test_use_tool_remote_module(kernel_factory, tmp_path):
 def test_map_llm_returns_results(kernel_factory, tmp_path):
     kernel = kernel_factory(_broker(tmp_path, with_agents=True))
     out = kernel.run(
-        "rs = map_llm(['a', 'b', 'c'])\n"
-        "print(sum(r.ok for r in rs), rs[0].value)"
+        "rs = map_llm(['a', 'b', 'c'])\nprint(sum(r.ok for r in rs), rs[0].value)"
     )
     assert out == "3 worked"
 
@@ -241,7 +253,9 @@ def test_sandbox_read_jail_denies_home_files(kernel_factory, tmp_path):
 
 
 @requires_sandbox
-def test_sandbox_read_jail_allows_package_but_not_repo_neighbours(kernel_factory, tmp_path):
+def test_sandbox_read_jail_allows_package_but_not_repo_neighbours(
+    kernel_factory, tmp_path
+):
     # The jail keeps only what the interpreter needs readable. The pyharness
     # package imports fine, but sibling files under the repo root that Python never
     # needs — the project's own source outside the package, its .env — are denied,
@@ -284,7 +298,11 @@ def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where):
     # deliberately rather than waved through as "just scratch".
     kernel = kernel_factory(_broker(tmp_path))
     # tmp_path lives under the OS temp root (/var/folders); home is a real file.
-    escape = (Path.home() / ".pyharness_sandbox_escape_test") if where == "home" else (tmp_path / "escape.txt")
+    escape = (
+        (Path.home() / ".pyharness_sandbox_escape_test")
+        if where == "home"
+        else (tmp_path / "escape.txt")
+    )
     out = kernel.run(
         f"try:\n"
         f"    open({str(escape)!r}, 'w').write('x')\n"
