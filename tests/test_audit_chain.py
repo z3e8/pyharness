@@ -51,6 +51,52 @@ def test_detects_deleted_entry(tmp_path):
     assert not ok and bad == 1
 
 
+def test_anchor_detects_tail_truncation(tmp_path):
+    p = tmp_path / "audit.jsonl"
+    a = AuditLog(p)
+    a.record(action="a", ok=True)
+    a.record(action="b", ok=True)
+    a.record(action="c", ok=True)
+
+    # Drop the last entry: the remaining a->b chain is internally valid, so the
+    # hash chain alone can't tell. The anchor (count=3, head=hash(c)) can.
+    lines = p.read_text().splitlines()
+    del lines[-1]
+    p.write_text("\n".join(lines) + "\n")
+
+    ok, bad = verify_chain(p)
+    assert not ok and bad == 2  # the missing entry's index
+
+
+def test_anchor_detects_full_rewrite(tmp_path):
+    p = tmp_path / "audit.jsonl"
+    a = AuditLog(p)
+    a.record(action="a", ok=True)
+    a.record(action="b", ok=True)
+
+    # Forge a fresh, internally-consistent chain of the same length but different
+    # content. The chain verifies against itself; the anchor's head does not.
+    forged = tmp_path / "forged.jsonl"
+    f = AuditLog(forged)
+    f.record(action="forged-a", ok=True)
+    f.record(action="forged-b", ok=True)
+    p.write_text(forged.read_text())  # overwrite the log, leave the real anchor
+
+    ok, bad = verify_chain(p)
+    assert not ok and bad == 1  # same length, so the head (last entry) is flagged
+
+
+def test_intact_log_passes_with_anchor(tmp_path):
+    p = tmp_path / "audit.jsonl"
+    a = AuditLog(p)
+    a.record(action="a", ok=True)
+    a.record(action="b", ok=True)
+    # The anchor written alongside must agree with the untouched log.
+    assert (p.with_name(p.name + ".anchor")).exists()
+    ok, bad = verify_chain(p)
+    assert ok and bad == -1
+
+
 def test_torn_final_line_is_a_broken_chain_not_a_crash(tmp_path):
     p = tmp_path / "audit.jsonl"
     a = AuditLog(p)
@@ -90,7 +136,11 @@ def test_reopen_continues_cleanly_past_a_torn_tail(tmp_path):
     # is dropped the a->b chain is sound.
     AuditLog(p).record(action="b", ok=True)
     lines = [line for line in p.read_text().splitlines() if line.strip()]
-    del lines[1]  # remove the torn line
+    del lines[1]  # remove the torn line (which merged with "b"'s append)
     p.write_text("\n".join(lines) + "\n")
+    # Surgically rebuilding the log offline invalidates its anchor sidecar (the
+    # count no longer matches); drop it so verify falls back to the chain-only
+    # verdict, which is what this torn-tail recovery test is about.
+    p.with_name(p.name + ".anchor").unlink(missing_ok=True)
     ok, bad = verify_chain(p)
     assert ok and bad == -1
