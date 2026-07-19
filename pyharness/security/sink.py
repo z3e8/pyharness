@@ -31,6 +31,19 @@ class SecretSink:
     sealing or encryption. The cleartext lives only here in the parent; the agent
     holds a name, and the audit log records that name (via `summarize_args`),
     never the value.
+
+    **Masking is defense-in-depth, not a guarantee.** `redact` is a literal
+    substring replace over a small set of spellings — the raw value plus its
+    URL-quoted forms (see `_mask_forms`). It catches the common case (a secret
+    echoed verbatim, or percent-encoded into a redirect URL) but *not* a value a
+    server re-encodes before echoing it: base64/hex, HTML entities, JSON/unicode
+    escapes, or a value split across chunks all pass through unmasked. The real
+    containment is that a resolved secret only ever travels to a vetted host
+    (host-binding in `resolve`) and never enters agent-visible output by design;
+    masking is the backstop for the incidental echo, deliberately not relied on
+    as the boundary. Widening the encodings covered would trade a few more catches
+    for false-positive `***` noise on innocent text, so it is intentionally not
+    done here.
     """
 
     def __init__(self, vault: Vault | None):
