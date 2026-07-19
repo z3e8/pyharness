@@ -1,5 +1,11 @@
 # pyharness
 
+<!-- Badge/link targets track the current github.com/z3e8/pyharness origin; they
+     move if the repo or the (parked) PyPI package name changes. -->
+[![CI](https://github.com/z3e8/pyharness/actions/workflows/test.yml/badge.svg)](https://github.com/z3e8/pyharness/actions/workflows/test.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
 An AI agent whose **action space is Python**. The orchestrator does exactly two
 things: reply with text, or emit one `run_python` call the harness executes in a
 persistent kernel. There are no fine-grained JSON tool calls — when the agent
@@ -15,7 +21,8 @@ See the [documentation](docs/index.md) for the full design, guides, and referenc
   data lives in variables, unseen.
 - **One broker, every side effect.** Files, shell, web, LLM calls, sub-agents,
   and tools all route through a single dispatch that does policy → audit →
-  budget → execute. In-process today; swappable for an isolated child later.
+  budget → execute. Agent code runs in an isolated, OS-sandboxed child process
+  by default; an in-process mode exists for tests only.
 - **Delegation.** `llm()` and `map_llm()` let the orchestrator fan out bulk
   work to cheaper models without filling its own context.
 
@@ -57,7 +64,7 @@ make test      # tests (no API key)
 make lint      # ruff check + format (make format applies fixes; make typecheck runs mypy)
 ```
 
-Or drive it directly without make:
+Or drive it directly without make. From a clone of this repo:
 
 ```bash
 uv venv && uv pip install -e . --group dev             # runtime + dev toolchain
@@ -65,6 +72,12 @@ ANTHROPIC_API_KEY=... uv run pyharness                  # interactive CLI
 
 uv run pytest -q                                        # tests (no API key)
 ```
+
+There is no published PyPI package yet — the name is being finalized before the
+first release, so install from source (the clone above, or
+`uv pip install "git+https://github.com/z3e8/pyharness"` for a runtime-only
+install). A `pip install` / `uv pip install` from PyPI will be documented here
+once the package is published.
 
 The live viewer is on by default; the heavier OTel export (Phoenix/Langfuse) is
 opt-in — see [Run with observability](docs/how-to/observability.md).
