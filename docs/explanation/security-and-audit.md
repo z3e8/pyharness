@@ -199,7 +199,10 @@ is server-side request forgery (SSRF), and nothing in the policy layer above sto
 it on its own.
 
 `pyharness/security/egress.py:check_url` sits on the request path
-(`web.fetch` / `http.request` / `browser.goto`) and, before the request goes out:
+(`web.fetch` / `http.request` / `browser.goto`, and the remote-MCP transport —
+a `.mcp.json` `url` entry is vetted at mount and on every request, so a
+config-declared server can't point the parent at an internal endpoint and
+forward `secret:` creds in its headers) and, before the request goes out:
 
 - refuses any non-`http(s)` scheme (no `file://`, `chrome://`, `gopher://`); and
 - resolves the host and blocks it when it maps to a **link-local** address
@@ -221,10 +224,23 @@ settled before returning page state.
 
 Loopback and RFC1918/ULA private ranges stay reachable by default (local dev, LAN
 services, and local MCP-over-http are normal); `PYHARNESS_BLOCK_PRIVATE_NETWORK=true`
-extends the block to them for a stricter posture. The guard is best-effort
-defense-in-depth: it resolves once here and the HTTP client resolves again at
-connect, so a deliberately racing resolver is not fully closed out — pinning the
-connection to the vetted IP is the durable fix and is not built in this version.
+extends the block to them for a stricter posture. That default is a deliberate
+posture call: pyharness is local-first (the live viewer, local dev servers, and
+local MCP-over-http all live on `127.0.0.1`), so blocking private ranges by
+default would break the common workflow and train users to disable the guard
+wholesale — while the one range that never has a legitimate target, link-local
+cloud-metadata, is blocked unconditionally regardless of the flag.
+
+DNS resolution *failure* fails **closed**: a hostname that will not resolve is
+refused rather than waved through, so a name that resolves only intermittently
+(or only for the client's second, unguarded lookup) can't slip past the guard on
+the attempt where our lookup fails. The guard is otherwise best-effort
+defense-in-depth: it resolves the name here and the HTTP client resolves it again
+at connect, so a deliberately racing resolver (DNS rebinding) is not fully closed
+out — the guard vets the IPs *it* sees, not necessarily the one the socket
+ultimately connects to. Pinning the connection to the vetted IP is the durable
+fix (a custom httpx transport); it is not built in this version and the residual
+rebinding TOCTOU is tracked in `agents/issues.md`.
 
 ## Vault — secrets the agent can name but never read
 
@@ -247,6 +263,16 @@ HTTP response `url` (a `"query"`-style secret can survive into the final url),
 `text`, or `headers`. Masking covers the secret's URL-encoded spellings too, so a
 `"query"` secret that comes back percent-encoded in the url (`p@ss` -> `p%40ss`)
 is still caught. A resolved secret never round-trips through agent-visible output.
+
+**Masking is a backstop, not the boundary.** `redact` is a literal substring
+replace over the raw value and its URL-quoted forms; it catches a verbatim or
+percent-encoded echo but *not* a value a server re-encodes before echoing it —
+base64/hex, HTML entities, JSON/unicode escapes, or a value split across chunks
+all pass through. The real containment is the two rules above (a resolved secret
+only ever travels to a vetted host, and never enters agent-visible output by
+design); masking cleans up the incidental echo and is deliberately not relied on
+as the perimeter. Widening the encodings covered would trade a few more catches
+for `***` false positives on innocent text, so it is intentionally left narrow.
 
 The sink is also where **host binding** is enforced. A vault entry can be bound
 to the host(s) it belongs to at config time (`pyharness-vault set github --host
@@ -404,8 +430,23 @@ because without it the session never starts.
 
 `pyharness/audit.py` appends every capability call to `audit.jsonl` as a hash
 chain: each entry stores `hash = sha256(prev_hash + entry)` and a `prev` pointer.
-Any later edit, deletion, or reordering breaks the chain, so the log is
-verifiable — which matters once it's shipped off-box.
+Any later edit, deletion, or reordering *within the file* breaks the chain, so
+the log is verifiable — which matters once it's shipped off-box.
+
+A bare chain from an empty genesis has two blind spots: deleting the last N
+entries (**tail truncation**) leaves a shorter chain that still verifies, and
+anyone who can rewrite the whole file can re-link a **forged chain** from
+scratch. To raise that bar each session keeps a small **anchor** sidecar
+(`audit.jsonl.anchor`) with the current entry count and head hash, written
+atomically as the chain advances; `verify_chain` cross-checks it, so a naive
+truncation (count no longer matches) or full rewrite (head no longer matches) of
+the log *alone* is caught. It is not a keyed MAC and makes no such claim: an
+attacker who can rewrite *both* the log and its anchor can still produce a
+consistent pair, and a deleted anchor falls back to the chain-only verdict (it
+can't be told apart from a legacy log that predates the anchor). A real
+cryptographic trust root needs a key store this harness doesn't have; the anchor
+is a pragmatic bar against casual tampering, not a guarantee against a determined
+one.
 
 Each call writes **two chained records**, not one: an *intent* record
 (`phase: "start"`, the action plus its summarized args) before anything runs —
