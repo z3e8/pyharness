@@ -23,9 +23,9 @@ help:
 	@echo ""
 	@echo "First run:  make setup  →  edit .env (ANTHROPIC_API_KEY)  →  make dev"
 
-## setup: create .env and install the package + dev deps (one-time)
+## setup: create .env and install the package + dev deps + the browser lane (one-time)
 .PHONY: setup
-setup: .env install
+setup: .env install browser
 	@echo ""
 	@echo "✓ setup done. Edit .env and set ANTHROPIC_API_KEY, then: make dev"
 
@@ -38,6 +38,13 @@ setup: .env install
 install:
 	uv venv
 	uv pip install -e . --group dev
+
+## browser: provision the browser lane — the pyharness[browser] extra + chromium binary
+.PHONY: browser
+browser:
+	uv pip install -e '.[browser]'
+	uv run playwright install chromium
+	@echo "✓ browser lane ready (playwright + chromium)"
 
 ## dev: run the agent with its built-in live viewer — the daily command
 .PHONY: dev
