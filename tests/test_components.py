@@ -2118,6 +2118,31 @@ def test_skills_and_packages_preview_categories(tmp_path):
     assert cat is ActionCategory.OUTWARD and "requests" in summary
 
 
+def test_packages_refuses_to_self_install(tmp_path):
+    """Installing pyharness (or an extra of it) into the session venv can never
+    enable a host-side capability like the browser lane — the guard short-circuits
+    before pip runs and points at the host setup step."""
+    from pyharness.broker.capabilities import PackagesCapability
+    from pyharness.core.session_venv import SessionVenv
+
+    packages = PackagesCapability(SessionVenv())
+    for spec in (
+        "pyharness[browser]",
+        "pyharness",
+        "PyHarness==0.1.2",
+        "pyharness[browser]>=0.1",
+    ):
+        out = packages.install(spec)
+        assert "make browser" in out
+        assert "refusing to install pyharness" in out
+    # A normal package is not caught by the guard (it falls through to the
+    # out-of-process check, since no session venv is active here).
+    assert (
+        packages.install("requests")
+        == "package installation requires out-of-process mode"
+    )
+
+
 def test_broker_records_category_in_audit(tmp_path):
     import json
 

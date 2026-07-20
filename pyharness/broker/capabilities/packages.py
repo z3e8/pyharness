@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 
 from ...core.session_venv import SessionVenv
@@ -23,6 +24,23 @@ class PackagesCapability:
         return ActionCategory.OUTWARD, f"pip install {package}"
 
     def install(self, package: str) -> str:
+        # Refuse to (re)install pyharness itself. A capability's own code (the
+        # browser lane, say) runs HOST-side, not in this session venv, so a
+        # self-install here can never enable it — it only pulls a second copy of
+        # the harness from PyPI onto the child's path where nothing imports it.
+        # A missing optional dependency is a host setup step; point there instead
+        # of letting the agent loop on an install that structurally cannot work.
+        if (
+            re.split(r"[\[=<>~!;\s]", package.strip(), maxsplit=1)[0].lower()
+            == "pyharness"
+        ):
+            return (
+                "refusing to install pyharness into the session: capability code "
+                "(e.g. the browser lane) runs in the host process, not this "
+                "session venv, so an in-session install cannot enable it. A "
+                "missing optional dependency is a host setup step — ask the "
+                "operator to run `make browser`, not you."
+            )
         site = self._venv.site_packages()
         if site is None:
             return "package installation requires out-of-process mode"
