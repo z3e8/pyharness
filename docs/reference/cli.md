@@ -193,7 +193,7 @@ pyharness-profiles login NAME [URL]     # headed browser; log in, press Enter to
 `login` opens a real browser window so you can log in yourself (2FA and all), then
 saves the session state. Files live under `~/.pyharness/profiles/` (override
 `PYHARNESS_PROFILES_DIR`), sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted)
-— the same passphrase as the vault. `login` needs the `pyharness[browser]` extra.
+— the same passphrase as the vault. `login` needs the browser lane provisioned (`make browser`).
 When profiles exist, `pyharness` prompts for the passphrase at startup so a session
 can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
 

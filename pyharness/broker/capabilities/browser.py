@@ -293,8 +293,11 @@ class BrowserCapability:
                 sync_api = import_module("playwright.sync_api")
             except ImportError as exc:
                 raise RuntimeError(
-                    "browser support needs the optional dependency: install "
-                    "'pyharness[browser]' and run 'playwright install chromium'"
+                    "browser support is not provisioned in this deployment. This "
+                    "is a host setup step, not something an in-session package "
+                    "install can fix (this capability runs host-side): on the "
+                    "host, run `make browser` (or `uv pip install -e '.[browser]' "
+                    "&& uv run playwright install chromium`), then restart."
                 ) from exc
             self._pw = sync_api.sync_playwright().start()
         return self._pw

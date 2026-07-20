@@ -35,7 +35,8 @@ def _capture(store: ProfileStore, name: str, url: str | None) -> None:
         from playwright.sync_api import sync_playwright
     except ImportError:
         sys.exit(
-            "profiles login needs the browser extra: install 'pyharness[browser]' and run 'playwright install chromium'"
+            "profiles login needs the browser lane: run `make browser` "
+            "(installs the pyharness[browser] extra + chromium), then retry."
         )
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=False)
