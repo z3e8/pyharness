@@ -62,6 +62,28 @@ def test_vault_entry_forms():
     assert Vault({"x": {"value": "v", "hosts": []}}).hosts("x") is None
 
 
+def test_host_binding_stored_as_url_still_matches_the_page():
+    # A binding pasted as a full URL (or host:port, or with a path) must reduce to
+    # the same bare hostname every capability derives via urlsplit(url).hostname —
+    # otherwise it can never match and the secret is unusable on its own site.
+    from pyharness.security.vault import normalize_host
+
+    assert normalize_host("https://app.capacities.io/") == "app.capacities.io"
+    assert normalize_host("App.Capacities.IO/login") == "app.capacities.io"
+    assert normalize_host("app.capacities.io:443") == "app.capacities.io"
+    assert normalize_host("http://APP.capacities.io") == "app.capacities.io"
+    assert normalize_host("app.capacities.io") == "app.capacities.io"
+    assert normalize_host("  ") == ""
+
+    # A vault whose binding was stored as a URL resolves toward the page host.
+    v = Vault({"cap": {"value": "PW", "hosts": ["https://app.capacities.io/"]}})
+    assert v.hosts("cap") == ("app.capacities.io",)
+    sink = SecretSink(v)
+    assert sink.resolve("cap", target_host="app.capacities.io") == "PW"
+    with pytest.raises(PermissionError):
+        sink.resolve("cap", target_host="evil.example")
+
+
 def test_sink_enforces_host_binding():
     sink = SecretSink(BOUND)
     # Allowed host resolves (case-insensitive), and the cleartext is masked.
@@ -149,6 +171,35 @@ def test_cli_set_host_binds_and_list_shows_it(tmp_path, monkeypatch, capsys):
     assert vault.hosts("gh") == ("api.github.com", "uploads.github.com")
     with pytest.raises(PermissionError):
         SecretSink(vault).resolve("gh", target_host="evil.example")
+
+
+def test_cli_set_host_normalizes_a_pasted_url(tmp_path, monkeypatch, capsys):
+    from pyharness.cli import vault as cli_vault
+
+    monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "secrets.enc"))
+    monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "pyharness-vault",
+            "set",
+            "cap",
+            "tok",
+            "--host",
+            "https://app.capacities.io/",
+        ],
+    )
+    cli_vault.main()
+    out = capsys.readouterr().out
+    assert "bound to app.capacities.io" in out  # stored canonical, not the URL
+    vault = Vault(file=EncryptedFile(tmp_path / "secrets.enc", "pw"))
+    assert vault.hosts("cap") == ("app.capacities.io",)
+    # A --host with no recoverable hostname is rejected, not silently unbound.
+    monkeypatch.setattr(
+        "sys.argv", ["pyharness-vault", "set", "x", "v", "--host", "https:///"]
+    )
+    with pytest.raises(SystemExit):
+        cli_vault.main()
 
 
 def test_cli_set_rejects_bad_usage(tmp_path, monkeypatch):

@@ -47,6 +47,8 @@ prompt then confirms a destination that is already known-good instead of being
 the last line of defense against a look-alike host. Matching is by exact
 hostname (case-insensitive, no wildcards — bind subdomains explicitly, same as
 [approval grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click)).
+A `--host` is canonicalized to its bare hostname, so a pasted URL
+(`--host https://api.github.com/`) binds the same as `--host api.github.com`.
 
 Bind every credential you can. A secret set without `--host` stays unbound and
 works everywhere, with the approval prompt as its only destination check. Only

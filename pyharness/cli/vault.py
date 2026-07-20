@@ -23,7 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-from ..security.vault import _DEFAULT_FILE, EncryptedFile, _entry
+from ..security.vault import _DEFAULT_FILE, EncryptedFile, _entry, normalize_host
 
 
 def _open() -> EncryptedFile:
@@ -63,7 +63,13 @@ def main() -> None:
                 host = next(it, None)
                 if not host:
                     sys.exit(usage)
-                hosts.append(host)
+                # Store the canonical bare hostname the sink compares against, so
+                # a pasted URL (`https://app.capacities.io/`) still binds to the
+                # page it is meant for. Reject input with no recoverable host.
+                normalized = normalize_host(host)
+                if not normalized:
+                    sys.exit(f"invalid --host {host!r}: no hostname")
+                hosts.append(normalized)
             else:
                 positional.append(arg)
         if not 1 <= len(positional) <= 2:

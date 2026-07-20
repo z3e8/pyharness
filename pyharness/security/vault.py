@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..util import ensure_private_dir
 
@@ -20,13 +21,33 @@ DEFAULT_ENV_PREFIX = "PYHARNESS_SECRET_"
 PASSPHRASE_ENV = "PYHARNESS_VAULT_PASSPHRASE"
 
 
+def normalize_host(raw: str) -> str:
+    """Canonicalize a host binding to the bare lowercase hostname the SecretSink
+    compares against — every capability derives its target host as
+    `urlsplit(url).hostname`, so a binding must reduce to the same form or it can
+    never match. Accepts a full URL (`https://app.capacities.io/`), a `host:port`,
+    or a bare host, so a secret bound with a pasted URL still matches its page.
+    Returns "" for input with no recoverable host (caller drops it)."""
+    text = str(raw).strip().lower()
+    if not text:
+        return ""
+    # urlsplit only fills .hostname when a `//` authority is present; add one for
+    # a bare host so `app.capacities.io` and `app.capacities.io/path` both reduce.
+    if "//" not in text:
+        text = "//" + text
+    return urlsplit(text).hostname or ""
+
+
 def _entry(raw) -> tuple[str, tuple[str, ...] | None]:
     """Unpack a stored entry. A bare string is an unbound secret (injectable
     toward any host the human approves); a `{"value": ..., "hosts": [...]}` dict
-    binds the secret to those hosts. Hosts are normalized to lowercase; an empty
-    host list folds to unbound."""
+    binds the secret to those hosts. Hosts are normalized to a bare lowercase
+    hostname (see `normalize_host`) so a binding stored as a URL still matches;
+    an empty host list folds to unbound."""
     if isinstance(raw, dict):
-        hosts = tuple(sorted({str(h).lower() for h in raw.get("hosts") or ()}))
+        hosts = tuple(
+            sorted({normalize_host(h) for h in raw.get("hosts") or ()} - {""})
+        )
         return raw["value"], hosts or None
     return raw, None
 
