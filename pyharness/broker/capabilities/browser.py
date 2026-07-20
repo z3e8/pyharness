@@ -510,40 +510,41 @@ class BrowserCapability:
         self,
         session_id: str,
         selector: str | None = None,
-        secret_name: str | None = None,
+        secret: str | None = None,
         *,
         ref: str | None = None,
     ) -> dict:
-        """Type a named vault secret into a field, targeted by a snapshot `ref`
-        (preferred) or a CSS/text `selector`. The cleartext is resolved
-        parent-side, typed into the page, and recorded so later reads mask it — it
-        never reaches agent code."""
+        """Type a vault secret into a field, targeted by a snapshot `ref`
+        (preferred) or a CSS/text `selector`. `secret` is the vault *name* of the
+        credential (what `secrets()` lists), never the cleartext: the value is
+        resolved parent-side, typed into the page, and recorded so later reads
+        mask it — it never reaches agent code."""
         session = self._session(session_id)
         # A host-bound secret is refused unless the *current page's* host matches
         # its binding — typing into a look-alike page fails before the keystroke.
-        secret = session.sink.resolve(
-            secret_name, target_host=urlsplit(session.page.url).hostname
+        cleartext = session.sink.resolve(
+            secret, target_host=urlsplit(session.page.url).hostname
         )
-        session.page.fill(self._target(session, selector, ref), secret)
+        session.page.fill(self._target(session, selector, ref), cleartext)
         return self._state(session)
 
     def fill_totp(
         self,
         session_id: str,
         selector: str | None = None,
-        secret_name: str | None = None,
+        secret: str | None = None,
         *,
         ref: str | None = None,
     ) -> dict:
-        """Type the current 2FA code derived from a named vault TOTP seed (e.g.
-        "github_totp" — `secrets()` lists what exists) into a field, targeted by a
-        snapshot `ref` (preferred) or a CSS/text `selector`. The seed is resolved
-        parent-side and the RFC 6238 code derived here at the moment of use;
-        neither the seed nor the code ever reaches agent code, and later reads
-        mask the code."""
+        """Type the current 2FA code derived from a vault TOTP seed into a field,
+        targeted by a snapshot `ref` (preferred) or a CSS/text `selector`.
+        `secret` is the vault *name* of the seed (e.g. "github_totp" — `secrets()`
+        lists what exists), never the seed itself: it is resolved parent-side and
+        the RFC 6238 code derived here at the moment of use; neither the seed nor
+        the code ever reaches agent code, and later reads mask the code."""
         session = self._session(session_id)
         seed = session.sink.resolve(
-            secret_name, target_host=urlsplit(session.page.url).hostname
+            secret, target_host=urlsplit(session.page.url).hostname
         )
         code = totp_code(seed)
         session.sink.track(

@@ -161,8 +161,11 @@ TOOLS — everything external. Anything not in the builtins list above is a tool
 web access, a browser, HTTP sessions, a read-only email inbox, package
 installation, MCP servers, and learned skills. None are in scope automatically. Find one with search_tools(),
 read its functions with describe_tool(name), load it with use_tool(name), then
-call its functions on the returned module. Each call is gated
-(policy/audit/approval) exactly as a builtin would be. Some worth knowing:
+call its functions on the returned module. The one-line summary from
+search_tools is prose, not a signature — call describe_tool(name) and use the
+exact parameter names/order it shows before the first call, rather than guessing
+from the blurb (a wrong keyword or a missed first argument just burns a turn).
+Each call is gated (policy/audit/approval) exactly as a builtin would be. Some worth knowing:
   search_tools("web")       # web -> search/fetch; http -> stateful sessions,
                             #   POST/upload, secret injection; browser -> headless
                             #   Playwright (navigate/snapshot the page for element

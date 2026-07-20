@@ -42,10 +42,10 @@ b = use_tool("browser")
 sid = b.open_browser()
 b.goto(sid, "https://www.linkedin.com/login")
 b.snapshot(sid)                                 # see the fields
-b.fill_secret(sid, ref="e5", secret_name="linkedin_email")
-b.fill_secret(sid, ref="e6", secret_name="linkedin_password")
+b.fill_secret(sid, ref="e5", secret="linkedin_email")
+b.fill_secret(sid, ref="e6", secret="linkedin_password")
 b.click(sid, ref="e7")                          # sign in
-b.fill_totp(sid, ref="e9", secret_name="linkedin_totp")  # 2FA, if asked
+b.fill_totp(sid, ref="e9", secret="linkedin_totp")  # 2FA, if asked
 b.save_profile(sid, "linkedin")                 # approval prompt; cookies encrypted
 ```
 

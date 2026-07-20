@@ -99,7 +99,7 @@ pyharness-vault set github_totp     # paste the base32 seed (hidden)
 ```
 
 At a login's 2FA step the agent calls `browser.fill_totp(sid, ref="e5",
-secret_name="github_totp")`: the seed is resolved parent-side, the current
+secret="github_totp")`: the seed is resolved parent-side, the current
 6-digit code derived there (RFC 6238, stdlib), and typed into the field.
 Neither the seed nor the code ever reaches agent code, and both are masked out
 of later page reads. `fill_totp` prompts for approval every time — releasing a

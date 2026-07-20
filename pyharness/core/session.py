@@ -436,7 +436,7 @@ class Session:
             ),
             (
                 self.browser,
-                "Drive a headless browser: navigate, snapshot the page (element refs), click/fill/select/press by ref or selector, upload, look (a screenshot the model sees), read the page. Login without seeing credentials: fill_secret types a vault secret, fill_totp types the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile).",
+                "Drive a headless browser. open_browser() returns a session_id every other function takes as its first argument: goto (navigate to a url), snapshot the page (element refs), click/fill/select_option/press by ref or selector, upload, look (a screenshot the model sees), read_text. Login without seeing credentials: fill_secret(session_id, ref=..., secret=NAME) types the vault secret named NAME, fill_totp the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile). describe_tool('browser') for exact signatures.",
                 "web",
                 (
                     "browser",
