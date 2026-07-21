@@ -9,8 +9,14 @@ import string
 
 import pytest
 
-from pyharness import Vault
+from pyharness import Budget, Policy, Vault
+from pyharness.audit import AuditLog
+from pyharness.broker import Broker
+from pyharness.broker.capabilities import SecretsCapability
+from pyharness.broker.capabilities.secrets import derive_email, entry_names
+from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
 from pyharness.security.passwords import DEFAULT_SYMBOLS, generate_password
+from pyharness.security.policy import ActionCategory
 from pyharness.security.sink import SecretSink
 from pyharness.security.vault import EncryptedFile
 
@@ -134,3 +140,145 @@ def test_from_env_attaches_backend_before_file_exists(tmp_path, monkeypatch):
     monkeypatch.delenv("PYHARNESS_VAULT_PASSPHRASE")
     with pytest.raises(RuntimeError):
         Vault.from_env().store("x", "y")
+
+
+def test_derive_email():
+    assert (
+        derive_email("a.b@example.com", "app.example.io")
+        == "a.b+app.example.io@example.com"
+    )
+    with pytest.raises(ValueError):
+        derive_email("a+tag@example.com", "h.io")  # pre-tagged base -> double tag
+    for bad in ("not-an-address", "@example.com", "a@", "a@b@c"):
+        with pytest.raises(ValueError):
+            derive_email(bad, "h.io")
+
+
+def test_entry_names_slug_survives_env_fallback(monkeypatch):
+    assert entry_names("app.example.com") == (
+        "app_example_com_email",
+        "app_example_com_password",
+    )
+    # The slug round-trips through the PYHARNESS_SECRET_<NAME> env mapping.
+    monkeypatch.setenv("PYHARNESS_SECRET_MY_SITE_COM_PASSWORD", "v")
+    _, password_name = entry_names("my-site.com")
+    assert Vault().get(password_name) == "v"
+
+
+def _capability(tmp_path, email="me@example.com"):
+    vault = _file_vault(tmp_path)
+    return SecretsCapability(vault, identity_email=email), vault
+
+
+def test_create_login_mints_host_bound_pair(tmp_path):
+    cap, vault = _capability(tmp_path)
+    result = cap.create_login("https://app.example.com/signup")
+    assert result == {
+        "host": "app.example.com",
+        "email": "me+app.example.com@example.com",
+        "email_secret": "app_example_com_email",
+        "password_secret": "app_example_com_password",
+        "created": True,
+        "password_length": 20,
+    }
+    # Both entries stored, bound to the site's host; the password is strong and
+    # only reachable parent-side.
+    assert vault.get("app_example_com_email") == result["email"]
+    assert vault.hosts("app_example_com_email") == ("app.example.com",)
+    assert vault.hosts("app_example_com_password") == ("app.example.com",)
+    password = vault.get("app_example_com_password")
+    assert len(password) == 20
+    assert password not in repr(result)
+    # The stored password resolves toward its own host and nowhere else.
+    sink = SecretSink(vault)
+    assert (
+        sink.resolve("app_example_com_password", target_host="app.example.com")
+        == password
+    )
+    with pytest.raises(PermissionError):
+        sink.resolve(
+            "app_example_com_password", target_host="app.example.com.evil.example"
+        )
+    # And the sink now masks it out of anything read back.
+    assert password not in sink.redact(f"the page echoed {password}")
+    # The agent-facing listing shows the new names.
+    assert set(cap.list_names()) == {
+        "app_example_com_email",
+        "app_example_com_password",
+    }
+
+
+def test_create_login_is_idempotent_and_never_overwrites(tmp_path):
+    cap, vault = _capability(tmp_path)
+    first = cap.create_login("app.example.com", length=14)
+    password = vault.get("app_example_com_password")
+    again = cap.create_login("app.example.com")
+    assert again == {**first, "created": False, "password_length": 14}
+    assert vault.get("app_example_com_password") == password  # unchanged
+
+
+def test_create_login_rejects_partial_state_and_bad_setup(tmp_path):
+    cap, vault = _capability(tmp_path)
+    vault.store("app_example_com_email", "stale@example.com")
+    with pytest.raises(RuntimeError, match="app_example_com_email"):
+        cap.create_login("app.example.com")
+    with pytest.raises(ValueError):
+        cap.create_login("https:///")  # no hostname
+    with pytest.raises(ValueError):
+        cap.create_login("ok.example.com", length=8)  # below the floor
+    no_email, _ = _capability(tmp_path, email=None)
+    with pytest.raises(RuntimeError, match="PYHARNESS_IDENTITY_EMAIL"):
+        no_email.create_login("ok.example.com")
+    no_backend = SecretsCapability(Vault(), identity_email="me@example.com")
+    with pytest.raises(RuntimeError, match="PYHARNESS_VAULT_PASSPHRASE"):
+        no_backend.create_login("ok.example.com")
+
+
+class _Approver:
+    def __init__(self, outcome=ApprovalOutcome.ONCE):
+        self.outcome = outcome
+        self.requests = []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        return self.outcome
+
+
+def test_create_login_gating_through_broker(tmp_path):
+    approver = _Approver()
+    broker = Broker(
+        Policy(require_approval={"vault.create_login"}),
+        AuditLog(tmp_path / "audit.jsonl"),
+        Budget(),
+        approver=approver,
+    )
+    cap, vault = _capability(tmp_path)
+    broker.register(cap)
+    result = broker.call("vault", "create_login", "app.example.com")
+    assert result["created"] is True
+    (request,) = approver.requests
+    assert request.category is ActionCategory.LOCAL
+    # Never grant-covered: minting an identity prompts anew for every site.
+    assert request.scope is None
+    for expected in (
+        "app.example.com",
+        "me+app.example.com@example.com",
+        "app_example_com_email",
+        "app_example_com_password",
+    ):
+        assert expected in request.summary
+    # The reuse path announces itself in the prompt.
+    _, summary = cap.preview("create_login", ("app.example.com",), {})
+    assert summary.startswith("reuse")
+    # A denial writes nothing.
+    denied = Broker(
+        Policy(require_approval={"vault.create_login"}),
+        AuditLog(tmp_path / "audit2.jsonl"),
+        Budget(),
+        approver=_Approver(ApprovalOutcome.DENY),
+    )
+    cap2, vault2 = _capability(tmp_path / "second")
+    denied.register(cap2)
+    with pytest.raises(PermissionDenied):
+        denied.call("vault", "create_login", "app.example.com")
+    assert vault2.names() == []

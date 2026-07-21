@@ -123,6 +123,7 @@ See [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md) and
 | Signature | Returns |
 |-----------|---------|
 | `secrets() -> list[str]` | names of secrets you may reference — **never** the values |
+| `create_login(site, length=20, symbols=True) -> dict` | mint a signup identity for a site — **requires approval, per site (never grant-covered)**. Derives a per-site email from `PYHARNESS_IDENTITY_EMAIL` (`local+<host>@domain`) and generates a password parent-side, storing both in the vault bound to the site's host. Returns `{host, email, email_secret, password_secret, created, password_length}` — the email in clear (type it with `fill`), the password only as a vault name for `fill_secret`; its value is never obtainable. `length` (12–64, floor enforced) and `symbols` (`True`/`False`/a string of allowed punctuation) fit site password policies. Existing entries are never overwritten: a repeat call returns the same names with `created=False` |
 
 See [Use the secrets vault](../how-to/use-the-vault.md).
 

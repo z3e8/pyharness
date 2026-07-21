@@ -52,6 +52,11 @@ import them. This is the complete list; nothing else is callable by bare name.
     search(pattern, path=".")
   Credentials:
     secrets() -> list[str]   # names of secrets you may reference (never the values)
+    create_login(site, length=20, symbols=True) -> dict
+        # mint a signup identity for a site: returns the per-site email to type
+        # with fill() and the vault names of the new email/password entries. The
+        # password exists only as a name for fill_secret(); its value is not
+        # obtainable. Needs human approval per site.
   Delegation — LLM calls as functions; digest data without reading it yourself:
     llm(prompt, tier=None, system=None, context=None, max_tokens=None) -> str
         # one completion, no tools. tier is "smart"|"mid"|"cheap"; defaults to

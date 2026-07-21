@@ -143,9 +143,9 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   fixed class-name map plus that target — no page text reaches it.
 - **IRREVERSIBLE is never covered and never mints.** A `DELETE` re-prompts every
   time, even on a host you granted POSTs to; the ledger is consulted only for
-  non-IRREVERSIBLE calls. `fill_secret` / `fill_totp` (credential release) and
-  the secret-gated `look` are likewise excluded — their `scope()` returns
-  `None`, so they always ask.
+  non-IRREVERSIBLE calls. `fill_secret` / `fill_totp` (credential release),
+  `create_login` (identity minting), and the secret-gated `look` are likewise
+  excluded — their `scope()` returns `None`, so they always ask.
 - **Exact match, no wildcards.** A grant on `boards.greenhouse.com` does not cover
   `api.greenhouse.com`; there is no "all hosts" or "all actions" scope. If the
   page navigates to another host, subsequent actions match the new host and

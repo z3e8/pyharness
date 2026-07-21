@@ -89,6 +89,48 @@ go. Approve "all … on `<host>`" once and further authenticated calls to that s
 host flow without re-prompting. See
 [the policy model](../explanation/security-and-audit.md#policy--what-may-run).
 
+## Create a new site login
+
+*Goal: "make me an account on this site" — without the agent ever holding the
+password.*
+
+Set your base address once in `.env`:
+
+```bash
+PYHARNESS_IDENTITY_EMAIL=me@example.com
+```
+
+With that (and the vault passphrase) set, the `create_login` builtin is live.
+Asked to sign up on `app.example.com`, the agent calls
+`create_login("app.example.com")`, which — after a per-site approval prompt —
+derives the plus-address `me+app.example.com@example.com`, generates a strong
+password parent-side, and stores both in the vault bound to that host
+(`app_example_com_email` / `app_example_com_password`). The agent gets back the
+email in clear (it types it with `fill` and may need to read it on confirmation
+pages) and the password *name* only:
+
+```python
+login = create_login("https://app.example.com/signup")   # prompts for approval
+b = use_tool("browser"); sid = b.open_browser()["session_id"]
+b.goto(sid, "https://app.example.com/signup"); b.snapshot(sid)
+b.fill(sid, ref="e3", value=login["email"])
+b.fill_secret(sid, ref="e4", secret=login["password_secret"])  # prompts; value never seen
+```
+
+`length` (12–64) and `symbols` (`True`, `False`, or a string of the punctuation
+the site allows) accommodate site password policies; the 12-character floor is
+enforced parent-side. A repeat call for the same site returns the same names
+with `created=False` — existing entries are never overwritten, so rotating or
+fixing a half-created login is a human act via `pyharness-vault`. To move the
+password into your password manager, reveal it at the terminal:
+
+```bash
+pyharness-vault get app_example_com_password
+```
+
+After signing up, `save_profile` keeps the logged-in state for future sessions
+(see [site profiles](site-profiles.md)).
+
 ## TOTP seeds (2FA)
 
 A TOTP seed is just a vault secret — the base32 string the site shows next to

@@ -63,6 +63,7 @@ environment, **not** committed to `.env` if sensitive.
 | `PYHARNESS_VAULT_FILE` | `~/.pyharness/secrets.enc` | Path to the encrypted file. |
 | `PYHARNESS_SECRET_<NAME>` | — | An env-backed secret the agent can reference as `<name>` (lowercased). |
 | `PYHARNESS_PROFILES_DIR` | `~/.pyharness/profiles` | Directory holding encrypted browser login profiles (`<name>.enc`), sealed with `PYHARNESS_VAULT_PASSPHRASE`. See [site profiles](../how-to/site-profiles.md). |
+| `PYHARNESS_IDENTITY_EMAIL` | unset (disabled) | Your base email address, enabling the `create_login` builtin: the agent can mint a new site account under the per-site plus-address `local+<host>@domain` with a generated, host-bound password. Plain config, not a secret (the address is returned to the agent in clear); the password never reaches agent code. Needs `PYHARNESS_VAULT_PASSPHRASE` set so entries can be stored. |
 
 ## LLM transport
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -272,6 +273,9 @@ class Session:
                 *MUTATING_BROWSER_ACTIONS,
                 # Persisting a login writes a standing credential — sign off once.
                 "browser.save_profile",
+                # Minting a new identity + standing credential — sign off per
+                # site (never grant-covered; see SecretsCapability.scope).
+                "vault.create_login",
             },
             approve_if=[
                 _is_mutating_http,
@@ -370,7 +374,14 @@ class Session:
                 )
             )
         if self._has("secrets"):
-            core_caps.append(SecretsCapability(self.vault))
+            # The identity email stays a parent-side config: the capability runs
+            # in the parent, so it is deliberately NOT on the child env allowlist.
+            core_caps.append(
+                SecretsCapability(
+                    self.vault,
+                    identity_email=os.environ.get("PYHARNESS_IDENTITY_EMAIL"),
+                )
+            )
         if self._has("skills"):
             # Skill authorship/outcomes land in the trace (not the display stream)
             # so the session index can attribute skill uses to sessions.
