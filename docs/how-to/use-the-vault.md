@@ -23,6 +23,7 @@ Resolved in this order, first hit wins:
 pyharness-vault set github          # prompts for the value (hidden)
 pyharness-vault set github ghp_xxx  # or pass it inline
 pyharness-vault list                # names and host bindings — never values
+pyharness-vault get github          # print the VALUE — human use only (pipe to pbcopy)
 pyharness-vault rm github
 ```
 

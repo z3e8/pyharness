@@ -120,6 +120,8 @@ pyharness-vault set NAME [VALUE] [--host HOST ...]
                                    # value prompted (hidden) if omitted; each
                                    # --host binds injection to that host only
 pyharness-vault list               # names and host bindings — never values
+pyharness-vault get NAME           # print the VALUE — human use only, e.g. to move
+                                   # a generated password into your password manager
 pyharness-vault rm NAME
 ```
 

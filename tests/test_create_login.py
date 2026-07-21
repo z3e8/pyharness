@@ -100,6 +100,28 @@ def test_vault_store_updates_read_cache(tmp_path):
     assert SecretSink(vault).resolve("new", target_host="example.com") == "v"
 
 
+def test_cli_get_reveals_value_human_only(tmp_path, monkeypatch, capsys):
+    from pyharness.cli import vault as cli_vault
+
+    monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "secrets.enc"))
+    monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")
+    monkeypatch.setattr(
+        "sys.argv", ["pyharness-vault", "set", "gh", "tok", "--host", "github.com"]
+    )
+    cli_vault.main()
+    capsys.readouterr()
+    monkeypatch.setattr("sys.argv", ["pyharness-vault", "get", "gh"])
+    cli_vault.main()
+    # Value alone on stdout (unwrapped from the hosts dict) so it pipes cleanly.
+    assert capsys.readouterr().out == "tok\n"
+    monkeypatch.setattr("sys.argv", ["pyharness-vault", "get", "missing"])
+    with pytest.raises(SystemExit, match="no secret named"):
+        cli_vault.main()
+    monkeypatch.setattr("sys.argv", ["pyharness-vault", "get"])
+    with pytest.raises(SystemExit, match="usage"):
+        cli_vault.main()
+
+
 def test_from_env_attaches_backend_before_file_exists(tmp_path, monkeypatch):
     monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "secrets.enc"))
     monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "pw")

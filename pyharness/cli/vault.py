@@ -4,6 +4,9 @@
                                        # value prompted (hidden) if omitted;
                                        # each --host binds injection to that host
     pyharness-vault list               # names and host bindings — never values
+    pyharness-vault get NAME           # print the VALUE — human use only, e.g. to
+                                       # move a generated password into your
+                                       # password manager (pipe to pbcopy)
     pyharness-vault rm NAME
 
 A secret set with `--host` (repeatable) can only ever be injected toward those
@@ -36,7 +39,7 @@ def _open() -> EncryptedFile:
 
 def main() -> None:
     args = sys.argv[1:]
-    if not args or args[0] not in ("set", "list", "rm"):
+    if not args or args[0] not in ("set", "list", "get", "rm"):
         sys.exit(__doc__)
     cmd, rest = args[0], args[1:]
     vault = _open()
@@ -53,7 +56,17 @@ def main() -> None:
 
     secrets = vault.load() if vault.path.exists() else {}
 
-    if cmd == "set":
+    if cmd == "get":
+        # Reveals cleartext at the terminal — human-only by construction: it
+        # needs the passphrase, which is scrubbed from every agent-reachable
+        # environment. Value alone on stdout so it pipes into pbcopy.
+        if not rest:
+            sys.exit("usage: pyharness-vault get NAME")
+        name = rest[0]
+        if name not in secrets:
+            sys.exit(f"no secret named {name!r}")
+        print(_entry(secrets[name])[0])
+    elif cmd == "set":
         usage = "usage: pyharness-vault set NAME [VALUE] [--host HOST ...]"
         hosts: list[str] = []
         positional: list[str] = []
