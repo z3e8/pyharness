@@ -156,12 +156,14 @@ class Vault:
 
     @classmethod
     def from_env(cls, *, env_prefix: str = DEFAULT_ENV_PREFIX) -> Vault:
-        """Build the default vault. Attaches the encrypted-file backend only when
-        both a passphrase (PYHARNESS_VAULT_PASSPHRASE) and the file are present,
-        so non-interactive and test use fall back to dict + env transparently."""
+        """Build the default vault. Attaches the encrypted-file backend whenever
+        a passphrase (PYHARNESS_VAULT_PASSPHRASE) is set — the file itself need
+        not exist yet: reads of a missing file yield no secrets, and the first
+        `store` creates it (so `create_login` works before any `pyharness-vault
+        set`). Without a passphrase, dict + env only."""
         passphrase = os.environ.get(PASSPHRASE_ENV)
         path = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
-        file = EncryptedFile(path, passphrase) if passphrase and path.exists() else None
+        file = EncryptedFile(path, passphrase) if passphrase else None
         return cls(env_prefix=env_prefix, file=file)
 
     def _file_secrets(self) -> dict[str, str]:
@@ -200,3 +202,40 @@ class Vault:
                 names.add(key[len(self._env_prefix) :].lower())
         names.update(self._file_secrets())
         return sorted(names)
+
+    def store(
+        self, name: str, value: str, *, hosts: tuple[str, ...] | None = None
+    ) -> None:
+        """Write one entry to the encrypted-file backend. Refuses to overwrite a
+        name resolvable from ANY backend — rotation is a human act (the
+        `pyharness-vault` CLI); nothing agent-reachable can replace a credential."""
+        self.store_many({name: (value, hosts)})
+
+    def store_many(self, items: dict[str, tuple[str, tuple[str, ...] | None]]) -> None:
+        """Write several entries in one load/save cycle (`create_login` stores an
+        email+password pair this way, so a crash cannot leave half a login).
+        Same overwrite refusal as `store`; not exposed to agent code — callers
+        are parent-side capabilities and tests only.
+
+        Loads fresh from disk (not the read cache) before mutating, so a
+        `pyharness-vault set` done mid-session in another terminal is not
+        clobbered; the cache is then updated so already-built `SecretSink`s
+        resolve the new names immediately."""
+        if self._file is None:
+            raise RuntimeError(
+                "the vault file is not available — set PYHARNESS_VAULT_PASSPHRASE "
+                "(and optionally PYHARNESS_VAULT_FILE) so new credentials can be stored"
+            )
+        existing = set(self.names())
+        for name in items:
+            if name in existing:
+                raise ValueError(
+                    f"secret {name!r} already exists — refusing to overwrite; "
+                    "manage it with pyharness-vault"
+                )
+        entries = self._file.load()
+        for name, (value, hosts) in items.items():
+            bound = tuple(sorted({normalize_host(h) for h in hosts or ()} - {""}))
+            entries[name] = {"value": value, "hosts": list(bound)} if bound else value
+        self._file.save(entries)
+        self._file_cache = entries
