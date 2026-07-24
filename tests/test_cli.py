@@ -114,6 +114,28 @@ def test_headless_approver_denies_by_default_and_never_grants():
     assert _headless_approver(True)(request=None) is ApprovalOutcome.ONCE
 
 
+def test_drain_stdin_is_safe_without_a_tty():
+    # Under pytest stdin is redirected, not a tty; draining must be a harmless
+    # no-op rather than raising on the missing terminal.
+    from pyharness.cli.main import _drain_stdin
+
+    _drain_stdin()
+
+
+def test_ask_drains_the_buffer_before_reading_the_answer(monkeypatch):
+    # The security fix: a pasted multi-line task leaves lines buffered in stdin,
+    # and without draining the approval input() consumes one as the answer. _ask
+    # must clear the buffer *before* reading, so only a post-prompt keystroke can
+    # answer.
+    from pyharness.cli import main as cli
+
+    order = []
+    monkeypatch.setattr(cli, "_drain_stdin", lambda: order.append("drain"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": order.append("read") or "y")
+    assert cli._ask("allow? ") == "y"
+    assert order == ["drain", "read"]
+
+
 def _run_kwargs(tmp_path):
     """Hermetic Session overrides: no real index DB, skills dir, or MCP config."""
     return dict(

@@ -129,6 +129,29 @@ _GRANT_CLASS_LABEL = {
 }
 
 
+def _drain_stdin() -> None:
+    """Discard any input buffered before an approval prompt is shown. A
+    consequential approval must be answered by a keystroke made *after* the
+    question appears — never by a line the human typed earlier. A pasted
+    multi-line task leaves its trailing lines in the stdin buffer, and the next
+    input() would otherwise consume one as the answer (never "y", so a silent
+    deny). No-op when stdin isn't a TTY or the platform lacks termios."""
+    try:
+        import termios
+
+        if sys.stdin.isatty():
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (ImportError, OSError, ValueError):
+        pass
+
+
+def _ask(prompt: str) -> str:
+    """input() for an approval answer, with the stdin buffer drained first so
+    pre-typed or pasted input can't auto-answer a security prompt."""
+    _drain_stdin()
+    return input(prompt)
+
+
 def _reflect_enabled(env: Mapping[str, str]) -> bool:
     """Post-session reflection is opt-in: only an explicit truthy
     PYHARNESS_REFLECT runs the LLM pass at exit."""
@@ -157,7 +180,7 @@ def _approve(request: ApprovalRequest) -> ApprovalOutcome:
         )
         return (
             ApprovalOutcome.ONCE
-            if input(f"{note}  allow? [y/N] ").strip().lower() == "y"
+            if _ask(f"{note}  allow? [y/N] ").strip().lower() == "y"
             else ApprovalOutcome.DENY
         )
     label = _GRANT_CLASS_LABEL.get(
@@ -166,7 +189,7 @@ def _approve(request: ApprovalRequest) -> ApprovalOutcome:
     print(
         f"  [y] this once  [a] all {label} on {request.scope.target} this session  [N] no"
     )
-    answer = input("  allow? [y/a/N] ").strip().lower()
+    answer = _ask("  allow? [y/a/N] ").strip().lower()
     if answer == "a":
         return ApprovalOutcome.GRANT
     if answer == "y":
