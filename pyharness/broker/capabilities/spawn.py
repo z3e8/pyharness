@@ -6,11 +6,18 @@ from concurrent.futures import Future
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass, field
 
+from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 
 DEFAULT_TOOLS = ("web", "http")
 DEFAULT_MAX_STEPS = 15
 DEFAULT_TIER = "mid"
+
+# Sentinel target for the session-wide spawn grant. Spawns have no host to scope
+# to, so a grant covers every spawn for the rest of the session — approving the
+# fan-out of one report once, not each child. Harness-derived constant (never
+# agent- or page-supplied), so GrantScope's exact-match rule is safe.
+_SPAWN_GRANT_TARGET = "session"
 
 
 class SpawnLimitExceeded(Exception):
@@ -108,6 +115,16 @@ class SpawnCapability:
             f"spawn sub-session [tools: {', '.join(tools)}{host_part}; "
             f"budget {budget_part}; ≤{steps} steps] — {brief}",
         )
+
+    def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
+        """Grant key for a spawn approval: action-class "spawn" on a fixed
+        session-wide target, so approving with [a] covers every remaining spawn
+        this session (a report's whole fan-out) instead of re-prompting per
+        child. Only the gated `spawn` op is grantable; `wait`/`spawn_status`
+        aren't gated so never reach here."""
+        if op != "spawn":
+            return None
+        return GrantScope("spawn", _SPAWN_GRANT_TARGET)
 
     def _reserve(self) -> None:
         with self._lock:

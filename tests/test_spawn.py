@@ -228,6 +228,42 @@ def test_unknown_spawn_tool_rejected(tmp_path):
         parent.close()
 
 
+def test_spawn_scope_is_session_wide_and_only_for_spawn():
+    from pyharness.broker.capabilities.spawn import SpawnCapability
+
+    cap = SpawnCapability(start_child=lambda *a, **k: None)
+    scope = cap.scope("spawn", ("task",), {})
+    assert scope is not None
+    assert scope.action_class == "spawn" and scope.target == "session"
+    # wait/spawn_status aren't gated, so they never mint a grant key.
+    assert cap.scope("wait", (), {}) is None
+    assert cap.scope("spawn_status", (), {}) is None
+
+
+def test_spawn_grant_covers_later_spawns_without_reprompting(tmp_path):
+    """Approving one spawn with [a] (GRANT) mints a session-wide grant, so the
+    rest of a report's fan-out proceeds without prompting the human again."""
+    from pyharness.broker.dispatch import ApprovalOutcome
+
+    prompted = []
+
+    def approver(req):
+        prompted.append(req.action)
+        return ApprovalOutcome.GRANT
+
+    # Two plain-text completions: each child answers in one step and finishes.
+    parent = _session(
+        tmp_path, ScriptedLLM([_text("a"), _text("b")]), approver=approver
+    )
+    try:
+        parent.broker.call("spawn", "spawn", "one", tools=("web",))
+        parent.broker.call("spawn", "spawn", "two", tools=("web",))
+    finally:
+        parent.close()
+    # Only the first spawn reached the human; the grant covered the second.
+    assert prompted == ["spawn.spawn"]
+
+
 def test_failed_child_becomes_data(tmp_path):
     llm = ScriptedLLM([])  # the child's first completion raises -> child errors
     parent = _session(tmp_path, llm, approver=lambda req: True)

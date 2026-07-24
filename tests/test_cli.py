@@ -136,6 +136,39 @@ def test_ask_drains_the_buffer_before_reading_the_answer(monkeypatch):
     assert order == ["drain", "read"]
 
 
+def test_grant_offer_reads_naturally_for_each_scope():
+    from pyharness.cli.main import _grant_offer
+    from pyharness.security.grants import GrantScope
+
+    assert (
+        _grant_offer(GrantScope("spawn", "session"))
+        == "all sub-agent spawns this session"
+    )
+    assert (
+        _grant_offer(GrantScope("http", "api.example.com"))
+        == "all state-changing HTTP requests on api.example.com this session"
+    )
+
+
+def test_approve_spawn_offers_and_honors_session_grant(monkeypatch, capsys):
+    from pyharness.broker.dispatch import ApprovalRequest
+    from pyharness.cli.main import _approve
+    from pyharness.security.grants import GrantScope
+    from pyharness.security.policy import ActionCategory
+
+    req = ApprovalRequest(
+        "spawn.spawn",
+        ActionCategory.OUTWARD,
+        "spawn sub-session [tools: web; budget default slice; ≤15 steps] — research X",
+        (),
+        {},
+        GrantScope("spawn", "session"),
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt="": "a")
+    assert _approve(req) is ApprovalOutcome.GRANT
+    assert "all sub-agent spawns this session" in capsys.readouterr().out
+
+
 def _run_kwargs(tmp_path):
     """Hermetic Session overrides: no real index DB, skills dir, or MCP config."""
     return dict(

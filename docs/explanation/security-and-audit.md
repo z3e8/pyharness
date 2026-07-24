@@ -139,8 +139,11 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
   `preview()`) yields the key from the structured call: the host from the request
   `url` or from Playwright's own `page.url`, or — for MCP calls — the server's
   registry name (`("mcp", "github")`), so one grant covers that server's
-  non-destructive tools for the session. The `[a]` label is rendered from a
-  fixed class-name map plus that target — no page text reaches it.
+  non-destructive tools for the session. A sub-agent has no host, so `spawn`
+  yields a fixed session-wide key `("spawn", "session")` and one `[a]` covers a
+  whole report's fan-out (`[a] all sub-agent spawns this session`) instead of
+  re-prompting per child. The `[a]` label is rendered from a fixed class-name
+  map plus that target — no page text reaches it.
 - **IRREVERSIBLE is never covered and never mints.** A `DELETE` re-prompts every
   time, even on a host you granted POSTs to; the ledger is consulted only for
   non-IRREVERSIBLE calls. `fill_secret` / `fill_totp` (credential release),
@@ -149,7 +152,9 @@ auto-approves the call. The mechanics and the invariants that keep it safe:
 - **Exact match, no wildcards.** A grant on `boards.greenhouse.com` does not cover
   `api.greenhouse.com`; there is no "all hosts" or "all actions" scope. If the
   page navigates to another host, subsequent actions match the new host and
-  re-prompt.
+  re-prompt. The `spawn` grant is still exact-match — on the fixed target
+  `"session"` — but because every spawn shares that one key it is deliberately
+  session-wide, the only non-host scope.
 - **Grants never widen policy.** They short-circuit only the *prompt*, never the
   decision — a `DENY` still denies, and `approve_if` predicates still run.
 - **Issuance and use are audited in the hash chain.** Issuance rides the

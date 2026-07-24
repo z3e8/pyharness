@@ -126,6 +126,7 @@ _GRANT_CLASS_LABEL = {
     "browser": "state-changing browser actions",
     "http": "state-changing HTTP requests",
     "mcp": "non-destructive MCP tool calls",
+    "spawn": "sub-agent spawns",
 }
 
 
@@ -150,6 +151,16 @@ def _ask(prompt: str) -> str:
     pre-typed or pasted input can't auto-answer a security prompt."""
     _drain_stdin()
     return input(prompt)
+
+
+def _grant_offer(scope) -> str:
+    """The '[a] …' line for a grantable approval. Host-scoped classes read
+    'all X on <host>'; the session-wide spawn grant has no host, so it reads
+    'all sub-agent spawns this session'."""
+    label = _GRANT_CLASS_LABEL.get(scope.action_class, scope.action_class)
+    if scope.action_class == "spawn":
+        return f"all {label} this session"
+    return f"all {label} on {scope.target} this session"
 
 
 def _reflect_enabled(env: Mapping[str, str]) -> bool:
@@ -183,12 +194,7 @@ def _approve(request: ApprovalRequest) -> ApprovalOutcome:
             if _ask(f"{note}  allow? [y/N] ").strip().lower() == "y"
             else ApprovalOutcome.DENY
         )
-    label = _GRANT_CLASS_LABEL.get(
-        request.scope.action_class, request.scope.action_class
-    )
-    print(
-        f"  [y] this once  [a] all {label} on {request.scope.target} this session  [N] no"
-    )
+    print(f"  [y] this once  [a] {_grant_offer(request.scope)}  [N] no")
     answer = _ask("  allow? [y/a/N] ").strip().lower()
     if answer == "a":
         return ApprovalOutcome.GRANT
