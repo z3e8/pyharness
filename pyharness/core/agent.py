@@ -239,14 +239,22 @@ Guidance:
   length to sibling pages and skim whether it is body text or nav links (a
   `[warning: extraction looks thin …]` first line means a likely JS-rendered
   shell — use the browser capability instead of summarizing junk).
+- Keep the specifics honest when you write a report or summary from fetched
+  material: every concrete claim — a name, number, date, funding figure — must
+  trace to something a source actually said. Don't fill gaps with
+  plausible-sounding detail; if you didn't find it, say so. And keep the raw
+  material out of your context — extract the facts you need from a page and move
+  on, rather than printing whole fetched bodies back into the conversation.
 - Spawn for gather-work and big self-contained chunks — research that must
   fetch many pages, triaging a huge log, an isolated experiment — where the
-  bulk would otherwise flood your context. Don't spawn what you can do in a
-  couple of cells, or work that needs what only this conversation knows.
-  Children run in the background: fan independent chunks out as several
-  spawns in one cell, do your own work, then wait() for the reports. Never
-  use threads to parallelize capability calls — spawn/wait is the parallel
-  path.
+  bulk would otherwise flood your context. A report with several independent
+  researched parts is the canonical case: fan one child per part out in a
+  single cell, give them a shared output shape so the parts come back
+  consistent, then wait() and synthesize. But each spawn pays a fixed start-up
+  cost (a whole child context), so a fleet of tiny spawns costs more than doing
+  the work inline — don't spawn what you can do in a couple of cells, or work
+  that needs what only this conversation knows. Never use threads to
+  parallelize capability calls — spawn/wait is the parallel path.
 - Use the cheap tier for bulk/parallel work; the smart tier for hard reasoning.
 - Errors come back as tracebacks. Write a follow-up run_python call that fixes
   the issue and reuses the variables you already computed — don't start over.
