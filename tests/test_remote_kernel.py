@@ -515,6 +515,14 @@ def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
     entered.wait(timeout=5)
     time.sleep(0.3)  # let the child enter the cell
     kernel.close()
+    # Wait for the reap to land rather than asserting on the wall clock. The
+    # patched 0.5s above exists to keep this test fast, not to assert a latency
+    # bound, and on a loaded machine SIGKILL delivery plus waitpid can overrun it
+    # (observed as an intermittent failure on Linux full-suite runs). The
+    # property under test is unweakened: if close() failed to escalate to
+    # SIGKILL, the child sits in its 60s sleep and this join times out, so the
+    # assertions below still fire.
+    proc.join(timeout=10)
     assert not proc.is_alive()
     assert proc.exitcode is not None  # reaped, not a zombie
     t.join(timeout=5)
