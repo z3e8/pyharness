@@ -65,8 +65,8 @@ _UNSANDBOXED_WARNED = False
 
 
 def check_unsandboxed_platform() -> None:
-    """The loud opt-in gate for platforms with no OS sandbox (today: everything
-    but macOS). There, agent-authored code would run with the parent user's full
+    """The loud opt-in gate for platforms with no OS sandbox (today: Windows, and
+    Linux below the Landlock floor). There, agent code would run with the full
     filesystem and network reach — only the process boundary, the minimal
     environment, and (POSIX) rlimits remain — so by default pyharness refuses to
     start a kernel rather than run LLM-authored code unconfined. Setting
@@ -184,6 +184,67 @@ def _seatbelt_profile(workspace: Path | None) -> str:
         lines.append(f"  (literal {_sbpl_quote(str(_sys_path_entry()))})")
         lines.append(")")
     return "\n".join(lines) + "\n"
+
+
+def _install_profile(write_roots: list[Path]) -> str:
+    """Profile for a package install. It differs from the child profile in the
+    one way it has to: **outbound network is allowed**, because pip must reach
+    the index. Everything else is the point of wrapping it at all — a package's
+    `setup.py` or build hook is arbitrary code running at install time, and here
+    it cannot read `$HOME` (`~/.ssh`, `~/.aws`, a project `.env`) or write
+    anywhere except the roots below.
+
+    `write_roots` are the venv and a dedicated scratch dir, deliberately *not*
+    the whole sandbox dir or the whole tempdir: the generated Seatbelt profiles
+    live directly in the sandbox dir, so a build hook that could write there
+    could rewrite the jail that confines the next child."""
+    lines = [
+        "(version 1)",
+        "(allow default)",
+        "(deny file-write*)",
+        '(allow file-write-data (literal "/dev/null") (regex #"^/dev/tty"))',
+    ]
+    for root in write_roots:
+        lines.append(
+            f"(allow file-write* (subpath {_sbpl_quote(str(root.resolve()))}))"
+        )
+    lines.append(f"(deny file-read-data (subpath {_sbpl_quote(str(Path.home()))}))")
+    lines.append("(allow file-read-data")
+    roots = {str(r.resolve()) for r in write_roots}
+    roots |= {
+        str(Path(sys.prefix).resolve()),
+        str(Path(sys.base_prefix).resolve()),
+        str(_package_dir()),
+    }
+    for root in sorted(roots):
+        lines.append(f"  (subpath {_sbpl_quote(root)})")
+    lines.append(f"  (literal {_sbpl_quote(str(_sys_path_entry()))})")
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def sandboxed_install_argv(
+    argv: list[str], sbdir: Path, write_roots: list[Path]
+) -> list[str] | None:
+    """Wrap a package-install command so its build hooks run confined, or None
+    where no OS sandbox exists. `packages.install` runs in the privileged parent
+    like `shell.bash`, but unlike it needs the network, so this uses the
+    install profile above rather than the child's."""
+    if macos_sandbox_supported():
+        profile = sbdir / "install.sb"
+        profile.write_text(_install_profile(write_roots))
+        return [_SANDBOX_EXEC, "-f", str(profile), *argv]
+    if linux_sandbox_supported():
+        spec = json.dumps(
+            {
+                "workspace": None,
+                "read_roots": [str(r) for r in write_roots],
+                "write_roots": [str(r) for r in write_roots],
+                "allow_network": True,
+            }
+        )
+        return [sys.executable, "-m", "pyharness.broker.remote.linux_exec", spec, *argv]
+    return None
 
 
 def make_child_executable(sbdir: Path, workspace: Path | None = None) -> str | None:

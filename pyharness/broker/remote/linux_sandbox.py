@@ -212,7 +212,9 @@ def _read_roots(workspace: Path | None, extra: tuple[str, ...]) -> list[str]:
 
 
 def apply_landlock(
-    workspace: Path | None, extra_read_roots: tuple[str, ...] = ()
+    workspace: Path | None,
+    extra_read_roots: tuple[str, ...] = (),
+    extra_write_roots: tuple[str, ...] = (),
 ) -> None:
     """Install the filesystem jail: read the roots above, write only inside the
     workspace. Irrevocable and inherited across exec, so anything the child
@@ -233,6 +235,7 @@ def apply_landlock(
 
     try:
         writable = {str(workspace.resolve())} if workspace is not None else set()
+        writable |= {str(Path(p).resolve()) for p in extra_write_roots}
         for path in _WRITE_ALLOW_FILES:
             try:
                 fd = os.open(path, _O_PATH | os.O_CLOEXEC)
@@ -331,10 +334,19 @@ def apply_seccomp_network_deny() -> None:
 
 
 def apply_linux_sandbox(
-    workspace: Path | None, extra_read_roots: tuple[str, ...] = ()
+    workspace: Path | None,
+    extra_read_roots: tuple[str, ...] = (),
+    extra_write_roots: tuple[str, ...] = (),
+    *,
+    deny_network: bool = True,
 ) -> None:
     """Apply both halves. Network first: if the filesystem jail were installed
     first and the seccomp step then failed, the process would be left confined
-    but still able to reach the network — the more dangerous half-state."""
-    apply_seccomp_network_deny()
-    apply_landlock(workspace, extra_read_roots)
+    but still able to reach the network — the more dangerous half-state.
+
+    `deny_network=False` is for the one caller that legitimately needs the
+    network inside the jail (`packages.install`, which must reach the package
+    index); it keeps the filesystem half in full force."""
+    if deny_network:
+        apply_seccomp_network_deny()
+    apply_landlock(workspace, extra_read_roots, extra_write_roots)

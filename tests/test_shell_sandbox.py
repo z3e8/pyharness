@@ -91,3 +91,50 @@ def test_bash_falls_back_to_plain_run_without_os_sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox, "macos_sandbox_supported", lambda: False)
     out = ShellCapability(Workspace(tmp_path)).bash("echo hi")
     assert out.strip() == "hi"
+
+
+# --- packages.install ---------------------------------------------------------
+#
+# `packages.install` runs pip in the privileged parent, exactly like bash, so a
+# malicious package's setup.py/build hook would otherwise execute with the
+# operator's full OS reach. It gets its own profile rather than the child's,
+# because it is the one wrapped command that legitimately needs the network.
+
+
+def test_install_profile_allows_network_but_keeps_the_read_jail(tmp_path):
+    venv, scratch = tmp_path / "venv", tmp_path / "install-tmp"
+    profile = sandbox._install_profile([venv, scratch])
+    venv = venv.resolve()
+    # pip must reach the index, so unlike the child profile this one must NOT
+    # deny the network. That is the whole difference between the two.
+    assert "(deny network*)" not in profile
+    # Everything that makes wrapping worthwhile is still there.
+    assert f'(deny file-read-data (subpath "{Path.home()}"))' in profile
+    assert "(deny file-write*)" in profile
+    assert f'(allow file-write* (subpath "{venv}"))' in profile
+
+
+def test_install_cannot_write_the_sandbox_dir_that_holds_the_profiles(tmp_path):
+    # The generated child/shell profiles live directly in sbdir. If a build hook
+    # could write there it could rewrite the jail confining the next child, so
+    # only the venv and the scratch dir are writable — never sbdir itself.
+    profile = sandbox._install_profile([tmp_path / "venv", tmp_path / "install-tmp"])
+    assert f'(allow file-write* (subpath "{tmp_path.resolve()}"))' not in profile
+
+
+@requires_sandbox
+def test_install_argv_is_wrapped_in_the_install_profile(tmp_path):
+    argv = sandbox.sandboxed_install_argv(
+        ["pip", "install", "x"], tmp_path, [tmp_path / "venv"]
+    )
+    assert argv[0] == "/usr/bin/sandbox-exec" and argv[1] == "-f"
+    assert argv[3:] == ["pip", "install", "x"]
+    assert Path(argv[2]).read_text() == sandbox._install_profile([tmp_path / "venv"])
+
+
+def test_install_falls_back_to_plain_run_without_os_sandbox(tmp_path, monkeypatch):
+    # Same contract as bash: None means the caller runs unwrapped, reachable only
+    # behind the PYHARNESS_ALLOW_UNSANDBOXED opt-in.
+    monkeypatch.setattr(sandbox, "macos_sandbox_supported", lambda: False)
+    monkeypatch.setattr(sandbox, "linux_sandbox_supported", lambda: False)
+    assert sandbox.sandboxed_install_argv(["pip"], tmp_path, [tmp_path]) is None

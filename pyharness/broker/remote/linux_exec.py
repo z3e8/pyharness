@@ -34,7 +34,14 @@ def main(argv: list[str]) -> int:
         return 2
     spec = json.loads(argv[1])
     workspace = Path(spec["workspace"]) if spec.get("workspace") else None
-    apply_linux_sandbox(workspace, tuple(spec.get("read_roots", ())))
+    apply_linux_sandbox(
+        workspace,
+        tuple(spec.get("read_roots", ())),
+        tuple(spec.get("write_roots", ())),
+        # Only the package-install path sets this: pip must reach the index, so
+        # the seccomp half is dropped while the filesystem jail stays in force.
+        deny_network=not spec.get("allow_network", False),
+    )
     program = argv[2]
     os.execv(program, argv[2:])
     return 127  # unreachable: execv only returns by raising

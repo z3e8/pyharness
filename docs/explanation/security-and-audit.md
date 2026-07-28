@@ -434,6 +434,16 @@ boundary itself:
   `bash` runs parent-side and so cannot restrict itself. Where the platform has
   no OS sandbox, `bash` falls back to the scrubbed environment alone (and remains
   approval-gated).
+- **`packages.install` runs pip under its own profile.** A package's `setup.py`
+  or build hook is arbitrary code executing at install time, in the privileged
+  parent, so it is wrapped for the same reason `bash` is. Its profile differs in
+  exactly one way — **outbound network is allowed**, because pip has to reach the
+  index — while the `$HOME` read jail stays and writes are confined to the
+  session venv plus a dedicated scratch dir. Notably *not* the whole sandbox dir:
+  the generated profiles live there, so a build hook able to write it could
+  rewrite the jail confining the next child. pip is also given
+  `PIP_NO_CACHE_DIR=1` and a `TMPDIR` inside the scratch dir, since its usual
+  `$HOME` cache is on the far side of the read jail.
 - **POSIX rlimits** — no core dumps; on Linux, a process cap to blunt fork bombs
   (skipped on macOS, where the limit is per-user and would break ordinary
   `subprocess`/`fork`).
