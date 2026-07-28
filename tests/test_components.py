@@ -1061,6 +1061,47 @@ def test_http_injects_secret_into_body(tmp_path, fake_httpx):
     assert body == {"user": "me", "password": "hunter2"}
 
 
+@pytest.mark.parametrize("kind", ["json", "data"])
+def test_http_secret_injection_leaves_the_callers_body_untouched(
+    tmp_path, fake_httpx, kind
+):
+    # The vault's rule is that no capability hands agent code a secret's
+    # cleartext. The body dict belongs to the caller (agent code passed it in),
+    # so injecting into it in place would hand over the cleartext by side
+    # channel — `print(body["password"])` after the call.
+    http = HttpSessionCapability(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    body = {"user": "me"}
+    http.request(
+        None, "POST", "http://x", **{kind: body}, secret_fields={"password": "pw"}
+    )
+    assert body == {"user": "me"}  # caller's dict never saw the secret
+    sent = fake_httpx.instances[-1].calls[-1][kind]  # ...but the wire did
+    assert sent == {"user": "me", "password": "hunter2"}
+
+
+def test_http_secret_injection_stays_out_of_the_audit_log(tmp_path, fake_httpx):
+    # Dispatch re-summarizes the call's kwargs *after* the capability returns,
+    # and that record is copied into the session index. A secret injected into
+    # the caller's own body dict would therefore be logged in cleartext and stay
+    # queryable forever, so the request must not write back into those kwargs.
+    broker = _broker(tmp_path)
+    broker.register(
+        HttpSessionCapability(
+            Workspace(tmp_path / "ws"), vault=Vault({"pw": "hunter2"})
+        )
+    )
+    broker.call(
+        "http",
+        "request",
+        None,
+        "POST",
+        "http://x",
+        json={"user": "me"},
+        secret_fields={"password": "pw"},
+    )
+    assert "hunter2" not in (tmp_path / "audit.jsonl").read_text()
+
+
 def test_http_masks_injected_secret_echoed_in_response(tmp_path, monkeypatch):
     # A query-string auth secret survives into the final url, and a body secret
     # can be echoed in the response text/headers. None may round-trip to the

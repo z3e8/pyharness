@@ -246,8 +246,19 @@ class HttpSessionCapability:
             body = json if json is not None else data
             if not isinstance(body, dict):
                 raise ValueError("secret_fields requires a dict `json` or `data` body")
+            # Copy before injecting, never mutate the caller's dict: the agent
+            # passed that object in, so an in-place write would hand it the
+            # vault's cleartext directly, and dispatch re-summarizes `kwargs`
+            # after the call — putting the same cleartext in the audit log and,
+            # from there, the session index. Rebind the parameter the copy came
+            # from so `client.request` below still sends the injected body.
+            body = dict(body)
             for field, secret_name in secret_fields.items():
                 body[field] = sink.resolve(secret_name, target_host=target_host)
+            if json is not None:
+                json = body
+            else:
+                data = body
 
         built_files = None
         if files:
