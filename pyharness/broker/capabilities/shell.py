@@ -19,8 +19,8 @@ class ShellCapability:
         return {"bash": self.bash}
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """An arbitrary program is an arbitrary program — the OS sandbox (macOS
-        only) confines fs/network but not what the command *does*, and off macOS
+        """An arbitrary program is an arbitrary program — the OS sandbox confines
+        fs/network but not what the command *does*, and on an unsandboxed platform
         there is no jail at all — so class it OUTWARD and show the human the
         command line itself."""
         cmd = kwargs.get("cmd") or (args[0] if args else "?")

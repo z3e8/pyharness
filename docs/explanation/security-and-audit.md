@@ -21,8 +21,8 @@ content that would load and run in later sessions, so a human signs off at
 author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
 proposals too — reflection routes its skill writes through the same broker gate).
 `shell.bash` is approval-gated too: it runs an arbitrary program parent-side, and
-while the OS sandbox (below) jails its filesystem and network on macOS, the
-command itself is unvetted — and off macOS there is no jail at all. It also gates
+while the OS sandbox (below) jails its filesystem and network, the command itself
+is unvetted — and on a platform with no sandbox there is no jail at all. It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
 **state-changing browser actions** (`click` / `fill` / `fill_secret` /
 `fill_totp` / `select_option` / `press` / `upload`), since those act outward on the user's

@@ -260,9 +260,9 @@ class Session:
                 "skills.save_skill",
                 "skills.edit_skill",
                 "packages.install",
-                # An arbitrary program, run parent-side. The OS sandbox (macOS)
-                # jails its filesystem/network, but the command itself is
-                # unvetted — and off macOS there is no jail at all — so a human
+                # An arbitrary program, run parent-side. The OS sandbox jails its
+                # filesystem/network, but the command itself is unvetted — and on
+                # an unsandboxed platform there is no jail at all — so a human
                 # signs each one.
                 "shell.bash",
                 "tools.add_mcp_server",  # mounting a server installs code
