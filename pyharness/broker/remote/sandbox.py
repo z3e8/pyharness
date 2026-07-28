@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
+
+from .linux_sandbox import MIN_LANDLOCK_ABI, linux_sandbox_supported
 
 # OS-level confinement for the out-of-process child (design §3 / §11).
 #
@@ -22,11 +25,17 @@ from pathlib import Path
 #   2. POSIX resource limits applied inside the child to bound blast radius
 #      (no core dumps; on Linux, a cap on processes blunts fork bombs).
 #
-# Linux/container confinement (seccomp, namespaces) is not built here, so off
-# macOS there is no OS-level confinement at all (and Windows loses the rlimits
-# too). That absence is loud, not silent: `check_unsandboxed_platform` refuses
-# to start a kernel on such a platform unless PYHARNESS_ALLOW_UNSANDBOXED opts
-# in explicitly, and warns on stderr when it does. See
+# Linux enforces the same three invariants through a different mechanism —
+# Landlock for the filesystem, a seccomp-bpf filter for the network — in
+# `linux_sandbox.py`. The two backends differ in *shape*, not in what they
+# promise: macOS wraps the child's exec in a declarative profile, while Linux has
+# the child restrict itself at startup (and uses a re-exec launcher for the one
+# case, `shell.bash`, that runs parent-side and so cannot self-restrict).
+#
+# Windows has no confinement story and loses the rlimits too. That absence is
+# loud, not silent: `check_unsandboxed_platform` refuses to start a kernel on a
+# platform with no sandbox unless PYHARNESS_ALLOW_UNSANDBOXED opts in
+# explicitly, and warns on stderr when it does. See
 # docs/explanation/security-and-audit.md.
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -40,9 +49,11 @@ def macos_sandbox_supported() -> bool:
 
 def os_sandbox_supported() -> bool:
     """Whether this platform can confine agent code at the OS level — the single
-    source of truth the launch gate consults. Today only macOS Seatbelt is
-    built; a Linux path (bubblewrap/namespaces+seccomp) would extend this."""
-    return macos_sandbox_supported()
+    source of truth the launch gate consults. Two backends today: macOS Seatbelt
+    and Linux Landlock+seccomp. The predicate stays all-or-nothing on purpose; a
+    platform that can enforce only some of the three invariants reports False and
+    the gate refuses, rather than the harness claiming a partial perimeter."""
+    return macos_sandbox_supported() or linux_sandbox_supported()
 
 
 class UnsandboxedPlatformError(RuntimeError):
@@ -75,13 +86,21 @@ def check_unsandboxed_platform() -> None:
             if sys.platform == "win32"
             else ""
         )
+        if sys.platform == "linux":
+            why = (
+                " (Linux confinement needs Landlock ABI "
+                f"{MIN_LANDLOCK_ABI}+, i.e. kernel 6.2 or newer, on x86_64 or "
+                "aarch64)"
+            )
+        else:
+            why = " (confinement is built for macOS and Linux only)"
         raise UnsandboxedPlatformError(
-            "no OS sandbox is available on this platform — OS-level confinement "
-            "is only built for macOS (Seatbelt), so agent-authored code would run "
-            f"with your full user privileges: unrestricted filesystem and network "
+            "no OS sandbox is available on this platform"
+            f"{why}, so agent-authored code would run with your full user "
+            "privileges: unrestricted filesystem and network "
             f"access{windows}. Refusing to start. Set {ALLOW_UNSANDBOXED_ENV}=true "
-            "to run anyway (a loud warning is printed), or run on macOS for OS "
-            "confinement. See docs/explanation/security-and-audit.md."
+            "to run anyway (a loud warning is printed). "
+            "See docs/explanation/security-and-audit.md."
         )
     if not _UNSANDBOXED_WARNED:
         _UNSANDBOXED_WARNED = True
@@ -169,10 +188,15 @@ def _seatbelt_profile(workspace: Path | None) -> str:
 
 def make_child_executable(sbdir: Path, workspace: Path | None = None) -> str | None:
     """Return a launcher to use as the spawn executable, or None if this platform
-    has no OS sandbox. The launcher runs the real interpreter under `sandbox-exec`
+    needs no launcher. The launcher runs the real interpreter under `sandbox-exec`
     with our profile; multiprocessing's spawn args (`$@`) and the inherited IPC
     pipe pass straight through. `sbdir` holds the generated profile and launcher;
-    `workspace`, when given, scopes the write allowance and read jail to it."""
+    `workspace`, when given, scopes the write allowance and read jail to it.
+
+    Linux deliberately returns None: there the child confines *itself* in
+    `child_main` (see `linux_sandbox.apply_linux_sandbox`), which avoids putting
+    a second exec between multiprocessing and its inherited pipe fd. The window
+    before that call runs only our own bootstrap, never agent code."""
     if not macos_sandbox_supported():
         return None
     profile = sbdir / "child.sb"
@@ -196,13 +220,35 @@ def sandboxed_shell_argv(
     `sbdir` holds the generated profile; it must sit *outside* the workspace so
     a sandboxed command cannot rewrite its own jail. A None return means the
     caller falls back to a plain `shell=True` run where env scrubbing is the
-    only containment — a Linux confinement path (bubblewrap/seccomp) would plug
-    in here."""
-    if not macos_sandbox_supported():
-        return None
-    profile = sbdir / "shell.sb"
-    profile.write_text(_seatbelt_profile(workspace))
-    return [_SANDBOX_EXEC, "-f", str(profile), "/bin/sh", "-c", cmd]
+    only containment.
+
+    On Linux the same job is done by a re-exec launcher (`linux_exec`) rather
+    than a profile file, because `bash` runs parent-side and so cannot restrict
+    itself; the returned argv shape is identical either way, so callers need no
+    platform branch."""
+    if macos_sandbox_supported():
+        profile = sbdir / "shell.sb"
+        profile.write_text(_seatbelt_profile(workspace))
+        return [_SANDBOX_EXEC, "-f", str(profile), "/bin/sh", "-c", cmd]
+    if linux_sandbox_supported():
+        # The session venv lives at `sbdir/venv` (host.py), outside the
+        # workspace, so a command that runs an installed tool needs it readable.
+        spec = json.dumps(
+            {
+                "workspace": str(workspace) if workspace is not None else None,
+                "read_roots": [str(sbdir)],
+            }
+        )
+        return [
+            sys.executable,
+            "-m",
+            "pyharness.broker.remote.linux_exec",
+            spec,
+            "/bin/sh",
+            "-c",
+            cmd,
+        ]
+    return None
 
 
 def apply_resource_limits() -> None:

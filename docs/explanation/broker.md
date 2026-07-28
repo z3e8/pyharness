@@ -101,7 +101,8 @@ across every I/O site — means:
   a child that doesn't wind down promptly is killed (`SIGTERM`, then `SIGKILL`)
   and the next cell starts a fresh one.
 
-The child is confined at the OS level too (macOS Seatbelt + POSIX rlimits) — see
+The child is confined at the OS level too (macOS Seatbelt or Linux
+Landlock+seccomp, plus POSIX rlimits) — see
 [Security & audit](security-and-audit.md). The point of the boundary: the child
 has no outbound network access and can't write outside its workspace (writes
 *inside* the workspace are allowed, so `savefig`/`to_csv`-style libraries just

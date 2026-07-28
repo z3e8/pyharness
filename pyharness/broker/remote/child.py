@@ -15,6 +15,7 @@ def child_main(
     op_names: list[str],
     venv_site_packages: str | None = None,
     workdir: str | None = None,
+    self_confine: bool = False,
 ) -> None:
     """Entry point for the child process (spawned by the host).
 
@@ -45,6 +46,23 @@ def child_main(
 
         if venv_site_packages not in _sys.path:
             _sys.path.insert(0, venv_site_packages)
+    if self_confine:
+        # Linux confines the child here rather than by wrapping its exec (macOS
+        # does the latter, so it never reaches this branch). Last of the startup
+        # steps and before the first proxy exists, so no agent code has run — but
+        # after chdir and the venv sys.path splice, because both must be settled
+        # before the filesystem allowlist is computed from them.
+        #
+        # Landlock is an allowlist: a path missing from the roots below does not
+        # weaken confinement, it breaks an import at runtime. The session venv's
+        # site-packages is the one that is easy to miss — it lives under the
+        # host's sbdir, deliberately outside the workspace.
+        from pathlib import Path as _Path
+
+        from .linux_sandbox import apply_linux_sandbox
+
+        extra = (venv_site_packages,) if venv_site_packages else ()
+        apply_linux_sandbox(_Path(workdir) if workdir else None, extra)
     namespace = {op: _make_proxy(conn, op) for op in op_names}
     while True:
         try:

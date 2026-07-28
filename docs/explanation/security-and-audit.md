@@ -429,8 +429,10 @@ boundary itself:
   executes in the (unsandboxed) parent, so it is wrapped in `sandbox-exec` with
   the identical Seatbelt profile (`sandboxed_shell_argv`) rather than trusted
   with the parent's OS reach; the generated profile lives outside the workspace,
-  so a sandboxed command can't rewrite its own jail. Where the platform has no
-  OS sandbox, `bash` falls back to the scrubbed environment alone (and remains
+  so a sandboxed command can't rewrite its own jail. On Linux the same function
+  returns a launcher that applies the confinement and then `exec`s the command —
+  `bash` runs parent-side and so cannot restrict itself. Where the platform has
+  no OS sandbox, `bash` falls back to the scrubbed environment alone (and remains
   approval-gated).
 - **POSIX rlimits** — no core dumps; on Linux, a process cap to blunt fork bombs
   (skipped on macOS, where the limit is per-user and would break ordinary
@@ -441,15 +443,53 @@ effect that leaves the box goes back through the broker in the parent, while
 scratch files stay in the workspace where both the agent and the human can see
 them.
 
-### What the sandbox does not cover — non-macOS platforms
+### The Linux backend — Landlock plus seccomp
 
-Be clear-eyed about the boundary: **OS-level confinement is built for macOS
-only.** Linux confinement (bubblewrap / namespaces + seccomp, or a container)
-is a known future build-out, not a degraded mode that quietly exists today. Off
-macOS there is *no* network denial, *no* write jail, and *no* `$HOME` read jail
-— agent code would run with your user's full filesystem and network reach, kept
-honest only by the process boundary, the minimal environment, and (on POSIX)
-the rlimits above. Windows has no rlimits either.
+Linux enforces the same three invariants through different machinery
+(`broker/remote/linux_sandbox.py`):
+
+- **Landlock** (the kernel's unprivileged filesystem LSM) supplies the write jail
+  and the `$HOME` read jail — a ruleset naming the readable and writable
+  subtrees, with everything unnamed denied.
+- **A seccomp-bpf filter** denies `socket(2)` for `AF_INET`, `AF_INET6` and
+  `AF_PACKET`, which is the network denial. Landlock's own network support
+  restricts TCP bind/connect by port only and leaves UDP open, so it cannot
+  express "no outbound network"; keying on the address family covers TCP, UDP and
+  raw in one rule.
+
+Both are applied by the process to itself — no helper binary, no user
+namespaces, no root — and both are irrevocable and inherited across `exec`, so a
+subprocess the agent spawns cannot escape either. It follows that this works
+inside an ordinary container, which bubblewrap (the obvious alternative) does
+not: bubblewrap needs unprivileged user namespaces, which Docker's default
+seccomp profile blocks and which Ubuntu 24.04 LTS blocks out of the box.
+
+One consequence worth knowing, because it has no macOS analogue: the broker
+parent holds your API key and vault passphrase in its environment and runs as the
+same user, so `/proc/<parent>/environ` would ordinarily be readable by the child.
+Landlock also hooks `ptrace_access_check`, and a restricted process may not
+inspect a less-restricted one — so that read is denied, as is `PTRACE_ATTACH`
+against the parent.
+
+**The floor is Landlock ABI 3 (Linux 6.2)**, on x86-64 or arm64. ABI 3 is the
+first with `LANDLOCK_ACCESS_FS_TRUNCATE`; below it, `truncate(2)` on an
+already-open descriptor escapes the write jail, so older kernels report *no
+sandbox* rather than a jail with a hole. That covers Ubuntu 24.04 LTS and
+Debian 13, and excludes Ubuntu 22.04 and Debian 12.
+
+One structural difference to keep in mind when editing the profile: **Seatbelt is
+a denylist and Landlock is an allowlist.** The macOS profile enumerates what is
+forbidden; the Linux one must enumerate everything the child legitimately reads,
+including the per-session venv (which lives outside the workspace). Omitting a
+path there does not weaken confinement — it breaks an import at runtime.
+
+### What the sandbox does not cover — other platforms
+
+Confinement is built for macOS and Linux. **Windows has neither** — no network
+denial, no write jail, no `$HOME` read jail, and not even the rlimits above;
+agent code would run with your user's full filesystem and network reach, kept
+honest only by the process boundary and the minimal environment. The same is
+true of a Linux kernel below the ABI floor.
 
 That absence is loud, not silent. On a platform with no OS sandbox, pyharness
 **refuses to start a kernel by default**

@@ -15,6 +15,7 @@ from types import ModuleType
 from ...core.session_venv import SessionVenv
 from ...tools.registry import _public_functions
 from .child import child_main
+from .linux_sandbox import linux_sandbox_supported
 from .protocol import RemoteError, RemoteToolSpec, recv_json
 from .sandbox import check_unsandboxed_platform, make_child_executable
 
@@ -138,6 +139,9 @@ class RemoteKernel:
                 self.broker.op_names(),
                 venv_site,
                 str(workspace_dir) if workspace_dir is not None else None,
+                # macOS confines by wrapping the child's exec (`exe` above);
+                # Linux has no launcher, so the child restricts itself.
+                bool(self.sandbox) and exe is None and linux_sandbox_supported(),
             ),
             daemon=True,
         )
