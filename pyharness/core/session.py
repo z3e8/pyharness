@@ -40,6 +40,7 @@ from ..obs.trace import TraceLog
 from ..security.egress import normalize_scope_hosts
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
+from ..security.sink import SecretSink
 from ..security.vault import Vault
 from ..tools.registry import Registry
 from .agent import Agent
@@ -288,6 +289,13 @@ class Session:
             ],
         )
         self.vault = vault or Vault.from_env()
+        # One session-wide secret sink. Per-context sinks (one per HTTP request,
+        # browser session, IMAP connection) mirror every mask they absorb into
+        # it, so surfaces that outlive any single injection context — the
+        # broker's audited exception reprs, the traceback in a returned cell
+        # output — can redact anything the whole session ever resolved. It never
+        # resolves secrets itself.
+        self.secret_sink = SecretSink(self.vault)
         # Encrypted, named browser login profiles (persistent web identity). None
         # when no vault passphrase is set — opening a profile then fails closed
         # rather than falling back to plaintext.
@@ -303,7 +311,12 @@ class Session:
             from ..tools.mcp import mount_config
 
             if self.mcp_config_path is None or self.mcp_config_path.exists():
-                mount_config(self.registry, mcp_config, vault=self.vault)
+                mount_config(
+                    self.registry,
+                    mcp_config,
+                    vault=self.vault,
+                    allowed_hosts=self.allowed_hosts,
+                )
 
         # Skills are learned tools persisted on disk; load any from prior sessions
         # (or hand-authored by the user) so they reload here. Cross-session by
@@ -333,11 +346,17 @@ class Session:
             self.budget,
             approver=approver,
             on_event=self.trace.record,
+            # Exception-path masking: an audited repr(exc) must never carry an
+            # injected secret (see Broker.redact / the session-wide sink above).
+            redact=self.secret_sink.redact,
         )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(
-            self.workspace, vault=self.vault, allowed_hosts=self.allowed_hosts
+            self.workspace,
+            vault=self.vault,
+            allowed_hosts=self.allowed_hosts,
+            sink_mirror=self.secret_sink,
         )
         # One outbox shared by the browser (fills it via look()) and the agent
         # loop (drains it into image content blocks after each cell).
@@ -349,6 +368,7 @@ class Session:
             profiles=self.profiles,
             audit=self.audit,
             allowed_hosts=self.allowed_hosts,
+            sink_mirror=self.secret_sink,
         )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope for a
@@ -371,6 +391,7 @@ class Session:
                     broker=self.broker,
                     vault=self.vault,
                     mcp_config_path=self.mcp_config_path,
+                    allowed_hosts=self.allowed_hosts,
                 )
             )
         if self._has("secrets"):
@@ -478,7 +499,9 @@ class Session:
                 ),
             ),
             (
-                InboxCapability(self.workspace, vault=self.vault),
+                InboxCapability(
+                    self.workspace, vault=self.vault, sink_mirror=self.secret_sink
+                ),
                 "Read-only email over IMAP: list/search message metadata, read one message as clean text + links (attachments land in the workspace). No send/delete/flag — reads leave the mailbox untouched.",
                 "email",
                 (
@@ -523,7 +546,7 @@ class Session:
         # unsafe_in_process (test-only): the broker's proxies run directly in
         # the host namespace — no process boundary at all.
         self.kernel = (
-            Kernel(self.broker.namespace())
+            Kernel(self.broker.namespace(), redact=self.secret_sink.redact)
             if unsafe_in_process
             else RemoteKernel(
                 self.broker,
@@ -595,17 +618,27 @@ class Session:
             if mounted
             else "No external tools are mounted this session."
         )
-        # Host-scope line: varies per spawn, but the child must know its bound
-        # to plan within it — worth the (rare) lost prompt-cache sharing.
-        scope_line = (
-            "- Your network reach is scoped to these hosts (and their\n"
-            f"  subdomains) only: {', '.join(sorted(allowed_hosts))}. Requests\n"
-            "  anywhere else are blocked, and web search is unavailable. If the\n"
-            "  task needs a host outside this scope, say so in your report\n"
-            "  instead of retrying.\n"
-            if allowed_hosts is not None
-            else ""
-        )
+        # Host-scope lines: vary per spawn, but the child must know its bounds
+        # to plan within them — worth the (rare) lost prompt-cache sharing.
+        # Honesty matters here: `allowed_hosts` governs the web/http/browser
+        # reach (and MCP servers over HTTP); shell/packages and local MCP
+        # servers are deliberately outside it (approval-gated instead), and the
+        # child must not be promised a containment the code does not enforce.
+        scope_line = ""
+        if allowed_hosts is not None:
+            not_scoped = sorted(granted & {"shell", "packages"})
+            not_scoped.append("local (command-run) MCP servers")
+            scope_line = (
+                "- Your web/http/browser reach — including MCP servers reached\n"
+                "  over HTTP — is scoped to these hosts (and their subdomains)\n"
+                f"  only: {', '.join(sorted(allowed_hosts))}. Requests on those\n"
+                "  surfaces to any other host are refused, and web search is unavailable.\n"
+                "  If the task needs a host outside this scope, say so in your\n"
+                "  report instead of retrying.\n"
+                f"- Not covered by the host scope: {', '.join(not_scoped)} —\n"
+                "  those are gated by per-call human approval and the OS sandbox\n"
+                "  instead. Do not use them to reach hosts outside the scope.\n"
+            )
         return (
             "## Spawned sub-session\n"
             "You are a sub-session spawned by an orchestrator to complete the one\n"

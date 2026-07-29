@@ -119,9 +119,18 @@ class InboxCapability:
 
     name = "inbox"
 
-    def __init__(self, workspace: Workspace, vault: Vault | None = None):
+    def __init__(
+        self,
+        workspace: Workspace,
+        vault: Vault | None = None,
+        *,
+        sink_mirror: SecretSink | None = None,
+    ):
         self.ws = workspace
         self.vault = vault
+        # The session-wide sink each connection's sink mirrors its masks into,
+        # so the broker/kernel exception paths can redact them too.
+        self._sink_mirror = sink_mirror
 
     def exports(self) -> dict:
         return {"list": self.list, "search": self.search, "read": self.read}
@@ -139,7 +148,7 @@ class InboxCapability:
                 f"and store the password as the vault secret {PASSWORD_SECRET!r}"
             )
         port = int(os.environ.get(PORT_ENV, "993"))
-        sink = SecretSink(self.vault)
+        sink = SecretSink(self.vault, mirror=self._sink_mirror)
         password = sink.resolve(PASSWORD_SECRET, target_host=host)
         imap = imaplib.IMAP4_SSL(host, port, timeout=30)
         try:

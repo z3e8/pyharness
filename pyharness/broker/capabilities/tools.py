@@ -69,12 +69,21 @@ class ToolsCapability:
     hidden_ops = frozenset({"invoke"})
 
     def __init__(
-        self, registry: Registry, *, broker=None, vault=None, mcp_config_path=None
+        self,
+        registry: Registry,
+        *,
+        broker=None,
+        vault=None,
+        mcp_config_path=None,
+        allowed_hosts: frozenset[str] | None = None,
     ):
         self.registry = registry
         self._broker = broker  # set by Session; None leaves use_tool ungated
         self._vault = vault  # resolves secret:NAME refs when mounting a server
         self._mcp_config_path = Path(mcp_config_path) if mcp_config_path else None
+        # The session's host scope, threaded into every MCP mount so a scoped
+        # child's remote (HTTP) MCP reach is confined like its web/http reach.
+        self._allowed_hosts = allowed_hosts
 
     def exports(self) -> dict:
         return {
@@ -177,7 +186,12 @@ class ToolsCapability:
             self._save_server(name, spec)
         from ...tools.mcp import mount_config
 
-        mount_config(self.registry, {"mcpServers": {name: spec}}, vault=self._vault)
+        mount_config(
+            self.registry,
+            {"mcpServers": {name: spec}},
+            vault=self._vault,
+            allowed_hosts=self._allowed_hosts,
+        )
         saved = f" and saved to {self._mcp_config_path}" if save else ""
         return f"mounted MCP server {name!r} (lazy; connects on first use){saved}"
 

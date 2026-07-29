@@ -83,6 +83,7 @@ class HttpSessionCapability:
         vault: Vault | None = None,
         *,
         allowed_hosts: frozenset[str] | None = None,
+        sink_mirror: SecretSink | None = None,
     ):
         self.ws = workspace
         self.vault = vault
@@ -91,6 +92,9 @@ class HttpSessionCapability:
         # unscoped. Enforced alongside the SSRF guard on the initial url and on
         # every redirect hop, so a scoped fetch can't be bounced out of scope.
         self.allowed_hosts = allowed_hosts
+        # The session-wide sink each per-request sink mirrors its masks into,
+        # so the broker/kernel exception paths can redact them too.
+        self._sink_mirror = sink_mirror
         self._clients: dict[str, object] = {}
 
     def exports(self) -> dict:
@@ -219,7 +223,7 @@ class HttpSessionCapability:
         check_url(url, self.allowed_hosts)
         headers = dict(headers or {})
         params = dict(params or {})
-        sink = SecretSink(self.vault)
+        sink = SecretSink(self.vault, mirror=self._sink_mirror)
         # The host any injected secret travels to. A host-bound secret is refused
         # toward any other host inside `resolve` — and a secret-carrying request
         # never follows redirects (below), so the initial host is the only one.

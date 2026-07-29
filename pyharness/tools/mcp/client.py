@@ -41,8 +41,19 @@ class MCPClient:
         return cls(StdioTransport(command, args, env=env, cwd=cwd, timeout=timeout))
 
     @classmethod
-    def http(cls, url: str, *, headers=None, timeout: float = 30.0) -> MCPClient:
-        return cls(HttpTransport(url, headers=headers, timeout=timeout))
+    def http(
+        cls,
+        url: str,
+        *,
+        headers=None,
+        timeout: float = 30.0,
+        allowed_hosts: frozenset[str] | None = None,
+    ) -> MCPClient:
+        return cls(
+            HttpTransport(
+                url, headers=headers, timeout=timeout, allowed_hosts=allowed_hosts
+            )
+        )
 
     def list_tools(self) -> list[dict]:
         """The server's tool descriptors (name, description, inputSchema), cached."""
@@ -105,12 +116,17 @@ def connect(
     headers=None,
     cwd=None,
     timeout: float = 30.0,
+    allowed_hosts: frozenset[str] | None = None,
 ) -> MCPClient:
-    """Open a client to a local (`command`) or remote (`url`) MCP server."""
+    """Open a client to a local (`command`) or remote (`url`) MCP server.
+    `allowed_hosts` is a host-scoped session's scope, enforced on remote (HTTP)
+    targets; local stdio servers have no URL to scope."""
     if url and command:
         raise ValueError("specify either url (remote) or command (local), not both")
     if url:
-        return MCPClient.http(url, headers=headers, timeout=timeout)
+        return MCPClient.http(
+            url, headers=headers, timeout=timeout, allowed_hosts=allowed_hosts
+        )
     if command:
         return MCPClient.stdio(command, tuple(args), env=env, cwd=cwd, timeout=timeout)
     raise ValueError("specify command (local stdio) or url (remote http)")
@@ -127,6 +143,7 @@ def wrap_mcp_server(
     cwd=None,
     summary: str | None = None,
     timeout: float = 30.0,
+    allowed_hosts: frozenset[str] | None = None,
 ) -> ModuleType:
     """Connect to an MCP server and return it as a tool module."""
     client = connect(
@@ -137,6 +154,7 @@ def wrap_mcp_server(
         headers=headers,
         cwd=cwd,
         timeout=timeout,
+        allowed_hosts=allowed_hosts,
     )
     return build_module(client, name, summary=summary)
 

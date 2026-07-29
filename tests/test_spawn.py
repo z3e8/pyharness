@@ -648,3 +648,30 @@ def test_child_preamble_names_the_host_scope(tmp_path):
         assert "scoped to these hosts" not in session._child_preamble(granted)
     finally:
         session.close()
+
+
+def test_child_preamble_scope_claim_is_honest(tmp_path):
+    """The scope text must promise only what `allowed_hosts` actually enforces
+    (the web/http/browser and MCP-over-HTTP reach) and must name the granted
+    capabilities it does NOT govern — a child holding shell or packages must
+    never be told all its requests are host-blocked, because they aren't."""
+    session = _session(tmp_path, ScriptedLLM([]))
+    hosts = frozenset({"api.github.com"})
+    try:
+        # A scoped child that also holds shell + packages is told, by name,
+        # that those are outside the host scope.
+        scoped = session._child_preamble(frozenset({"web", "shell", "packages"}), hosts)
+        assert "Not covered by the host scope" in scoped
+        assert "shell" in scoped.split("Not covered by the host scope")[1]
+        assert "packages" in scoped.split("Not covered by the host scope")[1]
+        # The blanket claim the old text made must be gone in every variant.
+        assert "anywhere else are blocked" not in scoped
+        # A network-only child is not warned about capabilities it doesn't hold,
+        # but is told local MCP servers stay outside the scope (tools is always
+        # implied by a network grant, so add_mcp_server is always reachable).
+        web_only = session._child_preamble(frozenset({"web"}), hosts)
+        assert "shell" not in web_only
+        assert "packages" not in web_only
+        assert "MCP" in web_only
+    finally:
+        session.close()

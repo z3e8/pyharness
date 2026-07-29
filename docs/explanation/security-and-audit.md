@@ -261,8 +261,11 @@ is the general mechanism; spawn is its first user.
 Enforcement rides the same egress layer as the SSRF guard, not the policy
 layer — a broker-level check sees only the initial URL of a call, while
 `check_url(url, allowed_hosts)` runs at every point the guard already covers:
-the initial `http.request`/`web.fetch` URL and each redirect hop, and
-`browser.goto` plus the settled URL. In the browser's route interceptor the
+the initial `http.request`/`web.fetch` URL and each redirect hop,
+`browser.goto` plus the settled URL, and a remote MCP server's endpoint
+(`tools/mcp/transport.py:HttpTransport`) at mount and again per request — a
+scoped child holding `tools` (implied by any network grant) cannot
+`add_mcp_server(url=...)` its way out of scope. In the browser's route interceptor the
 scope applies to **main-frame navigations** (redirects, JS navigation, link
 clicks — everywhere the agent can end up); subresource and iframe loads are
 scope-exempt (blocking CDNs would break most pages) but stay under the SSRF
@@ -277,11 +280,14 @@ exfiltration channel. The scope also does not pre-grant anything: mutating or
 secret-carrying calls to in-scope hosts still prompt the human exactly as
 unscoped ones do.
 
-Known limits: exfiltration *to an in-scope host* remains possible (the scope
-bounds where, not what); subresource/iframe traffic is not scope-bound;
-capabilities with fixed off-box targets (`inbox`'s IMAP server, `packages`'
-index) and the per-command-gated `shell` are outside the scope's remit; and
-the DNS-rebinding TOCTOU above applies to scope checks identically.
+Known limits (stated design boundaries, named to the child in its preamble):
+exfiltration *to an in-scope host* remains possible (the scope bounds where,
+not what); subresource/iframe traffic is not scope-bound; capabilities with
+fixed off-box targets (`inbox`'s IMAP server, `packages`' index), the
+per-command-gated `shell`, and local (command-run) MCP servers are outside
+the scope's remit — those stay behind per-call human approval and the OS
+sandbox; and the DNS-rebinding TOCTOU above applies to scope checks
+identically.
 
 ## Vault — secrets the agent can name but never read
 
@@ -314,6 +320,21 @@ only ever travels to a vetted host, and never enters agent-visible output by
 design); masking cleans up the incidental echo and is deliberately not relied on
 as the perimeter. Widening the encodings covered would trade a few more catches
 for `***` false positives on innocent text, so it is intentionally left narrow.
+
+Masking covers the **exception path** too, as a defense-in-depth invariant. An
+exception is a perfectly good exfiltration envelope — an `httpx` error's repr
+embeds the full request URL (query params included), `TimeoutExpired` the whole
+argv — and success-path masking inside a capability never sees it. So every
+per-context sink mirrors its masks into one session-wide `SecretSink`
+(`Session.secret_sink`), and three surfaces redact through it: the broker masks
+the audited `repr(exc)` of a failing call (so `audit.jsonl`, the trace, and
+telemetry never carry cleartext), the in-process kernel masks the returned cell
+output (traceback included), and the out-of-process host rewrites a
+secret-bearing exception as a `RemoteError` with a masked message *before* it
+crosses the pipe — cleartext never even enters the child process. Clean,
+secret-free exceptions pass through untouched, type intact, so agent code can
+still catch them; the redaction runs only on error paths and is a no-op while no
+secret has been resolved.
 
 The sink is also where **host binding** is enforced. A vault entry can be bound
 to the host(s) it belongs to at config time (`pyharness-vault set github --host
