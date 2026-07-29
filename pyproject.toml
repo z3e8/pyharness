@@ -130,5 +130,10 @@ explicit_package_bases = true
 # NOT wired into addopts: running under pytest-cov re-execs the sandbox child in
 # a way that cannot find `_pytest`, which reddens 6 sandbox tests — use a
 # dedicated coverage invocation if you need it.
-testpaths = ["tests"]
+# `evals` is here so the adversarial suite (and the scorer's own meta-tests) run
+# in CI: it is offline, deterministic and a few seconds long, so the usual
+# argument for keeping an attack suite out of the commit gate does not apply,
+# while the argument for keeping it in — an unrun suite silently stops
+# describing the system — does. See evals/test_suite_a.py.
+testpaths = ["tests", "evals"]
 addopts = "-q"
