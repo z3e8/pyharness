@@ -98,22 +98,37 @@ down-langfuse:
 run: .env
 	uv run pyharness
 
-## test: run the test suite (no API key needed)
+## test: run the test suite, adversarial suite included (no API key needed)
 .PHONY: test
 test:
 	uv run pytest -q
 
+## evals: run the adversarial suite and refresh the committed scoreboard
+# Invoked through -c rather than -m: some attacks start a real sandboxed kernel,
+# and multiprocessing re-imports the parent's __main__ inside that child, which
+# the child's read jail correctly refuses for anything outside the pyharness
+# package (evals/run.py detaches __main__ for the same reason). Exit code is
+# non-zero on any attack that deviates from its documented expectation.
+.PHONY: evals
+evals:
+	uv run python -c "import sys; from evals.run import main; sys.exit(main(['--write', 'evals/SCOREBOARD.md']))"
+
+# Lint scope is listed explicitly rather than run repo-wide: agents/old/ holds
+# retired scratch scripts that a bare `ruff check .` fails on, and they are not
+# code anyone maintains.
+LINT_PATHS = pyharness tests evals
+
 ## lint: check formatting and lints without changing files (what CI enforces)
 .PHONY: lint
 lint:
-	uv run ruff check pyharness tests
-	uv run ruff format --check pyharness tests
+	uv run ruff check $(LINT_PATHS)
+	uv run ruff format --check $(LINT_PATHS)
 
 ## format: auto-format and apply autofixable lints
 .PHONY: format
 format:
-	uv run ruff format pyharness tests
-	uv run ruff check --fix pyharness tests
+	uv run ruff format $(LINT_PATHS)
+	uv run ruff check --fix $(LINT_PATHS)
 
 ## typecheck: run mypy (lenient, non-blocking — see pyproject [tool.mypy])
 .PHONY: typecheck
