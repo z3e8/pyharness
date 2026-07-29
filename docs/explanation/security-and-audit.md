@@ -330,6 +330,36 @@ helper exec fixed harness-authored argv unwrapped. Each entry carries its
 rationale where it is asserted, so a boundary cannot drift from what the tests
 actually hold true.
 
+## The adversarial suite — the claims, attacked
+
+Enumeration tests prove the wiring exists. They do not prove it works. `evals/`
+holds a scripted adversary that attacks the claims on this page directly — SSRF
+against the metadata endpoint in four spellings, host-scope evasion, redirect
+escape, credential replay, grant reuse after revocation, log tampering,
+delegation escape, MCP rebinding — and scores the result. `make evals` runs it
+and rewrites [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md), which is
+committed; `make test` fails if any attack stops matching what that file says.
+
+Two disciplines make the number worth reading, and both are enforced rather
+than trusted:
+
+- **Every attack states its security property without reference to the
+  implementation.** A property phrased in terms of the code passes by
+  construction. These are claims a sceptical reader could check.
+- **An attack never reports "blocked" by merely failing.** It names the
+  exception type that constitutes a legitimate refusal *and* the reason string
+  that pins which mechanism fired (`EgressBlocked` means both "outside your
+  scope" and "DNS failed"), or — for attacks that end in an observation rather
+  than a refusal — the independent evidence that the exploit really ran. Anything
+  else is an error, reported in its own bucket and never credited to the defense.
+
+The scoreboard reports four counts, not one percentage: blocked, known gaps,
+unexpected successes, and errors. The interesting information is entirely in
+which bucket a failure landed. Gaps are published with the reason each is a
+stated boundary — most of them are also asserted, with the same rationale, in
+the exemption tables above. Regression is bidirectional: a gap that gets closed
+fails the suite too, so this page cannot quietly go stale in either direction.
+
 ## Vault — secrets the agent can name but never read
 
 `pyharness/security/vault.py` holds one hard rule: **no capability exposed to

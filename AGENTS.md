@@ -22,7 +22,8 @@ package manager; there is no `pip`/`venv` step to run by hand.
 
 ```bash
 make setup     # create .env + install editable package + dev toolchain (one-time)
-make test      # run the test suite — no API key needed. Use this to verify changes.
+make test      # tests + the adversarial suite — no API key needed. Use this to verify changes.
+make evals     # run the adversarial suite alone and rewrite evals/SCOREBOARD.md (commit the diff)
 make lint      # ruff check + ruff format --check (what CI enforces)
 make format    # ruff format + ruff check --fix (apply autofixes)
 make typecheck # mypy — lenient, non-blocking (see [tool.mypy] in pyproject.toml)
@@ -65,6 +66,7 @@ load-bearing seams are.
 | `pyharness/obs/` | read-side observability: `transcript.py` (shared session views: digest, flattened transcript, outcome vocabulary), `index.py` (derived SQLite session index), `watch.py` (live session viewer, `pyharness-watch`), `telemetry.py` (opt-in OTel export), `trace.py` |
 | `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `util.py`, `reflect.py` + `lessons.py` (post-session self-improvement pass, opt-in) |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
+| `evals/` | the adversarial suite — `scoreboard.py` (scoring model), `support.py` (verdict helpers + offline network fixtures), `attacks/` (one module per defended claim), `run.py` (`make evals`), `SCOREBOARD.md` (the committed artifact). Runs under `make test` too |
 | `deploy/observability/` | docker-compose for the optional OTel backends: Phoenix, and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
 | `.claude/skills/docs/` | the `docs` skill: how to use and maintain the docs |
