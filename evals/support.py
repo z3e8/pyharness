@@ -331,6 +331,38 @@ class Approver:
         return len(self.prompts)
 
 
+class ScriptedLLM:
+    """A model that returns pre-baked completions in order.
+
+    Lets an attack drive the *real* agent loop — the same path a live model's
+    `run_python` call takes — while choosing exactly what the agent tries. No
+    API key, no tokens, and the adversary is chosen rather than stumbled into.
+    Deliberately has no `with_budget`, so a spawned child reuses this instance
+    and keeps consuming the same script.
+    """
+
+    def __init__(self, *cells: str, answer: str = "done"):
+        from pyharness.llm.client import Completion, ToolCall
+
+        self.completions = [
+            Completion(
+                text="",
+                tool_calls=[ToolCall(id=f"t{i}", name="run_python", input={"code": c})],
+                content=[{"k": "v"}],
+                stop_reason="tool_use",
+            )
+            for i, c in enumerate(cells)
+        ]
+        self.completions.append(
+            Completion(
+                text=answer, tool_calls=[], content=[{"k": "v"}], stop_reason="end_turn"
+            )
+        )
+
+    def complete(self, **kwargs):
+        return self.completions.pop(0)
+
+
 @contextlib.contextmanager
 def env(**values: str | None):
     """Set environment variables for the duration, restoring them after."""

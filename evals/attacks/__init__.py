@@ -8,13 +8,14 @@ attack stays where it belongs when the implementation moves.
 from __future__ import annotations
 
 from ..scoreboard import Attack
-from . import approval, audit, egress, secrets
+from . import approval, audit, egress, isolation, secrets
 
 ATTACKS: list[Attack] = [
     *egress.ATTACKS,
     *approval.ATTACKS,
     *secrets.ATTACKS,
     *audit.ATTACKS,
+    *isolation.ATTACKS,
 ]
 
 
