@@ -11,7 +11,7 @@ from types import ModuleType
 from ..audit import AuditLog
 from ..budget import Budget
 from ..obs import telemetry
-from ..security.grants import GrantLedger, GrantScope
+from ..security.grants import Grant, GrantLedger, GrantScope
 from ..security.policy import ActionCategory, Decision, Policy
 from ..util import summarize_args
 
@@ -216,6 +216,42 @@ class Broker:
                 f"operation {op!r} is ambiguous across capabilities {sorted(caps)}"
             )
         return self.call(caps[0], op, *args, **kwargs)
+
+    def revoke_grant(self, grant_id: str) -> Grant | None:
+        """Withdraw one standing grant, so the class of action it covered asks the
+        human again (or is denied outright when no approver is wired). This is the
+        audited counterpart to the raw `GrantLedger.revoke` and the sanctioned way
+        to take a grant back: a human's standing approval disappearing is a
+        security-relevant state change, so it lands in the hash chain.
+
+        Nothing caches a `Grant` — every dispatch consults the ledger fresh — so
+        the next matching call re-prompts immediately. Calls that already ran keep
+        the `grant_id` they were audited under: the chain records what happened
+        and is never rewritten, which is exactly what it exists to prove.
+
+        Returns the removed `Grant`, or `None` if no live grant had that id (a
+        no-op writes nothing). Reachable from an embedder as
+        `session.broker.revoke_grant(...)`; `session.broker.grants.active()`
+        lists the live grants to pick an id from.
+        """
+        grant = self.grants.revoke(grant_id)
+        if grant is None:
+            return None
+        # An event record (`event`, no `phase`), not a capability call — the same
+        # shape the browser's `profile_saved` uses, so session digests count it
+        # under `events` rather than inflating `actions`.
+        self.audit.record(
+            event="grant_revoked",
+            grant_id=grant.id,
+            action_class=grant.scope.action_class,
+            target=grant.scope.target,
+        )
+        self._emit(
+            "grant_revoked",
+            f"{grant.scope.action_class} on {grant.scope.target}",
+            grant_id=grant.id,
+        )
+        return grant
 
     def _approval_request(
         self, cap: str, op: str, action: str, args, kwargs
