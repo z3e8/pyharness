@@ -46,11 +46,17 @@ class SecretSink:
     done here.
     """
 
-    def __init__(self, vault: Vault | None):
+    def __init__(self, vault: Vault | None, *, mirror: SecretSink | None = None):
         self._vault = vault
         # Every literal spelling to mask out of agent-visible output — the raw
         # cleartext plus its URL-encoded forms (see _mask_forms).
         self._masks: set[str] = set()
+        # A session-wide sink every per-context sink reports its masks into, so
+        # surfaces that outlive any one injection context — the audited
+        # `repr(exc)` in dispatch, the traceback a kernel returns — can redact
+        # everything the whole session has resolved. The mirror never resolves
+        # secrets itself; it only accumulates masks.
+        self._mirror = mirror
 
     @property
     def has_injected(self) -> bool:
@@ -85,19 +91,26 @@ class SecretSink:
                     f"refusing to send it to {target_host!r}"
                 )
         secret = self._vault.get(name)
-        self._masks |= _mask_forms(secret)
+        self._absorb(_mask_forms(secret))
         return secret
 
     def track(self, value: str) -> None:
         """Record a cleartext *derived* from a vault secret parent-side (a TOTP
         code from a stored seed) for the same masking as a resolved secret — the
         page may echo the derived value even though it was never a vault entry."""
-        self._masks |= _mask_forms(value)
+        self._absorb(_mask_forms(value))
+
+    def _absorb(self, forms: set[str]) -> None:
+        self._masks |= forms
+        if self._mirror is not None:
+            self._mirror._absorb(forms)
 
     def redact(self, text: str) -> str:
         """Mask every cleartext this sink has resolved out of `text`. Only values
-        this sink injected are masked — no need to scan for arbitrary secrets."""
-        for mask in self._masks:
+        this sink injected are masked — no need to scan for arbitrary secrets.
+        The mask set is snapshotted first: a session-wide mirror can be read
+        (a broker error path) while another thread's sink is still absorbing."""
+        for mask in tuple(self._masks):
             text = text.replace(mask, "***")
         return text
 
@@ -106,7 +119,7 @@ class SecretSink:
         written to disk. The binary counterpart of `redact`: a secret echoed into
         a saved payload must not survive to the workspace file any more than it may
         round-trip through returned text."""
-        for mask in self._masks:
+        for mask in tuple(self._masks):
             data = data.replace(mask.encode(), b"***")
         return data
 

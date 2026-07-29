@@ -40,6 +40,7 @@ from ..obs.trace import TraceLog
 from ..security.egress import normalize_scope_hosts
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
+from ..security.sink import SecretSink
 from ..security.vault import Vault
 from ..tools.registry import Registry
 from .agent import Agent
@@ -288,6 +289,13 @@ class Session:
             ],
         )
         self.vault = vault or Vault.from_env()
+        # One session-wide secret sink. Per-context sinks (one per HTTP request,
+        # browser session, IMAP connection) mirror every mask they absorb into
+        # it, so surfaces that outlive any single injection context — the
+        # broker's audited exception reprs, the traceback in a returned cell
+        # output — can redact anything the whole session ever resolved. It never
+        # resolves secrets itself.
+        self.secret_sink = SecretSink(self.vault)
         # Encrypted, named browser login profiles (persistent web identity). None
         # when no vault passphrase is set — opening a profile then fails closed
         # rather than falling back to plaintext.
@@ -338,11 +346,17 @@ class Session:
             self.budget,
             approver=approver,
             on_event=self.trace.record,
+            # Exception-path masking: an audited repr(exc) must never carry an
+            # injected secret (see Broker.redact / the session-wide sink above).
+            redact=self.secret_sink.redact,
         )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
         self.http = HttpSessionCapability(
-            self.workspace, vault=self.vault, allowed_hosts=self.allowed_hosts
+            self.workspace,
+            vault=self.vault,
+            allowed_hosts=self.allowed_hosts,
+            sink_mirror=self.secret_sink,
         )
         # One outbox shared by the browser (fills it via look()) and the agent
         # loop (drains it into image content blocks after each cell).
@@ -354,6 +368,7 @@ class Session:
             profiles=self.profiles,
             audit=self.audit,
             allowed_hosts=self.allowed_hosts,
+            sink_mirror=self.secret_sink,
         )
         # Core builtins — the agent's own body (workspace, shell, delegation,
         # reflection) plus the tool-discovery entrypoint. Always in scope for a
@@ -484,7 +499,9 @@ class Session:
                 ),
             ),
             (
-                InboxCapability(self.workspace, vault=self.vault),
+                InboxCapability(
+                    self.workspace, vault=self.vault, sink_mirror=self.secret_sink
+                ),
                 "Read-only email over IMAP: list/search message metadata, read one message as clean text + links (attachments land in the workspace). No send/delete/flag — reads leave the mailbox untouched.",
                 "email",
                 (
@@ -529,7 +546,7 @@ class Session:
         # unsafe_in_process (test-only): the broker's proxies run directly in
         # the host namespace — no process boundary at all.
         self.kernel = (
-            Kernel(self.broker.namespace())
+            Kernel(self.broker.namespace(), redact=self.secret_sink.redact)
             if unsafe_in_process
             else RemoteKernel(
                 self.broker,

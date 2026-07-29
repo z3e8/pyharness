@@ -162,7 +162,11 @@ class RemoteKernel:
             self._start()
             self._conn.send(("run", code))
         try:
-            return self._serve()
+            # Redacted like the in-process kernel's output: the child's cell
+            # output crosses back verbatim, and a capability error's message —
+            # already redacted before it crossed (see _redact_exc) — may have
+            # been echoed by agent code; the session-wide mask is the backstop.
+            return self.broker.redact(self._serve())
         except BaseException:
             # Anything that unwinds mid-cell — typically a KeyboardInterrupt
             # while blocked in recv or inside a broker call (dispatch has
@@ -216,7 +220,7 @@ class RemoteKernel:
                 value = _seal_for_wire(self.broker.call_op(op, *args, **kwargs))
                 reply = ("ok", value)
             except Exception as exc:  # noqa: BLE001 - errors cross back to the agent
-                reply = ("err", _safe_exc(exc))
+                reply = ("err", _safe_exc(_redact_exc(exc, self.broker.redact)))
             try:
                 self._conn.send(reply)
             except Exception as exc:  # noqa: BLE001 - e.g. unpicklable result
@@ -312,6 +316,24 @@ class RemoteKernel:
         if self._sbdir is not None:
             shutil.rmtree(self._sbdir, ignore_errors=True)
             self._sbdir = None
+
+
+def _redact_exc(exc: BaseException, redact) -> BaseException:
+    """Keep an injected secret from crossing the pipe inside an exception.
+
+    An exception's message or attributes can embed request content — an httpx
+    error carries the full URL (query params included), `TimeoutExpired` the
+    whole argv — and the child formats whatever arrives into its traceback,
+    which becomes agent-visible cell output. The clean case (no resolved secret
+    spelled anywhere in str/repr) passes through untouched, preserving the
+    exception type for agent-side `except SomeError` handling. A tainted one is
+    rebuilt as a `RemoteError` carrying the original type name and the redacted
+    message — the type identity is traded away only when the alternative is
+    leaking cleartext into the child process."""
+    shown = f"{type(exc).__name__}: {exc}"
+    if redact(shown) == shown and redact(repr(exc)) == repr(exc):
+        return exc
+    return RemoteError(redact(shown))
 
 
 def _safe_exc(exc: BaseException) -> BaseException:

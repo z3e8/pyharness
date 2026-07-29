@@ -87,11 +87,21 @@ class Broker:
         grants: GrantLedger | None = None,
         metered: frozenset[str] = frozenset({"llm", "web", "obs", "spawn"}),
         on_event: Callable[..., None] | None = None,
+        redact: Callable[[str], str] | None = None,
     ):
         self.policy = policy
         self.audit = audit
         self.budget = budget
         self.approver = approver
+        # Secret masking for text the broker itself surfaces. Capabilities
+        # redact their *success* results; this hook covers the exception path —
+        # the audited `repr(exc)` and the error the trace/telemetry see — so a
+        # capability raising with an injected secret embedded (a URL in an
+        # httpx error, an argv in TimeoutExpired) can't leak it into
+        # audit.jsonl. The session wires the session-wide SecretSink's redact;
+        # identity by default, and only run on the error path, so it costs
+        # nothing when no secret was ever resolved.
+        self.redact = redact or (lambda text: text)
         # Activity events (`action_start`/`action_end`, `approval_pending`/
         # `approval_resolved`) — the live "what is happening right now" stream,
         # written before/around execution where the audit log records only
@@ -375,13 +385,15 @@ class Broker:
                 BaseException
             ) as exc:  # incl. KeyboardInterrupt — record, then re-raise
                 if self._settle(token):
-                    self.audit.record(
-                        action=action, phase="end", ok=False, error=repr(exc)
-                    )
+                    # Redacted: an exception repr can embed request content (a
+                    # full URL with query params, a subprocess argv) — never
+                    # let an injected secret reach the audit log or trace.
+                    error = self.redact(repr(exc))
+                    self.audit.record(action=action, phase="end", ok=False, error=error)
                     telemetry.record_tool(
-                        span, action=action, decision="allow", ok=False, error=repr(exc)
+                        span, action=action, decision="allow", ok=False, error=error
                     )
-                    _end(ok=False, error=repr(exc))
+                    _end(ok=False, error=error)
                 raise
             if self._settle(token):
                 self.audit.record(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import traceback
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 
 from ..util import CaptureBuffer, truncate
@@ -19,8 +20,20 @@ class Kernel:
     by introspection. Sessions select it only via `unsafe_in_process=True`; the
     default is the out-of-process `RemoteKernel` (broker/remote)."""
 
-    def __init__(self, namespace: dict[str, object]):
+    def __init__(
+        self,
+        namespace: dict[str, object],
+        *,
+        redact: Callable[[str], str] | None = None,
+    ):
         self.namespace = dict(namespace)
+        # Secret masking over the returned cell output (the session wires the
+        # session-wide SecretSink's redact). Capabilities redact their own
+        # results, but a capability *exception* — its message formatted into the
+        # traceback below — is the path that would otherwise carry an injected
+        # secret into agent-visible output. Redaction runs before `truncate` so
+        # a mask can't be clipped in half and missed.
+        self._redact = redact or (lambda text: text)
 
     def run(self, code: str) -> str:
         out = CaptureBuffer()  # bound memory: a runaway print can't OOM the host
@@ -29,4 +42,4 @@ class Kernel:
                 exec(compile(code, "<cell>", "exec"), self.namespace)
         except Exception:
             out.write(traceback.format_exc(limit=5))
-        return truncate(out.getvalue().rstrip()) or "(no output)"
+        return truncate(self._redact(out.getvalue().rstrip())) or "(no output)"

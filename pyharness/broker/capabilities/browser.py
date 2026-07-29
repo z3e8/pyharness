@@ -150,6 +150,7 @@ class BrowserCapability:
         profiles: ProfileStore | None = None,
         audit=None,
         allowed_hosts: frozenset[str] | None = None,
+        sink_mirror: SecretSink | None = None,
     ):
         self.ws = workspace
         self.vault = vault
@@ -158,6 +159,9 @@ class BrowserCapability:
         # unscoped. Enforced on goto and on every main-frame navigation via the
         # route handler; subresources stay under the SSRF guard only.
         self.allowed_hosts = allowed_hosts
+        # The session-wide sink each browser session's sink mirrors its masks
+        # into, so the broker/kernel exception paths can redact them too.
+        self._sink_mirror = sink_mirror
         # Parent-side staging for screenshots that reach the model (browser.look).
         # None means no image channel is wired (e.g. a test that never looks).
         self.media = media
@@ -340,7 +344,11 @@ class BrowserCapability:
         page = context.new_page()
         session_id = uuid4().hex
         self._sessions[session_id] = _BrowserSession(
-            browser, context, page, SecretSink(self.vault), profile=profile
+            browser,
+            context,
+            page,
+            SecretSink(self.vault, mirror=self._sink_mirror),
+            profile=profile,
         )
         return session_id
 
