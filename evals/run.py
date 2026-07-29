@@ -89,7 +89,32 @@ def _document(results: list[Result]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def _detach_main() -> None:
+    """Stop `multiprocessing` re-importing this runner inside the sandboxed
+    child, which the sandbox correctly refuses to let it read.
+
+    Some attacks start a real out-of-process kernel. The child is spawned, so
+    `multiprocessing` re-imports the parent's `__main__` before anything else —
+    and the child's read jail allows the `pyharness` package but *not* the rest
+    of the repository, so importing `evals.run` there fails with EPERM and the
+    kernel dies before the attack runs. Clearing the module's spec and file
+    leaves `get_preparation_data` with nothing to re-import, which is what we
+    want: the child needs the harness, never the runner.
+
+    Not a harness workaround — the same thing happens to any embedder whose
+    entry point is `python -m their_package`, which is logged in
+    `agents/issues.md` as a product-level problem rather than papered over here.
+    """
+    import sys
+
+    module = sys.modules.get("__main__")
+    if module is not None:
+        module.__spec__ = None
+        module.__file__ = None  # type: ignore[attr-defined]
+
+
 def main(argv: list[str] | None = None) -> int:
+    _detach_main()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", type=Path, help="path for the markdown artifact")
     args = parser.parse_args(argv)
