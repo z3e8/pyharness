@@ -112,8 +112,7 @@ HOST_SCOPE_ENFORCED = {
 HOST_SCOPE_EXEMPT = {
     "files": "No network reach: reads/writes/edits are confined to the session "
     "workspace directory. There is no host to scope.",
-    "search": "Text search over the session workspace only; never touches the "
-    "network.",
+    "search": "Text search over the session workspace only; never touches the network.",
     "llm": "Talks only to the configured model API. The endpoint is fixed by "
     "harness configuration, not chosen by agent code, so there is no "
     "agent-directed egress to scope — and scoping it would sever the agent's "
@@ -121,8 +120,7 @@ HOST_SCOPE_EXEMPT = {
     "obs": "Read-only queries over the local session index (SQLite opened "
     "read-only); its summarize path uses the same fixed model API as `llm`.",
     "history": "Read-only view of the session's own audit log on local disk.",
-    "skills": "Writes skill files under the local skills directory; no network "
-    "reach.",
+    "skills": "Writes skill files under the local skills directory; no network reach.",
     "notify": "Output-only message to the human via the local event stream and "
     "a desktop notification helper; nothing leaves the box over the network.",
     "vault": "Returns secret *names* and mints vault entries parent-side; the "
@@ -167,9 +165,7 @@ def test_host_scope_classification_covers_every_capability(sess):
     the live instance provably holds the session's scope, not a stale or absent
     one) or is a named exemption with a written rationale."""
     caps = _caps(sess)
-    _assert_partition(
-        set(caps), set(HOST_SCOPE_ENFORCED), set(HOST_SCOPE_EXEMPT)
-    )
+    _assert_partition(set(caps), set(HOST_SCOPE_ENFORCED), set(HOST_SCOPE_EXEMPT))
     _assert_rationales(HOST_SCOPE_EXEMPT)
     _assert_rationales(HOST_SCOPE_BOUNDARIES)
 
@@ -256,10 +252,22 @@ def _module_files(cap) -> dict[str, str]:
         mod = type(value).__module__
         if mod.startswith("pyharness"):
             names.add(mod)
-    return {
-        name: open(sys.modules[name].__file__).read()
-        for name in sorted(names)
-    }
+    return {name: open(sys.modules[name].__file__).read() for name in sorted(names)}
+
+
+def _references_sandbox_wrap(source: str) -> bool:
+    """True when the module genuinely *uses* a sandboxed_*_argv wrap — an AST
+    Name reference or an import of one, never a mention in a comment or
+    docstring (which is exactly how a removed wrap would keep passing a
+    textual check)."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id.startswith("sandboxed_"):
+            return True
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name.startswith("sandboxed_") for alias in node.names
+        ):
+            return True
+    return False
 
 
 def _has_exec_sites(source: str) -> bool:
@@ -319,14 +327,14 @@ def test_sandbox_wrap_classification_covers_every_capability(sess):
             "found no exec site — stale classification"
         )
         for mod, source in hits.items():
-            wrapped = "sandboxed_" in source
+            wrapped = _references_sandbox_wrap(source)
             exempt = (name, mod) in UNWRAPPED_EXEC_EXEMPT
             assert wrapped or exempt, (
                 f"{name}:{mod} execs parent-side without referencing a "
                 "sandboxed_*_argv wrap and without a written exemption"
             )
         if name in SANDBOX_WRAPPED:
-            assert any("sandboxed_" in s for s in hits.values()), (
+            assert any(_references_sandbox_wrap(s) for s in hits.values()), (
                 f"capability {name!r} is classified SANDBOX_WRAPPED but no "
                 "exec-bearing module references the sandbox wrap"
             )
