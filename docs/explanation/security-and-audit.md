@@ -290,12 +290,45 @@ unscoped ones do.
 
 Known limits (stated design boundaries, named to the child in its preamble):
 exfiltration *to an in-scope host* remains possible (the scope bounds where,
-not what); subresource/iframe traffic is not scope-bound; capabilities with
+not what); subresource/iframe traffic is not scope-bound, and WebSocket
+traffic has no interception point at all (`context.route` does not cover WS
+and no `route_web_socket` handler exists); capabilities with
 fixed off-box targets (`inbox`'s IMAP server, `packages`' index), the
 per-command-gated `shell`, and local (command-run) MCP servers are outside
 the scope's remit — those stay behind per-call human approval and the OS
 sandbox; and the DNS-rebinding TOCTOU above applies to scope checks
 identically.
+
+## Cross-cutting policies are enumerated, not remembered
+
+The 2026-07 security recon found that every verified gap sat at the same seam:
+a capability added without being taught about a cross-cutting policy that
+already existed. `allowed_hosts` was threaded through some capabilities and
+not others; `packages.install` initially skipped the sandbox wrap `shell.bash`
+has; the MCP HTTP transport skipped the scope argument. Dispatch is one choke
+point, but containment — host scoping, sandbox wrapping, secret-sink
+mirroring — is implemented *per capability*, so every new capability is an
+opportunity to silently opt out of one.
+
+The structural answer is `tests/test_capability_policies.py`. For each
+cross-cutting policy it enumerates every capability **from the live broker
+registry** — never from a hand-written list of names — and asserts that each
+one either enforces the policy (with the wiring checked on the live instance)
+or appears as a named exemption with a written rationale. Registering a new
+capability fails those tests until it is classified, in writing, against every
+policy: host scoping, parent-side sandbox wrapping, dispatch mediation
+(everything the agent can reach is a broker proxy), approval classification
+(`preview`/`scope` hooks), and secret-sink wiring.
+
+The exemption tables in that file are the authoritative list of stated design
+boundaries. Among them: `shell` and `packages` sit outside the host scope
+(per-call approval plus the OS sandbox instead); browser subresource/iframe
+loads are scope-exempt and WebSockets have no enforcement point (see above);
+local (command-run) MCP servers and the Playwright browser process exec
+parent-side outside the sandbox wrap; venv creation and the desktop-notify
+helper exec fixed harness-authored argv unwrapped. Each entry carries its
+rationale where it is asserted, so a boundary cannot drift from what the tests
+actually hold true.
 
 ## Vault — secrets the agent can name but never read
 
