@@ -133,7 +133,17 @@ the call *and* mints a scoped grant for `request.scope` (a `GrantScope` of
 `Broker` (`pyharness.broker.Broker` — not a top-level export) owns a
 `GrantLedger`; a live grant matching a later call auto-approves it without
 prompting. IRREVERSIBLE calls are never grantable. Pass a
-`Broker(..., grants=GrantLedger())` to share or inspect the ledger. See
+`Broker(..., grants=GrantLedger())` to share or inspect the ledger.
+
+Grants can be withdrawn mid-session:
+
+```python
+for grant in session.broker.grants.active():   # live grants, with their ids
+    session.broker.revoke_grant(grant.id)      # audited; returns the Grant or None
+```
+
+`revoke_grant` appends a `grant_revoked` record to the audit chain and the next
+matching action prompts again (or is denied when no approver is wired). See
 [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).
 
 ## `Vault`
