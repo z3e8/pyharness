@@ -80,8 +80,9 @@ pyharness run "TASK" [--dir PATH] [--budget USD] [--json] [--approve-all] [--ref
   [Security & audit](../explanation/security-and-audit.md#audit--a-tamper-evident-record));
   `aborted_actions` counts intent records with no outcome — actions a hard
   kill left in flight. `events` counts capability event records (an `event`
-  field, no phase — e.g. the browser's close-time `profile_saved`), which are
-  not capability calls and so are never folded into `actions`.
+  field, no phase — the browser's close-time `profile_saved`, a `grant_revoked`
+  withdrawal), which are not capability calls and so are never folded into
+  `actions`.
 - `--reflect` (or truthy `PYHARNESS_REFLECT`) runs the reflection pass;
   without `--approve-all` its skill writes are denied like any other.
 - The embedded live viewer still starts (`PYHARNESS_WATCH`, URL on stderr).

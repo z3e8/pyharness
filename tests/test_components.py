@@ -2508,6 +2508,65 @@ def test_grant_covers_repeat_browser_actions(tmp_path):
     assert ok  # the mint/coverage entries keep the hash chain intact
 
 
+def test_revoked_grant_stops_covering_and_is_audited(tmp_path):
+    """Property: an action a live grant covers is permitted without asking; once
+    that grant is revoked, the same action asks the human again — and is refused
+    when the answer is no. The withdrawal itself is recorded in the tamper-evident
+    chain, and the chain still verifies (history is appended to, never rewritten).
+    """
+    from pyharness.audit import verify_chain
+    from pyharness.broker import ApprovalOutcome
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompts = []
+    # The human says "allow everything like this" once, and "no" to anything
+    # they are asked about afterwards.
+    answers = [ApprovalOutcome.GRANT]
+
+    def approver(request):
+        prompts.append(request.action)
+        return answers.pop(0) if answers else ApprovalOutcome.DENY
+
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=approver,
+    )
+    broker.register(cap)
+    ns = broker.namespace()
+
+    ns["click"]("sid", "#a")  # asked once
+    ns["fill"]("sid", "#b", "x")  # covered — not asked
+    assert prompts == ["browser.click"]
+
+    (grant,) = broker.grants.active()
+    assert broker.revoke_grant(grant.id) is grant
+    assert broker.grants.active() == []
+    assert broker.revoke_grant(grant.id) is None  # revoking twice is a no-op
+
+    with pytest.raises(PermissionDenied):
+        ns["fill"]("sid", "#c", "y")  # no longer covered: asked, and refused
+    assert prompts == ["browser.click", "browser.fill"]
+
+    import json
+
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text().strip().splitlines()
+    ]
+    revocations = [e for e in entries if e.get("event") == "grant_revoked"]
+    assert len(revocations) == 1  # the no-op second revoke wrote nothing
+    assert revocations[0]["grant_id"] == grant.id
+    assert revocations[0]["action_class"] == "browser"
+    assert revocations[0]["target"] == "start"
+    # The already-executed covered call keeps its record: revocation appends,
+    # it does not retroactively rewrite what the grant let through.
+    assert sum(e.get("grant_id") == grant.id for e in entries) == 2  # covered + revoked
+    ok, bad = verify_chain(tmp_path / "audit.jsonl")
+    assert ok, bad
+
+
 def test_grant_scoped_to_host(tmp_path):
     from pyharness.broker import ApprovalOutcome
     from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
