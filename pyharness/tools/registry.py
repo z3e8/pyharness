@@ -104,10 +104,12 @@ class Registry:
         category: str | None = None,
         featured: bool = False,
         timeout: float = 30.0,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> str:
         """Connect to an MCP server — local (`command`) or remote (`url`) — wrap
         each of its tools as a Python function, and register the result as one
-        tool module named `name`. The server's client is closed by `close()`."""
+        tool module named `name`. The server's client is closed by `close()`.
+        `allowed_hosts` (a host-scoped session's scope) confines a remote URL."""
         from .mcp import wrap_mcp_server
 
         module = wrap_mcp_server(
@@ -120,6 +122,7 @@ class Registry:
             cwd=cwd,
             summary=summary,
             timeout=timeout,
+            allowed_hosts=allowed_hosts,
         )
         self._mcp_clients.append(module._mcp_client)
         return self.register(

@@ -149,10 +149,13 @@ needed. The child always holds its body (`read`/`write`/`edit`,
 `inbox`, `packages` (granting an external one implies tool discovery). It can
 never spawn — delegation depth is one by construction.
 `allowed_hosts=["api.example.com", ...]` additionally confines the child's
-`web`/`http`/`browser` reach to those hosts and their subdomains — anything
-else is refused at the egress layer (including redirect hops and browser
-navigations), and `web.search` is disabled under a scope (the query
-would leave it); requires a network capability in `tools`. See
+`web`/`http`/`browser` reach — and any remote (HTTP) MCP server it mounts —
+to those hosts and their subdomains: anything else is refused at the egress
+layer (including redirect hops and browser navigations), and `web.search` is
+disabled under a scope (the query would leave it); requires a network
+capability in `tools`. `shell`, `packages`, and local (command-run) MCP
+servers are not host-scoped — they stay behind per-call approval and the OS
+sandbox. See
 [security](../explanation/security-and-audit.md#host-scoped-sessions). It shares the parent's
 workspace (file handoff is free; the parent assigns output paths in the task)
 and starts with none of the parent's conversation, so the task must be

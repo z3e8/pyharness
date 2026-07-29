@@ -35,7 +35,12 @@ def load_config(path: str | Path) -> dict:
 
 
 def mount_config(
-    registry, config: dict | str | Path, *, vault=None, lazy: bool = True
+    registry,
+    config: dict | str | Path,
+    *,
+    vault=None,
+    lazy: bool = True,
+    allowed_hosts: frozenset[str] | None = None,
 ) -> list[str]:
     """Mount every server declared in `config` into `registry`. `config` may be a
     dict or a path to a JSON file. Returns the registered tool names.
@@ -44,7 +49,9 @@ def mount_config(
     first searches or uses them, so a slow or down server can neither delay nor
     abort session startup (it surfaces as unavailable only when reached). Pass
     `lazy=False` to connect eagerly and fail fast. `secret:NAME` credentials are
-    resolved through the vault now, in the parent, in either mode."""
+    resolved through the vault now, in the parent, in either mode.
+    `allowed_hosts` is the mounting session's host scope, enforced on every
+    remote (HTTP) server's URL at connect and per request."""
     if isinstance(config, (str, Path)):
         config = load_config(config)
     servers = config.get("mcpServers", config)
@@ -63,7 +70,7 @@ def mount_config(
             names.append(
                 registry.register_lazy(
                     name,
-                    _loader(name, spec, env, headers),
+                    _loader(name, spec, env, headers, allowed_hosts),
                     source="installed",
                     kind="mcp",
                     summary=spec.get("summary")
@@ -83,13 +90,20 @@ def mount_config(
                     cwd=spec.get("cwd"),
                     summary=spec.get("summary"),
                     timeout=spec.get("timeout", 30.0),
+                    allowed_hosts=allowed_hosts,
                     **meta,
                 )
             )
     return names
 
 
-def _loader(name: str, spec: dict, env: dict | None, headers: dict | None):
+def _loader(
+    name: str,
+    spec: dict,
+    env: dict | None,
+    headers: dict | None,
+    allowed_hosts: frozenset[str] | None = None,
+):
     """Build the deferred connect-and-wrap thunk for one lazily-mounted server."""
     from .client import wrap_mcp_server
 
@@ -104,6 +118,7 @@ def _loader(name: str, spec: dict, env: dict | None, headers: dict | None):
             cwd=spec.get("cwd"),
             summary=spec.get("summary"),
             timeout=spec.get("timeout", 30.0),
+            allowed_hosts=allowed_hosts,
         )
 
     return load

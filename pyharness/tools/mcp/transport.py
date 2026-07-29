@@ -185,7 +185,12 @@ class HttpTransport:
     on every subsequent request to keep the server-side session."""
 
     def __init__(
-        self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 30.0
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float = 30.0,
+        allowed_hosts: frozenset[str] | None = None,
     ):
         import httpx  # provided transitively via the anthropic dependency
 
@@ -194,14 +199,18 @@ class HttpTransport:
         # otherwise let a `.mcp.json` entry point the parent at internal services
         # and forward `secret:` creds in its headers. Vet it at mount (here) and
         # again on every request (below), since DNS can rebind between the two.
-        check_url(url)
+        # A host-scoped session (spawn(allowed_hosts=...)) passes its scope so
+        # its MCP reach is confined exactly like its web/http/browser reach.
+        self._allowed_hosts = allowed_hosts
+        check_url(url, allowed_hosts)
         self.protocol_version = PROTOCOL_VERSION
         self._url = url
         self._client = httpx.Client(timeout=timeout, headers=headers or {})
         self._session_id: str | None = None
 
     def request(self, message: dict) -> dict:
-        check_url(self._url)  # re-vet per request: DNS may have rebound since mount
+        # Re-vet per request: DNS may have rebound since mount.
+        check_url(self._url, self._allowed_hosts)
         with self._client.stream(
             "POST", self._url, json=message, headers=self._headers()
         ) as resp:
@@ -216,7 +225,8 @@ class HttpTransport:
             return json.loads(resp.read())
 
     def notify(self, message: dict) -> None:
-        check_url(self._url)  # re-vet per request: DNS may have rebound since mount
+        # Re-vet per request: DNS may have rebound since mount.
+        check_url(self._url, self._allowed_hosts)
         with self._client.stream(
             "POST", self._url, json=message, headers=self._headers()
         ) as resp:

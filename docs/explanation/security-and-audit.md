@@ -261,8 +261,11 @@ is the general mechanism; spawn is its first user.
 Enforcement rides the same egress layer as the SSRF guard, not the policy
 layer — a broker-level check sees only the initial URL of a call, while
 `check_url(url, allowed_hosts)` runs at every point the guard already covers:
-the initial `http.request`/`web.fetch` URL and each redirect hop, and
-`browser.goto` plus the settled URL. In the browser's route interceptor the
+the initial `http.request`/`web.fetch` URL and each redirect hop,
+`browser.goto` plus the settled URL, and a remote MCP server's endpoint
+(`tools/mcp/transport.py:HttpTransport`) at mount and again per request — a
+scoped child holding `tools` (implied by any network grant) cannot
+`add_mcp_server(url=...)` its way out of scope. In the browser's route interceptor the
 scope applies to **main-frame navigations** (redirects, JS navigation, link
 clicks — everywhere the agent can end up); subresource and iframe loads are
 scope-exempt (blocking CDNs would break most pages) but stay under the SSRF
@@ -277,11 +280,14 @@ exfiltration channel. The scope also does not pre-grant anything: mutating or
 secret-carrying calls to in-scope hosts still prompt the human exactly as
 unscoped ones do.
 
-Known limits: exfiltration *to an in-scope host* remains possible (the scope
-bounds where, not what); subresource/iframe traffic is not scope-bound;
-capabilities with fixed off-box targets (`inbox`'s IMAP server, `packages`'
-index) and the per-command-gated `shell` are outside the scope's remit; and
-the DNS-rebinding TOCTOU above applies to scope checks identically.
+Known limits (stated design boundaries, named to the child in its preamble):
+exfiltration *to an in-scope host* remains possible (the scope bounds where,
+not what); subresource/iframe traffic is not scope-bound; capabilities with
+fixed off-box targets (`inbox`'s IMAP server, `packages`' index), the
+per-command-gated `shell`, and local (command-run) MCP servers are outside
+the scope's remit — those stay behind per-call human approval and the OS
+sandbox; and the DNS-rebinding TOCTOU above applies to scope checks
+identically.
 
 ## Vault — secrets the agent can name but never read
 

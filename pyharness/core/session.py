@@ -303,7 +303,12 @@ class Session:
             from ..tools.mcp import mount_config
 
             if self.mcp_config_path is None or self.mcp_config_path.exists():
-                mount_config(self.registry, mcp_config, vault=self.vault)
+                mount_config(
+                    self.registry,
+                    mcp_config,
+                    vault=self.vault,
+                    allowed_hosts=self.allowed_hosts,
+                )
 
         # Skills are learned tools persisted on disk; load any from prior sessions
         # (or hand-authored by the user) so they reload here. Cross-session by
@@ -371,6 +376,7 @@ class Session:
                     broker=self.broker,
                     vault=self.vault,
                     mcp_config_path=self.mcp_config_path,
+                    allowed_hosts=self.allowed_hosts,
                 )
             )
         if self._has("secrets"):
@@ -595,17 +601,27 @@ class Session:
             if mounted
             else "No external tools are mounted this session."
         )
-        # Host-scope line: varies per spawn, but the child must know its bound
-        # to plan within it — worth the (rare) lost prompt-cache sharing.
-        scope_line = (
-            "- Your network reach is scoped to these hosts (and their\n"
-            f"  subdomains) only: {', '.join(sorted(allowed_hosts))}. Requests\n"
-            "  anywhere else are blocked, and web search is unavailable. If the\n"
-            "  task needs a host outside this scope, say so in your report\n"
-            "  instead of retrying.\n"
-            if allowed_hosts is not None
-            else ""
-        )
+        # Host-scope lines: vary per spawn, but the child must know its bounds
+        # to plan within them — worth the (rare) lost prompt-cache sharing.
+        # Honesty matters here: `allowed_hosts` governs the web/http/browser
+        # reach (and MCP servers over HTTP); shell/packages and local MCP
+        # servers are deliberately outside it (approval-gated instead), and the
+        # child must not be promised a containment the code does not enforce.
+        scope_line = ""
+        if allowed_hosts is not None:
+            not_scoped = sorted(granted & {"shell", "packages"})
+            not_scoped.append("local (command-run) MCP servers")
+            scope_line = (
+                "- Your web/http/browser reach — including MCP servers reached\n"
+                "  over HTTP — is scoped to these hosts (and their subdomains)\n"
+                f"  only: {', '.join(sorted(allowed_hosts))}. Requests on those\n"
+                "  surfaces to any other host are refused, and web search is unavailable.\n"
+                "  If the task needs a host outside this scope, say so in your\n"
+                "  report instead of retrying.\n"
+                f"- Not covered by the host scope: {', '.join(not_scoped)} —\n"
+                "  those are gated by per-call human approval and the OS sandbox\n"
+                "  instead. Do not use them to reach hosts outside the scope.\n"
+            )
         return (
             "## Spawned sub-session\n"
             "You are a sub-session spawned by an orchestrator to complete the one\n"

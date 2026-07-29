@@ -188,3 +188,88 @@ def test_lazy_eager_opt_out_fails_fast():
     config = {"mcpServers": {"down": {"command": "/no/such/binary-xyz"}}}
     with pytest.raises(Exception):
         mount_config(registry, config, lazy=False)
+
+
+# --- Host scope over the HTTP transport ---------------------------------------
+#
+# Property: a host-scoped session's MCP reach is confined to `allowed_hosts`
+# exactly like its web/http/browser reach — a remote MCP server outside the
+# scope is refused before any bytes leave the box, whether mounted from config
+# or by the agent via `add_mcp_server(url=...)`.
+
+
+def test_http_transport_refuses_out_of_scope_url_before_connecting(http_url):
+    from pyharness.security.egress import EgressBlocked
+    from pyharness.tools.mcp.transport import HttpTransport
+
+    with pytest.raises(EgressBlocked):
+        HttpTransport(http_url, allowed_hosts=frozenset({"api.github.com"}))
+
+
+def test_http_transport_rechecks_scope_per_request(http_url, http_server):
+    """The scope is enforced on every request, not just at mount — DNS (or the
+    scope itself) can change between the two."""
+    from pyharness.security.egress import EgressBlocked
+    from pyharness.tools.mcp.transport import HttpTransport
+
+    host = http_url.split("//")[1].split(":")[0]  # 127.0.0.1
+    transport = HttpTransport(http_url, allowed_hosts=frozenset({host}))
+    try:
+        transport._allowed_hosts = frozenset({"api.github.com"})  # simulate drift
+        with pytest.raises(EgressBlocked):
+            transport.request({"jsonrpc": "2.0", "id": 99, "method": "tools/list"})
+    finally:
+        transport.close()
+
+
+def test_scoped_session_cannot_reach_out_of_scope_mcp_server(tmp_path, http_url):
+    """End to end through the broker: a spawned-child-shaped session holding a
+    network capability (which implies `tools`) mounts a remote MCP server at an
+    out-of-scope URL; first contact is refused and the server never sees a
+    request. An in-scope URL works, proving the refusal is the scope, not a
+    broken transport."""
+    from pyharness.core.session import Session
+
+    server_host = http_url.split("//")[1].split(":")[0]
+    child = Session(
+        tmp_path / "c",
+        llm=object(),  # never used: capabilities are driven via the broker
+        capabilities=frozenset({"web"}),
+        allowed_hosts=["scoped.example.com", server_host],
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+        approver=lambda request: True,  # add_mcp_server is approval-gated
+    )
+    try:
+        child.broker.call("tools", "add_mcp_server", "inscope", url=http_url)
+        assert child.broker.call("tools", "use_tool", "inscope").ping() == "pong"
+
+        evil_url = http_url.replace(server_host, "attacker.example.net")
+        child.broker.call("tools", "add_mcp_server", "offscope", url=evil_url)
+        with pytest.raises(RuntimeError, match="allowed hosts"):
+            child.broker.call("tools", "use_tool", "offscope")
+    finally:
+        child.close()
+
+
+def test_session_config_mcp_mount_carries_the_scope(tmp_path, http_url):
+    """A server declared in the session's MCP config is confined by the
+    session's host scope too — the config path and the add_mcp_server path must
+    not differ in reach."""
+    from pyharness.core.session import Session
+
+    config = {"mcpServers": {"cfg": {"url": http_url}}}
+    child = Session(
+        tmp_path / "c",
+        llm=object(),
+        capabilities=frozenset({"web"}),
+        allowed_hosts=["scoped.example.com"],  # server's host is NOT in scope
+        skills_dir=tmp_path / "skills",
+        unsafe_in_process=True,
+        mcp_config=config,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="allowed hosts"):
+            child.broker.call("tools", "use_tool", "cfg")
+    finally:
+        child.close()
