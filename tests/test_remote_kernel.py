@@ -3,13 +3,16 @@ call crosses IPC back to the parent's broker. The agent code in these cells is
 byte-for-byte what the in-process kernel runs — only the execution boundary moves.
 """
 
+import importlib.machinery
 import json
 import multiprocessing as mp
 import os
 import pickle
+import sys
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -131,6 +134,39 @@ def kernel_factory():
     yield make
     for k in kernels:
         k.close()
+
+
+def test_child_does_not_reimport_the_parents_entry_module(kernel_factory, tmp_path):
+    """An embedder entered through `python -m pkg.module` leaves `__main__` with a
+    spec the child must not act on: `multiprocessing` would re-import it before
+    `child_main` runs, and the read jail refuses everything under $HOME outside
+    the interpreter and our own package. The child needs the harness, never the
+    embedder's entry point.
+
+    Spec name deliberately does not end in `.__main__` — CPython's
+    `_fixup_main_from_name` returns early for that shape, which is why a plain
+    `python -m pkg` was never affected.
+    """
+    spec = importlib.machinery.ModuleSpec("pyharness_absent_embedder.cli", loader=None)
+    main = sys.modules["__main__"]
+    with mock.patch.object(main, "__spec__", spec):
+        kernel = kernel_factory(_broker(tmp_path))
+        # Without the detach the child dies re-importing a module that is not
+        # importable there, and every cell reports the kernel death instead.
+        assert kernel.run("print(1 + 1)") == "2"
+        assert kernel.run("n = 41") == "(no output)"
+        assert kernel.run("print(n + 1)") == "42"
+
+
+def test_detached_main_restores_the_parents_own_main(tmp_path):
+    """The detach mutates process-global state, so it has to put it back — callers
+    may still pickle objects defined in `__main__` after a kernel starts."""
+    main = sys.modules["__main__"]
+    before_spec, before_file = main.__spec__, getattr(main, "__file__", None)
+    with remote_host._detached_main():
+        assert main.__spec__ is None
+    assert main.__spec__ is before_spec
+    assert getattr(main, "__file__", None) == before_file
 
 
 def test_variables_persist_across_cells(kernel_factory, tmp_path):

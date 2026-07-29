@@ -104,14 +104,15 @@ test:
 	uv run pytest -q
 
 ## evals: run the adversarial suite and refresh the committed scoreboard
-# Invoked through -c rather than -m: some attacks start a real sandboxed kernel,
-# and multiprocessing re-imports the parent's __main__ inside that child, which
-# the child's read jail correctly refuses for anything outside the pyharness
-# package (evals/run.py detaches __main__ for the same reason). Exit code is
-# non-zero on any attack that deviates from its documented expectation.
+# Exit code is non-zero on any attack that deviates from its documented
+# expectation. This used to need `-c` instead of `-m`, because some attacks
+# start a real sandboxed kernel and multiprocessing re-imported the parent's
+# __main__ inside it; the kernel now detaches __main__ before spawning, so the
+# plain -m form works and this target doubles as the end-to-end check that it
+# still does.
 .PHONY: evals
 evals:
-	uv run python -c "import sys; from evals.run import main; sys.exit(main(['--write', 'evals/SCOREBOARD.md']))"
+	uv run python -m evals.run --write evals/SCOREBOARD.md
 
 # Lint scope is listed explicitly rather than run repo-wide: agents/old/ holds
 # retired scratch scripts that a bare `ruff check .` fails on, and they are not

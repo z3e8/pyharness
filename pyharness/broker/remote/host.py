@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 
@@ -22,6 +23,52 @@ from .sandbox import check_unsandboxed_platform, make_child_executable
 # Serializes the set_executable -> Process.start critical section across every
 # RemoteKernel in the process (see _start_locked).
 _START_LOCK = threading.Lock()
+
+
+@contextmanager
+def _detached_main():
+    """Stop the spawned child re-importing the *parent's* entry module.
+
+    `multiprocessing.spawn.get_preparation_data` records how to rebuild
+    `__main__` in the child, and the child replays it before anything else runs.
+    That is wrong for us twice over: the child needs the harness, never the
+    embedder's entry point, and the read jail deliberately refuses everything
+    under $HOME except the interpreter and the `pyharness` package — so the
+    re-import fails and the child dies before `child_main` is reached, surfacing
+    as `(kernel process died — session state lost)` on the very first cell.
+
+    Clearing `__spec__` and `__file__` leaves `get_preparation_data` with neither
+    `init_main_from_name` nor `init_main_from_path` to emit. Console scripts and
+    plain `python script.py` never hit this; nor does `python -m pkg`, because
+    CPython's `_fixup_main_from_name` returns early for a name ending in
+    `.__main__`. What breaks is `python -m pkg.module` — the shape `evals/run.py`
+    and any embedder CLI take.
+
+    Restored on the way out: `__main__` is process-global, and callers may still
+    pickle objects defined there. Safe against concurrent starts because every
+    caller holds `_START_LOCK`.
+    """
+    main = sys.modules.get("__main__")
+    if main is None:
+        yield
+        return
+    spec, had_file = main.__spec__, hasattr(main, "__file__")
+    file = getattr(main, "__file__", None)
+    main.__spec__ = None
+    # Windows reads `__main__.__file__` unguarded when `__spec__` is None
+    # (`spawn.py`'s `elif ... not main_module.__file__.endswith('.exe')`), so
+    # None would raise there. sys.executable ends in `.exe` and makes that test
+    # false, which skips the branch exactly as None does everywhere else.
+    main.__file__ = sys.executable if sys.platform == "win32" else None
+    try:
+        yield
+    finally:
+        main.__spec__ = spec
+        if had_file:
+            main.__file__ = file
+        else:
+            del main.__file__
+
 
 # Best-effort reaper of pyharness-sb-* temp dirs left by a previous run that
 # crashed hard (close() removes them on a clean exit). Age-gated well past any
@@ -145,7 +192,12 @@ class RemoteKernel:
             ),
             daemon=True,
         )
-        proc.start()
+        # get_preparation_data runs inside start(), so the detach has to span the
+        # call itself, not just Process construction.
+        # get_preparation_data runs inside start(), so the detach has to span the
+        # call itself, not just Process construction.
+        with _detached_main():
+            proc.start()
         child_conn.close()  # the child holds its own copy; drop ours
         self._proc, self._conn = proc, parent_conn
 
