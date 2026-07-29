@@ -30,7 +30,10 @@ jobs:
             python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v8
+      # Pinned to an exact tag on purpose: setup-uv stopped publishing moving
+      # major-version tags after v7, so `@v8`/`@v9` resolve to nothing and the
+      # job dies before checkout. Bump this by hand to a real release tag.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv python install ${{ matrix.python-version }}
@@ -42,4 +45,6 @@ jobs:
         # opt-in is the evidence that confinement is actually in force. If a
         # runner ever lands on a kernel below the Landlock floor this goes red
         # rather than silently running unconfined, which is the intended failure.
-        run: uv run pytest -q
+        #
+        # Invoked through make so CI and the local gate can never diverge.
+        run: make test
