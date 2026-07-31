@@ -8,6 +8,7 @@ import json
 import multiprocessing as mp
 import os
 import pickle
+import signal
 import sys
 import threading
 import time
@@ -540,16 +541,29 @@ def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
     kernel = RemoteKernel(_broker(tmp_path))
     kernel.run("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN)")
     proc = kernel._proc
-    entered = threading.Event()
+    # The child must be *known* to be executing the cell before close() runs.
+    # Setting an event on the parent-side thread proves nothing — it fires before
+    # kernel.run() has even put the cell on the pipe — and a sleep is a guess. If
+    # the child were still idle on recv() it would take close()'s graceful
+    # shutdown message and exit cleanly, and every assertion below would still
+    # pass: the SIGKILL escalation would silently stop being covered. So the cell
+    # touches a sentinel as its first statement. Once that file exists the child
+    # is inside the cell body and cannot return to recv() for 60s, which is
+    # exactly the precondition this test needs. The write goes through the
+    # brokered `write` builtin, not raw open() — the OS sandbox denies the child
+    # direct filesystem writes, which is the point of it.
+    wedged = Workspace(tmp_path).dir / "wedged"
 
     def wedge():
-        entered.set()
-        kernel.run("import time; time.sleep(60)")
+        kernel.run('write("wedged", "x")\nimport time; time.sleep(60)')
 
     t = threading.Thread(target=wedge, daemon=True)
     t.start()
-    entered.wait(timeout=5)
-    time.sleep(0.3)  # let the child enter the cell
+    deadline = time.monotonic() + 10
+    while not wedged.exists():
+        assert time.monotonic() < deadline, "child never entered the wedge cell"
+        assert t.is_alive(), "wedge cell returned instead of blocking"
+        time.sleep(0.01)
     kernel.close()
     # Wait for the reap to land rather than asserting on the wall clock. The
     # patched 0.5s above exists to keep this test fast, not to assert a latency
@@ -560,7 +574,12 @@ def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
     # assertions below still fire.
     proc.join(timeout=10)
     assert not proc.is_alive()
-    assert proc.exitcode is not None  # reaped, not a zombie
+    # -SIGKILL, not merely "reaped": with SIGTERM ignored and the child inside a
+    # 60s cell, SIGKILL is the only way out, so the exit status names the path
+    # that was actually taken. A graceful shutdown exits 0 and would satisfy a
+    # bare `is not None` — which is how this test could pass while covering the
+    # wrong branch entirely.
+    assert proc.exitcode == -signal.SIGKILL
     t.join(timeout=5)
     assert not t.is_alive()
 
