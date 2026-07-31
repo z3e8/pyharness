@@ -538,6 +538,12 @@ def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
     # close() on a child stuck mid-cell (it never reads the shutdown message,
     # and here also ignores SIGTERM) must escalate to SIGKILL and reap.
     monkeypatch.setattr(remote_host, "_REAP_TIMEOUT_S", 0.5)
+    # Built outside the kernel_factory fixture (this test drives close() itself),
+    # so nothing cleans up on the failure path: if this test fails or the run is
+    # interrupted before close(), the SIGTERM-ignoring child below outlives it.
+    # Self-limiting — the child exits when its 60s sleep ends and stale
+    # pyharness-sb-* dirs are cleared by _reap_stale_sandbox_dirs() on the next
+    # start — but it is why a killed run can leave a process around for a minute.
     kernel = RemoteKernel(_broker(tmp_path))
     kernel.run("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN)")
     proc = kernel._proc
