@@ -136,6 +136,26 @@ format:
 typecheck:
 	uv run mypy
 
+# --- container ------------------------------------------------------------------
+# BYO key by design: the image is built from source only (see .dockerignore's
+# deny-all context) and config arrives at `docker run` time via --env-file.
+IMAGE ?= pyharness
+
+## docker-build: build the container image (self-contained, non-root, no key baked in)
+.PHONY: docker-build
+docker-build:
+	docker build -t $(IMAGE) .
+
+## docker-run: interactive agent in the container (key from .env; state persists in a volume)
+.PHONY: docker-run
+docker-run: .env docker-build
+	docker run -it --rm --env-file .env -v pyharness-home:/home/agent $(IMAGE)
+
+## docker-verify: prove the OS sandbox (Landlock+seccomp) engages on this Docker host
+.PHONY: docker-verify
+docker-verify: docker-build
+	docker run --rm --entrypoint python $(IMAGE) /opt/pyharness/verify-sandbox.py
+
 ## verify-audit: check a session's audit log hash chain (DIR=.sessions/<name>)
 .PHONY: verify-audit
 verify-audit:
