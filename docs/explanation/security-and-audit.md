@@ -5,6 +5,11 @@ harness decides what that code is allowed to do, keeps secrets out of its reach,
 and records everything.** Four mechanisms, all sitting at or behind
 [the broker](broker.md).
 
+> This page is the *mechanisms*. For the perimeter they add up to — the
+> adversary model, what is confined on each platform, and all ten published
+> gaps grouped by the decision behind them — see the
+> [threat model](threat-model.md).
+
 ## Policy — what may run
 
 `pyharness/security/policy.py` judges each action (`"<capability>.<operation>"`)

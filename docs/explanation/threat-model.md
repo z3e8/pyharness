@@ -1,0 +1,309 @@
+# Threat model
+
+[Security & audit](security-and-audit.md) describes the mechanisms. This page
+states the **perimeter** they add up to: who the adversary is, what the box
+actually confines on each platform, and every gap that is known and published —
+each with the decision that produced it.
+
+The gaps are here because a perimeter nobody has drawn the edge of is not a
+perimeter. Every one of them is reproduced as a scored attack in
+[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md), which `make test` fails on
+in **both** directions: a gap that quietly gets closed breaks the suite exactly
+like a defense that quietly breaks.
+
+## The adversary
+
+Three, in the order they drive the design.
+
+1. **The agent's own code.** The model writes Python; the harness runs it. The
+   agent is not assumed malicious — it is assumed *unverified*, which for design
+   purposes is the same thing. Everything reachable from the kernel namespace is
+   a broker proxy, so there is no callable that skips policy → audit → budget.
+2. **Content the agent reads.** A web page, an MCP tool result, an email body —
+   all attacker-controlled text. The design answer is that reads return
+   untrusted input and nothing in that input authors a decision: approval
+   prompts and grant scopes are built by the harness from the *structured* call,
+   never from a display string the agent or a page supplied. Injected text can
+   ask for anything; it has nowhere to land.
+3. **Someone holding the log afterwards.** The audit chain is tamper-evident, so
+   an account of a session can be checked by a party who did not watch it
+   happen.
+
+### Explicitly outside the model
+
+- **The parent process.** The broker runs *unsandboxed* — it has to, since it is
+  what performs the side effects the child is denied. A bug in the harness
+  itself, or a malicious dependency imported parent-side, is not something the
+  harness defends against.
+- **Anyone with write access to the session directory.** They can rewrite
+  `audit.jsonl` and its anchor together. Agent code is *not* such an attacker on
+  a sandboxed platform: the log and the anchor live one level above the
+  workspace the write jail confines it to.
+- **The model provider**, and anyone who can substitute the completions.
+- **A resolver you do not control** — see the DNS-rebinding residual below.
+- **A human who approves everything.** Prompt fatigue is treated as a *design
+  constraint* rather than an attacker: four of the ten gaps below exist
+  precisely because a prompt asked too often stops being a decision. That
+  tradeoff is stated at each one rather than hidden.
+
+## The perimeter, per platform
+
+Confinement is built for two platforms, and claimed for exactly those two.
+
+| Agent code in the child can… | macOS (Seatbelt) | Linux, Landlock ABI 3+ | Windows · Linux below the floor |
+|---|---|---|---|
+| open an outbound socket | no | no (seccomp on `AF_INET`/`AF_INET6`/`AF_PACKET`) | **yes** |
+| write outside its workspace | no | no (Landlock) | **yes** |
+| read `$HOME` | no | no (Landlock) | **yes** |
+| read the parent's `/proc/<pid>/environ` — where your API key and vault passphrase live | n/a (no `/proc`) | no (Landlock hooks `ptrace_access_check`, which also denies `PTRACE_ATTACH`) | **yes**, on Linux below the floor |
+| exhaust resources | core dumps off | core dumps off, process cap | Linux: same rlimits · Windows: **none** |
+| **start at all, by default** | yes | yes | **no — refuses** |
+
+The floor on Linux is **Landlock ABI 3 (kernel 6.2)** on x86-64 or aarch64,
+because ABI 3 is the first with `LANDLOCK_ACCESS_FS_TRUNCATE`; below it,
+`truncate(2)` on an already-open descriptor escapes the write jail, so an older
+kernel reports *no sandbox* rather than a jail with a hole. Both backends are
+applied by the process to itself — no helper binary, no user namespaces, no root
+— and both are irrevocable and inherited across `exec`, so they hold inside an
+ordinary container and cover any subprocess the agent spawns.
+
+**Windows is unconfined by design, and fails closed.** No backend is written for
+it, and the honest response to that is to refuse to run rather than to claim a
+perimeter that does not exist. `check_unsandboxed_platform()` runs when the
+session constructs its out-of-process kernel — before any agent code, before any
+LLM spend — and raises. Running anyway takes the explicit
+`PYHARNESS_ALLOW_UNSANDBOXED=true` opt-in and prints a one-time stderr warning
+that agent code is unconfined. Where a sandbox exists the gate is a no-op and the
+variable is ignored, so the opt-in cannot weaken a platform that has a perimeter.
+The same gate covers a Linux kernel below the ABI floor. CI runs the full suite
+on Ubuntu (3.11/3.12/3.13) and macOS **without** the opt-in set, which is what
+makes "confinement is in force" an observation rather than a claim: a runner
+below the floor turns the build red instead of silently running unconfined.
+
+### What is inside the box and what is beside it
+
+The *child* is sandboxed. Everything else that execs a program parent-side is
+classified in writing, four ways — the exemption table is what the enumeration
+tests hold to:
+
+- **`shell.bash` and `packages.install` are wrapped** in the same OS profile as
+  the kernel (`packages` differs in one way — pip is allowed to reach the index,
+  with writes confined to the session venv plus scratch). Both are also
+  approval-gated per call and never grantable.
+- **Playwright's Chromium** is launched by the playwright package, outside the
+  harness sandbox profile. The perimeter claimed for the browser has always been
+  navigation scoping plus per-action approval — never a network policy. Two of
+  the gaps below are consequences of that.
+- **A local (stdio) MCP server** is exec'd with the minimal allowlist
+  environment but no sandbox wrap. Mounting one requires human approval and is
+  never grantable: an approved local MCP server runs with the operator's OS
+  reach.
+- **Fixed harness-authored argv** — venv creation, the desktop-notify helper —
+  is unwrapped because no agent-controlled argument reaches it.
+
+## Dispatch is centralized; containment is not
+
+This is the load-bearing structural fact about the codebase, and it is the
+reason the enumeration tests exist.
+
+`broker/dispatch.py` is a genuine choke point. Containment is not one mechanism
+behind it — it is several (host scoping, sandbox wrapping, secret-sink
+mirroring), and each is implemented **per capability**. So every capability added
+is an opportunity to silently opt out of one.
+
+The 2026-07 security recon found four unrelated-looking bugs that were that one
+bug wearing four hats:
+
+- `allowed_hosts` was threaded through 3 of the capabilities and not the rest;
+- `packages.install` skipped the sandbox wrap `shell.bash` already had;
+- the MCP-over-HTTP transport dropped the scope argument;
+- browser subresource loads skip the scope check.
+
+Three were fixed. The fourth is a stated boundary (below). But the durable fix is
+not those three patches — the next capability would have reintroduced the shape.
+It is `tests/test_capability_policies.py`, which for each cross-cutting policy
+enumerates every capability **from the live broker registry** — never from a
+hand-written list — and forces each into one of two states:
+
+- it *enforces* the policy, with the wiring asserted on the live instance (e.g.
+  `cap.allowed_hosts == session.allowed_hosts`, `cap._sink_mirror is
+  session.secret_sink`), or
+- it is a *named exemption carrying a written rationale*, which the test
+  length-checks so a stub cannot stand in for a decision.
+
+Five policies are covered: host scoping, parent-side sandbox wrapping, dispatch
+mediation, approval classification, and secret-sink wiring. Registering a
+seventeenth capability without classifying it fails the three that partition over
+the whole registry (host scope, agent-facing surface, approval), and the other
+two are detector-driven rather than declarative — a newcomer that execs a program
+or takes the `Vault` fails those as well, and one that does neither has nothing
+to classify. The enforcement assertions are not vacuous either: un-threading the
+session scope from a single capability fails the host-scope test even though the
+attribute is still there.
+
+That does not make gaps impossible. It makes them **impossible to leave
+undecided**, which is the property that survives the next contributor. The
+exemption tables in that file are the authoritative list of stated design
+boundaries, and every rationale below is asserted there or in the scoreboard, so
+prose and behavior cannot drift apart.
+
+## The published gaps
+
+**30 of 40 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
+errors.** The per-attack rationales are in
+[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups the ten
+by the *decision* that produced them, because there are fewer decisions than
+gaps.
+
+### 1. A grant's unit of trust is coarser than the prompt's
+
+`host-grant-covers-any-path` · `spawn-grant-covers-wider-child` ·
+`mcp-grant-covers-another-tool`
+
+Grants are keyed on `(action class, host)`, on `("spawn", "session")`, and on the
+MCP server rather than the tool. In each case the human is shown one concrete
+thing and grants a slightly wider class of it. The alternative — a grant keyed on
+the exact request, the exact child, the exact tool — re-prompts on every URL of a
+normal multi-step task and on every tool of a twenty-tool server, and the
+reliable outcome of prompt fatigue is that humans approve everything. Precision
+on paper, lost in practice.
+
+What bounds it: a grant never widens policy, only short-circuits the prompt;
+IRREVERSIBLE actions are never covered and never mint; grants are exact-match
+with no wildcards and die with the session; the reach is still bounded by the
+session's host scope; and issuance, every covered call, and revocation all land
+in the audit chain.
+
+### 2. The browser is outside the harness's network perimeter
+
+`browser-subresource-off-scope` · `browser-websocket-unvetted`
+
+Host scope applies to **main-frame navigations** — where the agent goes — not to
+what a page loads. Scoping subresources means blocking every CDN, font and
+analytics host a real site depends on, which breaks the page the agent was sent
+to read. And the browser's enforcement point is HTTP request interception, which
+does not see WebSocket traffic at all: there is no check to fail, which is worse
+than a check that is too lenient.
+
+The WebSocket half is the widest gap in the suite and the least defensible on
+design grounds.
+What makes it a boundary rather than a bug is where the browser sits — a full
+Chromium running beside the harness sandbox, for which the claim has always been
+navigation scoping plus per-action approval. Subresource loads still pass the
+SSRF guard, so internal and link-local targets stay refused, and every mutating
+browser action still needs a human. **The operational consequence, stated
+plainly: a session that must not leak should not be given the browser.** The
+`http`/`web` lanes are fully scoped and are the contained way to read the web.
+
+The WebSocket hole is pinned by a test that fails if it is ever closed, so this
+section cannot go stale silently.
+
+### 3. Masking is a backstop, not the boundary
+
+`secret-re-encoded-in-response` · `secret-via-exception-attribute`
+
+Redaction of agent-visible text is a literal substring replace over a secret and
+its URL-encoded spellings. It catches the incidental verbatim echo — the common
+case — and deliberately not a value a server re-encoded (base64, hex, HTML
+entities, split across chunks). Relatedly, whether a failure is carrying a
+credential is decided from what the failure *says* (its message and repr), not by
+rewriting arbitrary objects' attributes, which would mean either destroying the
+error type agent code catches on or walking unbounded object graphs.
+
+Widening either would trade a few more catches for `***` appearing over innocent
+text and for errors the agent can no longer handle. The boundary that actually
+holds is upstream: a resolved secret only ever travels to a host the vault and
+the human sanctioned, and never enters agent-visible output by design. The server
+in a position to re-encode a credential is one that was already given it.
+
+### 4. Reads are free, so arbitrary data can leave via a GET
+
+`unapproved-data-exfil`
+
+The approval gate fires on the *release of a credential the harness holds* and on
+state-changing methods. A GET carrying a string the agent already had is neither.
+Gating it means classifying arbitrary outbound content as sensitive, which cannot
+be done reliably and would put a prompt in front of ordinary work.
+
+The stated boundary for arbitrary data is therefore the **host scope**, not
+approval — the companion attack `scoped-data-exfil` shows the same exfiltration
+refused outright inside a confined session — plus the audit chain, which records
+every request whether or not anyone was asked. This is the single most important
+sentence for anyone deciding how to run a task: *if the data matters, scope the
+session.*
+
+### 5. The audit anchor is not a keyed MAC
+
+`audit-remove-the-anchor`
+
+A hash chain proves internal consistency. Detecting deletion of its *end* needs a
+trust root the attacker cannot reach, which means either a key store this harness
+does not have or shipping the head off-box; inventing a local one would only look
+like a guarantee. A missing anchor is therefore treated as "no trust root" rather
+than as evidence, because a log that never had one is indistinguishable from one
+whose anchor was removed.
+
+The claim is exactly what it says: the chain is tamper-**evident** against anyone
+without write access to the session directory. Agent code is not such an attacker
+by construction — the OS sandbox confines its writes to the workspace, and both
+`audit.jsonl` and its anchor live one level above it — so reaching this gap means
+already being outside the box.
+
+### 6. Host scope does not narrow going down — the one open gap
+
+`child-scope-wider-than-parent`
+
+The other nine are defended trade-offs. This one is stated as **open, not
+defended**: a child's host scope is normalized and wired in but never intersected
+with the parent's, so a scoped parent can ask for a child with a wider one. The
+natural reading of the feature is that a scope follows delegation down, and here
+it does not.
+
+It is a disclosure failure rather than a silent escape: reaching it needs a human
+to approve a spawn whose prompt lists the child's hosts explicitly, the child
+still cannot delegate further (depth is one), and it cannot exceed the parent's
+budget slice. The human is shown the widening and has to accept it.
+
+## What the suite deliberately does not contain
+
+Three candidate attacks were considered and not written, because each would
+report the wrong thing:
+
+- **`shell` / `packages` sitting outside the host scope** and **`packages.install`
+  build hooks** are contained by the OS sandbox. On macOS and Linux the exploit
+  does not succeed, so scoring them as gaps would be false; on an unsandboxed
+  platform they would succeed. A platform-dependent verdict is worse than an
+  absent one.
+- **Agent code writing to `audit.jsonl`** is the same problem inverted — blocked
+  on the supported platforms, reddening CI anywhere else for a reason that says
+  nothing about the harness.
+
+All three live where they belong: as written exemptions in the policy
+enumeration tests, whose rationale names the OS sandbox as the containment, with
+`tests/test_shell_sandbox.py` and `tests/test_linux_sandbox.py` asserting the
+floor directly.
+
+## Residual risks that are not scored anywhere
+
+- **DNS rebinding (TOCTOU).** The egress guard resolves a hostname and the HTTP
+  client resolves it again at connect, so a deliberately racing resolver can
+  present a different address to the socket than to the guard. Resolution
+  *failure* fails closed, and the guard re-runs on every redirect hop, but
+  pinning the connection to the vetted IP is the durable fix and is not built.
+- **Anything reached by compromising the parent**, per the adversary model above.
+- **`sessionStorage`-based logins** are not captured by a saved site profile, and
+  profile auto-refresh persists every cookie the context accrued — so keep a
+  profile session on its own site.
+
+## Checking any of this yourself
+
+```bash
+make evals                            # re-run the 40 attacks, rewrite the scoreboard
+make test                             # the suite plus the policy enumeration tests
+uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
+make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N
+```
+
+The mechanisms behind every claim here are in
+[Security & audit](security-and-audit.md); the routing they sit on is in
+[The broker](broker.md).
