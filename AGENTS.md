@@ -113,3 +113,18 @@ backlog.
   (see above).
 - Session state lives under `.sessions/` (gitignored). The agent's relative
   paths resolve inside its session workspace, not the repo root.
+- **Verifying a timing-sensitive test? Loop it under load — but don't saturate,
+  and say so.** Several tests here coordinate real processes and threads
+  (`test_spawn.py`, `test_remote_kernel.py`, `test_llm_client.py`), and a race
+  in one is only provable by running it repeatedly under contention. That is the
+  right method; keep two things in mind while doing it. **Leave headroom** —
+  contention is what surfaces the race, and a few parallel workers gets you that
+  without making an interactive machine unusable. **Report the shape of the run**
+  ("40 iterations under 4-way load, ~6 min"): the dev machine is somebody's
+  desktop, and an unannounced fleet of `uv run pytest` processes pinning every
+  core is indistinguishable from a runaway.
+- Tests that build a `RemoteKernel` **outside** the `kernel_factory` fixture own
+  their own teardown. A child that ignores SIGTERM outlives a failed or
+  interrupted run (it exits when its sleep ends, and stale `pyharness-sb-*` dirs
+  are cleared by `_reap_stale_sandbox_dirs()` on the next start) — self-limiting,
+  but it is why a killed run can leave a process behind for a minute.
