@@ -116,8 +116,9 @@ evals:
 
 # Lint scope is listed explicitly rather than run repo-wide: agents/old/ holds
 # retired scratch scripts that a bare `ruff check .` fails on, and they are not
-# code anyone maintains.
-LINT_PATHS = pyharness tests evals
+# code anyone maintains. deploy/ is in: it carries the container's
+# verify-sandbox script, which is maintained code.
+LINT_PATHS = pyharness tests evals deploy
 
 ## lint: check formatting and lints without changing files (what CI enforces)
 .PHONY: lint
