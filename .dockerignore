@@ -1,0 +1,12 @@
+# Deny-all build context: only what the Dockerfile actually COPYs gets in.
+# This is a containment guarantee, not an optimization — .env, .sessions/,
+# .git and everything else can never leak into an image layer.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!pyharness/
+!deploy/container/
+**/__pycache__
+**/*.pyc
