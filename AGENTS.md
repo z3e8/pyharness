@@ -66,7 +66,7 @@ load-bearing seams are.
 | `pyharness/obs/` | read-side observability: `transcript.py` (shared session views: digest, flattened transcript, outcome vocabulary), `index.py` (derived SQLite session index), `watch.py` (live session viewer, `pyharness-watch`), `telemetry.py` (opt-in OTel export), `trace.py` |
 | `pyharness/` (top) | `audit.py` (hash-chained log), `budget.py`, `util.py`, `reflect.py` + `lessons.py` (post-session self-improvement pass, opt-in) |
 | `tests/` | pytest suite; `mcp_server_fake.py` is a test double |
-| `evals/` | the adversarial suite — `scoreboard.py` (scoring model), `support.py` (verdict helpers + offline network fixtures), `attacks/` (one module per defended claim), `run.py` (`make evals`), `SCOREBOARD.md` (the committed artifact). Runs under `make test` too |
+| `evals/` | two suites. **Adversarial:** `scoreboard.py` (scoring model), `support.py` (verdict helpers + offline network fixtures), `attacks/` (one module per defended claim), `run.py` (`make evals`), `SCOREBOARD.md` (the committed artifact). **Demo** (`demo/`): ten end-to-end tasks against a loopback corpus, `python -m evals.demo.run [--baseline]`, artifact `demo/COMPARISON.md`. Both run under `make test`; the demo's model calls do not — see its `corpus/README.md` for what each axis does and does not claim |
 | `deploy/observability/` | docker-compose for the optional OTel backends: Phoenix, and Langfuse (heavier profile) |
 | `docs/` | documentation — explanation / how-to / reference (see `docs/index.md`) |
 | `.claude/skills/docs/` | the `docs` skill: how to use and maintain the docs |
