@@ -711,6 +711,19 @@ function handle(e) {
     laneAdd(lane, el('div', 'row small', 'llm ' + (e.text || '')));
   } else if (k === 'note') {
     // preamble text duplicated by the llm_call event — skip
+  } else {
+    // Unknown kind. A viewer that silently drops what it does not recognize is
+    // worse than one that renders it plainly: a new trace kind (or an old
+    // session replayed by a newer viewer) would simply not exist on screen,
+    // with nothing to notice. Render the kind, its text, and whatever other
+    // fields it carried, so the event is visible and legible without the
+    // viewer having to know what it means.
+    const rest = Object.keys(e)
+      .filter((f) => !['kind', 'ts', 'text', 'session'].includes(f))
+      .map((f) => f + '=' + (typeof e[f] === 'object' ? JSON.stringify(e[f]) : e[f]));
+    laneAdd(lane, el('div', 'row small', k
+      + (e.text ? ': ' + e.text : '')
+      + (rest.length ? ' · ' + rest.join(' ') : '')));
   }
 }
 

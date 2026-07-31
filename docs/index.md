@@ -10,6 +10,7 @@ design and the details, in three sections — pick by what you're trying to do:
   - [The `run_python` action space](explanation/action-space.md) ·
     [The broker](explanation/broker.md) ·
     [Security & audit](explanation/security-and-audit.md) ·
+    [Threat model](explanation/threat-model.md) ·
     [Budget](explanation/budget.md)
 - **[How-to guides](how-to/)** — task-oriented recipes for a specific goal.
   - [Add a tool or save a skill](how-to/add-a-tool-or-skill.md) ·
