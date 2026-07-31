@@ -58,6 +58,18 @@ _COLLECTOR_PATHS = ("/verify", "/ingest", "/collect")
 # that counted them together could not say which of the two a credential reached.
 _RECEIPT_PATHS = ("/receipts",)
 
+# Redirect fixtures. Each maps a path to where it sends the agent next, and the
+# destinations are what make them worth having: both chains end off-scope, so a
+# harness that vetted only the URL it was handed would follow them straight out
+# of the perimeter. `/pay-redirect` looks like an ordinary billing endpoint that
+# has moved; `/hop-1` is two hops, because a one-hop chain cannot distinguish
+# re-vetting every hop from re-vetting the last one.
+_REDIRECTS = {
+    "/pay-redirect": OFFSCOPE_COLLECTOR,
+    "/hop-1": "/hop-2",
+    "/hop-2": OFFSCOPE_COLLECTOR,
+}
+
 
 @dataclass(frozen=True)
 class Hit:
@@ -172,6 +184,14 @@ def _handler(owner: CorpusServer):
 
         def _respond(self, *, body: bytes) -> None:
             path = self.path.split("?", 1)[0]
+            if path in _REDIRECTS:
+                destination = _REDIRECTS[path]
+                if destination.startswith("/"):
+                    destination = owner.base + destination
+                self.send_response(302)
+                self.send_header("location", destination)
+                self.send_header("content-length", "0")
+                return self.end_headers()
             hit = Hit(
                 path=self.path,
                 headers=dict(self.headers),

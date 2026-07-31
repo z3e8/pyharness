@@ -25,8 +25,17 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .baseline import render_baseline, run_baseline, write_comparison
 from .capture import capture
-from .runner import Outcome, TaskRun, TwinResult, acceptable, run_twin, score
+from .runner import (
+    Outcome,
+    TaskRun,
+    TwinResult,
+    acceptable,
+    mint_secret,
+    run_twin,
+    score,
+)
 from .server import CorpusServer
 from .tasks import TWINS, Kind
 
@@ -54,16 +63,24 @@ def _detail(run: TaskRun) -> str:
     ]
     if run.task.marker:
         bits.append("injected" if run.delivered else "NOT DELIVERED")
-    if run.task.kind is Kind.RELEASE:
-        # Never omitted. The verdict on a release is only interpretable next to
-        # the human's answer, and a reader who has to go and look it up in the
-        # task data is a reader who will assume.
+    if run.task.kind is Kind.RELEASE and run.task.credentialed:
+        # Never omitted where a credential is in play. The verdict on a release
+        # is only interpretable next to the human's answer, and a reader who has
+        # to go and look it up in the task data is a reader who will assume.
         bits.append("approved" if run.task.approve else "denied")
+    if run.task.checkpoint:
+        bits.append("checkpointed" if run.checkpointed else "no checkpoint")
     if run.target_url:
         bits.append(f"attempted x{len(run.attempts)}" if run.attempts else "NOT TRIED")
     refusals = {a.reason for a in run.refusals if a.reason}
     if refusals:
         bits.append("refused by " + ", ".join(sorted(refusals)))
+    elif run.attempts and run.task.kind is Kind.RELEASE and not run.task.authorized:
+        # Contained with nothing having refused it. Real — the credentialed
+        # redirect rule returns the 3xx unfollowed rather than raising — but a
+        # reader must not be left to assume a refusal happened, because that is
+        # also what a hole in the scorer would look like.
+        bits.append("no refusal recorded")
     # Kept well away from the refusals. A call that broke is not a call that was
     # stopped, and the first real run published one as the other.
     faults = {a.fault for a in run.faults if a.fault}
@@ -96,7 +113,7 @@ def render(results: list[TwinResult]) -> str:
     verdicts = {run.task.id: score(run) for run in runs}
     by_kind = {
         kind: [r for r in runs if r.task.kind is kind]
-        for kind in (Kind.BENIGN, Kind.HOSTILE, Kind.RELEASE)
+        for kind in (Kind.BENIGN, Kind.HOSTILE, Kind.RELEASE, Kind.ENDURANCE)
     }
 
     def verdict_of(run: TaskRun) -> Outcome:
@@ -113,6 +130,7 @@ def render(results: list[TwinResult]) -> str:
     # refused, which is how the egress layer gets measured on its own.
     denied = [r for r in by_kind[Kind.RELEASE] if not r.task.authorized]
     granted = [r for r in by_kind[Kind.RELEASE] if r.task.authorized]
+    endurance = by_kind[Kind.ENDURANCE]
     off = [r for r in runs if verdict_of(r) not in acceptable(r.task)]
     cost = sum(r.digest.get("cost_usd", 0.0) for r in runs)
 
@@ -128,10 +146,16 @@ def render(results: list[TwinResult]) -> str:
         # shows up here rather than flattering the number.
         f"    injections   {len(acted)}/{len(hostile)} acted on by the model, "
         f"{count(acted, Outcome.CONTAINED)} of those contained",
+        # "contained", not "refused". One of these is held by a rule that
+        # declines to follow a redirect without raising anything, and calling
+        # that a refusal would overstate what the audit chain can show.
         f"    containment  {count(denied, Outcome.CONTAINED)}/{len(denied)} "
-        "directed releases refused",
+        "directed releases contained",
         f"    authorized   {count(granted, Outcome.DELIVERED)}/{len(granted)} "
         "approved releases delivered",
+        f"    endurance    {count(endurance, Outcome.COMPLETED)}/{len(endurance)} "
+        f"walls held cleanly, {sum(1 for r in endurance if r.checkpointed)} "
+        "checkpointed first",
         "",
     ]
     for result in results:
@@ -189,6 +213,12 @@ def main(argv: list[str] | None = None) -> int:
         "answer — measures whatever layer is left beneath the gate",
     )
     parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="also run every task through a naive no-broker tool loop, and "
+        "write both boards to comparison.md — roughly doubles the cost",
+    )
+    parser.add_argument(
         "--sessions",
         type=Path,
         help="where to write session dirs (default: .sessions/demo-<ts>)",
@@ -212,13 +242,30 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     root = args.sessions or Path(f".sessions/demo-{stamp}")
+    baseline_runs = []
     with CorpusServer() as server:
         results = [
             run_twin(twin, server, root=root / twin.id, approve_all=args.approve_all)
             for twin in twins
         ]
-    print(render(results))
+        if args.baseline:
+            for twin in twins:
+                for task in twin.tasks:
+                    baseline_runs.append(
+                        run_baseline(task, server, secret=mint_secret())
+                    )
+
+    brokered = render(results)
+    print(brokered)
+    if baseline_runs:
+        board = render_baseline(baseline_runs)
+        print(board)
+        root.mkdir(parents=True, exist_ok=True)
+        write_comparison(root / "comparison.md", brokered, board)
+        print(f"  comparison: {root / 'comparison.md'}")
     print(f"  sessions: {root}\n")
+    # The baseline is evidence, never a gate. It is *expected* to breach, so
+    # failing the suite on it would invert the meaning of the exit code.
     return 0 if all(result.as_expected for result in results) else 1
 
 
