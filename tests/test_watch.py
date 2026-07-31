@@ -8,7 +8,7 @@ import threading
 import httpx
 import pytest
 
-from pyharness.obs.watch import Tail, WatchServer, _pick_trace, start_in_thread
+from pyharness.obs.watch import PAGE, Tail, WatchServer, _pick_trace, start_in_thread
 
 
 def _write(path, *entries):
@@ -160,6 +160,72 @@ def test_media_route_rejects_path_traversal(server):
     # Escaping the container (../secret.txt) must 404, not read the file.
     assert httpx.get(srv.url + "/media/..%2f/secret.txt").status_code == 404
     assert httpx.get(srv.url + "/media/run-1/missing.png").status_code == 404
+
+
+def _handle_source(page: str) -> str:
+    """The body of the page's `handle(e)` event dispatcher, brace-matched out of
+    the inline script. Fails loudly if the function moves or is renamed — better
+    than a check that silently starts matching nothing."""
+    marker = "function handle(e) {"
+    start = page.index(marker)
+    depth = 0
+    for i in range(start + len(marker) - 1, len(page)):
+        if page[i] == "{":
+            depth += 1
+        elif page[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return page[start : i + 1]
+    raise AssertionError("handle() in the viewer page has unbalanced braces")
+
+
+def _chain_else_clauses(source: str) -> list[str]:
+    """Every `else` belonging to `handle()`'s own top-level if/else-if chain
+    (brace depth 1 inside the function body), as either 'else if' or 'else'.
+    Depth-aware so an `else` nested inside a branch is never mistaken for the
+    end of the chain."""
+    body = source[source.index("{") :]
+    out, depth, i = [], 0, 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif (
+            depth == 1
+            and body.startswith("else", i)
+            and not (body[i - 1].isalnum() or body[i - 1] == "_")
+            and not body[i + 4].isalnum()
+        ):
+            out.append("else if" if body[i + 4 :].lstrip().startswith("if") else "else")
+            i += 4
+            continue
+        i += 1
+    return out
+
+
+def test_viewer_renders_unrecognized_event_kinds(tmp_path):
+    """A trace kind the viewer does not know must render plainly, not vanish.
+
+    `handle()` is one long if/else-if chain over `e.kind`; without a terminal
+    bare `else` an unknown kind produces *nothing* on screen, with nothing to
+    notice — `grant_revoked` already lands there, and so does every kind added
+    later. The static published viewer inherits this page, where a silently
+    dropped event is worse still. This asserts the chain ends in a real
+    fallback that renders the kind and appends it to the lane."""
+    source = _handle_source(PAGE)
+    clauses = _chain_else_clauses(source)
+    assert clauses, "handle() has no if/else chain — the page changed shape"
+    assert clauses[-1] == "else", (
+        "handle()'s kind dispatch does not end in a bare `else` — an "
+        "unrecognized trace kind would render as nothing at all. Keep the "
+        "fallback branch last."
+    )
+
+    fallback = source[source.rindex("} else {") :]
+    assert "laneAdd(" in fallback, "the fallback branch renders nothing"
+    assert "innerHTML" not in fallback, "trace text is untrusted; use textContent"
 
 
 def test_start_in_thread_falls_back_to_an_ephemeral_port(tmp_path):
