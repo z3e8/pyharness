@@ -283,11 +283,18 @@ def test_failed_child_becomes_data(tmp_path):
 
 class GatedLLM:
     """complete() blocks on an event first — a child mid-completion, for tests
-    that need a child pinned in the running state."""
+    that need a child pinned in the running state.
+
+    `entered` is set on the way in, so a test can wait until the child is
+    *provably* inside the completion instead of assuming its thread got there.
+    Without that handshake a test racing `spawn()` may act while the child is
+    still short of the gate, and a step-boundary check (budget, steps) settles
+    it early — the child is no longer pinned and the premise is gone."""
 
     def __init__(self, completions, gate):
         self._completions = list(completions)
         self.gate = gate
+        self.entered = threading.Event()
         self.child_budget = None
 
     def complete(
@@ -304,6 +311,7 @@ class GatedLLM:
         cache_anchor=None,
         total_deadline_s=None,
     ):
+        self.entered.set()
         if not self.gate.wait(5.0):
             raise AssertionError("gate never opened")
         return self._completions.pop(0)
@@ -406,7 +414,15 @@ def test_shutdown_cancels_running_children_cooperatively(tmp_path):
     parent = _session(tmp_path, llm, approver=lambda req: True)
     try:
         handle = parent.broker.call("spawn", "spawn", "long task")
-        abandoned = parent._spawn_cap.shutdown(join_timeout_s=0.05)
+        # spawn() returns once the child is registered, which is *before* its
+        # thread reaches the completion. Wait for the child to be provably
+        # inside the gated call: shutdown() zeroes the slice, so a child still
+        # short of step 1's budget check would settle as stopped:budget instead
+        # of being pinned, and there would be nothing to abandon.
+        assert llm.entered.wait(5.0), "child never reached the gate"
+        # No wall-clock guess: a child blocked on an unset gate cannot finish,
+        # so any join timeout — including none at all — must report it.
+        abandoned = parent._spawn_cap.shutdown(join_timeout_s=0)
         assert [c.name for c in abandoned] == [handle]  # still pinned at the gate
         gate.set()
         result = parent.broker.call("spawn", "wait", handle)
@@ -471,19 +487,12 @@ def test_abandoned_child_settles_before_snapshot_and_never_after(tmp_path):
     import json
 
     gate = threading.Event()
-    entered = threading.Event()
-
-    class EnteredGatedLLM(GatedLLM):
-        def complete(self, **kwargs):
-            entered.set()  # the child is provably pinned mid-completion
-            return super().complete(**kwargs)
-
-    llm = EnteredGatedLLM([_text("late report")], gate)
+    llm = GatedLLM([_text("late report")], gate)
     parent = _session(tmp_path, llm, approver=lambda req: True)
     try:
         handle = parent.broker.call("spawn", "spawn", "slow task")
         run = parent._spawn_cap._children[handle]
-        assert entered.wait(5.0)
+        assert llm.entered.wait(5.0)  # the child is provably pinned mid-completion
         llm.child_budget.record("m", 0.5)  # child spend before abandonment
         # close() joins abandoned children for 10s by default — too slow here.
         orig_shutdown = parent._spawn_cap.shutdown
