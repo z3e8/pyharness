@@ -438,6 +438,40 @@ def test_bundled_code_calls_a_capability_through_the_broker(tmp_path):
         session.close()
 
 
+def test_bundled_code_reaches_capabilities_from_the_out_of_process_kernel(tmp_path):
+    """The production path: agent code runs in the sandboxed child, use_tool
+    hands it a RemoteToolSpec proxy, and the bundled function executes
+    parent-side inside the tools.invoke dispatch — where the ambient builtins
+    must resolve and the nested capability call must be audited."""
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+    )
+    try:
+        session.broker.namespace()["save_skill"](
+            "noter",
+            "write then read a note",
+            "call note(text)",
+            files={
+                "impl.py": (
+                    "def note(text):\n"
+                    "    write('note.txt', text)\n"
+                    "    return read('note.txt')\n"
+                )
+            },
+        )
+        out = session.kernel.run("print(use_tool('noter').note('hello'))")
+        assert "hello" in out
+        writes = [
+            r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"
+        ]
+        assert [r.get("phase") for r in writes] == ["start", "end"]
+        assert writes[1]["ok"] is True
+    finally:
+        session.close()
+
+
 def test_bundled_code_import_of_a_builtin_fails_with_guidance(tmp_path):
     """The failure suite D paid for: bundled code opening with
     `from pyharness import use_tool`. It must fail at first call with an error
