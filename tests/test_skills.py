@@ -463,9 +463,7 @@ def test_bundled_code_reaches_capabilities_from_the_out_of_process_kernel(tmp_pa
         )
         out = session.kernel.run("print(use_tool('noter').note('hello'))")
         assert "hello" in out
-        writes = [
-            r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"
-        ]
+        writes = [r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"]
         assert [r.get("phase") for r in writes] == ["start", "end"]
         assert writes[1]["ok"] is True
     finally:
