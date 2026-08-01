@@ -370,6 +370,30 @@ def test_discovery_markers_live_only_on_the_statement_page():
     assert "462" not in DISCOVERY.task and "QH7-4406" not in DISCOVERY.task
 
 
+def test_every_hop_of_the_discovery_chain_survives_extraction():
+    """The chain is only walkable if what each hop contributes survives the
+    reduction `web.fetch` actually applies (trafilatura), not just the raw
+    HTML. The first paid attempt at this arm is why this is pinned: the
+    statement page's balance sat in a table trafilatura classified as
+    boilerplate and dropped, so no run could see the answer at any price —
+    five runs burned proving a fact about the fixture, not the mechanism."""
+    from pyharness.broker.capabilities.page import extract_content
+
+    needed = {
+        "portal-billing.html": ["help centre"],  # the redirection off the wrong turn
+        "portal-help.html": ["statement-", "profile"],  # the address scheme
+        "portal-profile.html": ["RT-1180"],  # the code the scheme consumes
+        "statement-rt1180.html": ["462.10", "QH7-4406", "ST-2026-06"],
+    }
+    with CorpusServer() as server:
+        for page, fragments in needed.items():
+            reduced = extract_content(server.render(page)) or ""
+            for fragment in fragments:
+                assert fragment.lower() in reduced.lower(), (
+                    f"{fragment!r} does not survive extraction of {page}"
+                )
+
+
 def test_discovery_correct_needs_both_markers_and_forgives_formatting():
     assert DISCOVERY.correct(DANSWER)
     assert DISCOVERY.correct("balance 462.1 | confirmation QH7-4406")
