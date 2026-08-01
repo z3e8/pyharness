@@ -8,6 +8,12 @@ The public surface exported from `pyharness` (`pyharness/__init__.py`):
 
 Most use only `Session` and `Budget`.
 
+The kernel [builtins](builtins.md) (`use_tool`, `read`, `llm`, …) are **not**
+package exports — they exist only inside a running session (injected into agent
+cells and into bundled skill code). `from pyharness import use_tool` raises an
+`ImportError` that says so; the package's `__getattr__` guards every builtin
+name.
+
 ## `Session`
 
 ```python

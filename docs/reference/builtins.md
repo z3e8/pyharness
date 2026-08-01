@@ -231,6 +231,15 @@ executing it, and nothing runs until a function is actually called on the
 the instructions (full text for small files, a def/class outline for large
 ones), so a run can see what is callable instead of re-deriving it.
 
+**Bundled code has these builtins in scope**, exactly as a cell does: when a
+bundled file first executes, the session's builtin namespace is seeded into its
+globals, so skill code calls `use_tool`/`read`/`llm`/… directly and reaches
+external capabilities the usual way (`web = use_tool("web")`; `web.fetch(url)`).
+Never `import pyharness` — the builtins are not package exports, and that import
+fails with an error saying exactly this. Every capability call bundled code
+makes routes through the broker (policy → audit → budget → approvals) the same
+as the agent's own; the audit record is indistinguishable from a direct call.
+
 > Saving or editing a skill requires human approval by default (it writes
 > content that auto-loads in later sessions) — see
 > [the approval policy](../explanation/security-and-audit.md).

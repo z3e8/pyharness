@@ -26,12 +26,19 @@ class SkillsCapability:
 
     name = "skills"
 
-    def __init__(self, registry: Registry, skills_dir: str | Path, on_event=None):
+    def __init__(
+        self, registry: Registry, skills_dir: str | Path, on_event=None, namespace=None
+    ):
         self.registry = registry
         self.skills_dir = Path(skills_dir)
         # Optional hook the session wires to its trace log, so skill authorship
         # and outcomes land in the session record (the index reads them there).
         self._on_event = on_event or (lambda kind, text="", **extra: None)
+        # Zero-arg provider of the session's builtin namespace, threaded into the
+        # skill loader so bundled code runs with the same broker-gated builtins
+        # agent cells get (see tools/skills.py). Deferred: evaluated on first
+        # call of a bundled function, never here.
+        self._namespace = namespace
 
     def exports(self) -> dict:
         return {
@@ -93,6 +100,13 @@ class SkillsCapability:
         executes until a function is actually called — and their source is
         shown by describe_tool, so future runs can see what is callable.
 
+        **Your builtins are in scope inside bundled code**, exactly as in your
+        cells: call use_tool/search_tools/read/llm/… directly and reach
+        external capabilities the usual way (e.g. `web = use_tool("web")` then
+        `web.fetch(url)`). Never `import pyharness` — the builtins are not
+        package exports, and that import fails. Every call bundled code makes
+        is policy/audit/budget-gated the same as your own.
+
         `check` is the skill's success test — one line saying how a run confirms
         it worked (an assertion, a re-fetch, an expected state) — so
         record_skill_use rests on evidence, not impression."""
@@ -108,7 +122,7 @@ class SkillsCapability:
             category=category,
             check=check,
         )
-        register_skill_dir(self.registry, skill_dir)
+        register_skill_dir(self.registry, skill_dir, namespace=self._namespace)
         self._on_event("skill_saved", name, skill=name)
         n = len(files or {})
         return (
@@ -125,7 +139,7 @@ class SkillsCapability:
         validate_skill_name(name)
         self._guard_shadow(name)
         skill_dir = edit_skill_md(self.skills_dir, name, edits)
-        register_skill_dir(self.registry, skill_dir)
+        register_skill_dir(self.registry, skill_dir, namespace=self._namespace)
         self._on_event(
             "skill_edited", name, skill=name, edits=len(edits), reason=reason
         )

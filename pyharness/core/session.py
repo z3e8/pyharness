@@ -329,8 +329,19 @@ class Session:
         from ..tools.skills import load_skills
 
         self.skills_dir = Path(skills_dir or "~/.pyharness/skills").expanduser()
+
+        # Bundled skill code runs with the session's builtins ambient — the same
+        # broker-gated proxies agent cells get — so every capability call a
+        # skill makes routes through dispatch like the agent's own. The provider
+        # is deferred (evaluated at a bundled function's first call), which is
+        # why referencing self.broker here, before it is built, is sound.
+        self.broker: Broker  # annotation-only pre-declaration for the closure
+
+        def skill_namespace() -> dict:
+            return self.broker.namespace()
+
         if self._has("skills"):
-            load_skills(self.registry, self.skills_dir)
+            load_skills(self.registry, self.skills_dir, namespace=skill_namespace)
         # Lessons (distilled cross-session facts) live beside the skills root.
         self.lessons_path = self.skills_dir.parent / "lessons.json"
 
@@ -413,7 +424,10 @@ class Session:
             # so the session index can attribute skill uses to sessions.
             core_caps.append(
                 SkillsCapability(
-                    self.registry, self.skills_dir, on_event=self.trace.record
+                    self.registry,
+                    self.skills_dir,
+                    on_event=self.trace.record,
+                    namespace=skill_namespace,
                 )
             )
         if self._has("history"):
