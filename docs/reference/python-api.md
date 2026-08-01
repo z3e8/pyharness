@@ -48,6 +48,8 @@ Session(
                                #   None leaves them dataless; the CLI passes
                                #   ~/.pyharness/index.db
     keep_outputs=8,            # recent cells whose full output stays in context
+    keep_images=2,             # recent image-carrying cells whose screenshots
+                               #   stay in context; older ones become a note
     max_steps=30,              # orchestrator step ceiling (a spawned child runs 15)
     tier="mid",                # orchestrator model tier
     allowed_hosts=None,        # host scope: confines web/http/browser reach

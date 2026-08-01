@@ -4,7 +4,13 @@ carries a one-line context/step/spend meter so the model sees its own
 pressure instead of guessing."""
 
 from pyharness.budget import Budget
-from pyharness.core.agent import Agent, _elide_old_outputs, _elided
+from pyharness.core.agent import (
+    Agent,
+    _cache_anchor,
+    _elide_old_outputs,
+    _elided,
+    _evict_old_images,
+)
 from pyharness.core.kernel import Kernel
 from pyharness.llm.client import Completion, ToolCall, Usage
 
@@ -70,6 +76,130 @@ def test_image_blocks_are_elided_even_when_text_is_small():
     stub = _elided(content)
     assert isinstance(stub, str)
     assert "1 image" in stub
+
+
+def _image_block():
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJDRA=="},
+    }
+
+
+def _look_msg(i, url=None):
+    """A tool_result message as a look() cell leaves it: the kernel's echo of
+    the returned state dict (carrying the url), then the image block."""
+    text = f"{{'url': '{url}', 'title': 'T', 'attached': True}}" if url else "looked"
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": f"t{i}",
+                "content": [{"type": "text", "text": text}, _image_block()],
+            }
+        ],
+    }
+
+
+def _has_image(msg):
+    return any(
+        isinstance(b, dict) and b.get("type") == "image"
+        for b in msg["content"][0]["content"]
+    )
+
+
+def test_evicts_images_beyond_the_image_window_only():
+    messages = [
+        {"role": "user", "content": "task"},
+        _look_msg(1, "https://a.example/one"),
+        _tool_result_msg("plain text cell"),  # not image-carrying: not counted
+        _look_msg(2, "https://b.example/two"),
+        _look_msg(3, "https://c.example/three"),
+        _look_msg(4, "https://d.example/four"),
+    ]
+    _evict_old_images(messages, keep_recent=2)
+
+    # The two oldest image cells lost their images; the two newest kept them.
+    assert not _has_image(messages[1]) and not _has_image(messages[3])
+    assert _has_image(messages[4]) and _has_image(messages[5])
+    # The note replaces the image *in place*: the cell's own text output stays
+    # untouched at position 0, the note sits where the image block was.
+    cell = messages[1]["content"][0]["content"]
+    assert cell[0]["text"].startswith("{'url': 'https://a.example/one'")
+    assert cell[1]["type"] == "text"
+    # The text-only cell and the plain user message are untouched.
+    assert messages[2]["content"][0]["content"] == "plain text cell"
+    assert messages[0] == {"role": "user", "content": "task"}
+
+
+def test_eviction_note_names_the_page_and_never_promises_recovery():
+    messages = [_look_msg(1, "https://shop.example/cart"), _look_msg(2), _look_msg(3)]
+    _evict_old_images(messages, keep_recent=1)
+
+    with_url = messages[0]["content"][0]["content"][1]["text"]
+    assert with_url.startswith("[screenshot dropped:")
+    assert "https://shop.example/cart" in with_url  # which view was lost
+    assert "look()" in with_url  # the honest path: a *fresh* capture
+    assert "re-print" not in with_url and "re-read" not in with_url
+
+    without_url = messages[1]["content"][0]["content"][1]["text"]
+    assert without_url.startswith("[screenshot dropped:")
+    assert "http" not in without_url
+
+
+def test_keep_images_zero_disables_eviction():
+    messages = [_look_msg(i) for i in range(5)]
+    _evict_old_images(messages, keep_recent=0)
+    assert all(_has_image(m) for m in messages)
+
+
+def test_eviction_window_slides_over_cells_that_still_carry_images():
+    # Statelessness: an evicted cell drops out of the selection, so the window
+    # counts live image cells only — it never double-counts what it already ate.
+    messages = [_look_msg(1), _look_msg(2), _look_msg(3)]
+    _evict_old_images(messages, keep_recent=2)
+    assert [_has_image(m) for m in messages] == [False, True, True]
+
+    _evict_old_images(messages, keep_recent=2)  # idempotent with no new images
+    assert [_has_image(m) for m in messages] == [False, True, True]
+
+    messages.append(_look_msg(4))
+    _evict_old_images(messages, keep_recent=2)
+    assert [_has_image(m) for m in messages] == [False, False, True, True]
+
+
+def test_cache_anchor_uses_the_eviction_frontier_when_elision_is_idle():
+    messages = [
+        {"role": "user", "content": "task"},
+        _look_msg(1),
+        _look_msg(2),
+        _look_msg(3),
+        _look_msg(4),
+    ]
+    # Nothing evicted yet: no frontier, full-history incremental caching.
+    assert _cache_anchor(messages, 0, 2) is None
+
+    _evict_old_images(messages, keep_recent=2)
+    # Elision disabled: the anchor is the newest evicted cell (index 2).
+    assert _cache_anchor(messages, 0, 2) == 2
+    # Elision enabled but not started (window of 8 > 4 cells): same frontier.
+    assert _cache_anchor(messages, 8, 2) == 2
+    # Eviction disabled: the marker means nothing, back to the old behavior.
+    assert _cache_anchor(messages, 0, 0) is None
+
+
+def test_cache_anchor_prefers_the_elision_frontier_once_it_exists():
+    # Eight look cells, image window 1, elision window 2: eviction's newest
+    # note (index 7) sits *above* the elision frontier (index 6). The elision
+    # frontier must still win — cells past it are not in final form (their text
+    # elides later), so anchoring on the newer eviction note would break the
+    # cache when elision reaches it.
+    messages = [{"role": "user", "content": "task"}]
+    messages += [_look_msg(i) for i in range(1, 9)]
+    _evict_old_images(messages, keep_recent=1)
+    _elide_old_outputs(messages, keep_recent=2)
+
+    assert _cache_anchor(messages, 2, 1) == 6
 
 
 class MeteredLLM:

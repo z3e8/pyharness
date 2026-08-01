@@ -231,6 +231,10 @@ def _build_session(
         # How many recent cells keep full output in the agent's context; older
         # outputs are elided (kernel variables persist). <= 0 disables elision.
         keep_outputs=int(os.environ.get("PYHARNESS_KEEP_OUTPUTS", "8")),
+        # How many recent image-carrying cells keep their screenshots; older
+        # ones are evicted to a short note (a dropped view is not recoverable —
+        # look() captures the current page). <= 0 disables eviction.
+        keep_images=int(os.environ.get("PYHARNESS_KEEP_IMAGES", "2")),
     )
     kwargs.update(overrides)
     return Session(root, **kwargs)
