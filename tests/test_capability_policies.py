@@ -130,10 +130,11 @@ HOST_SCOPE_EXEMPT = {
     "(PYHARNESS_IMAP_* in the environment); agent code cannot choose the host, "
     "so there is no agent-directed egress to scope. Reads are PEEK-only.",
     "shell": "Deliberate boundary: commands are outside the host scope's remit. "
-    "Containment is per-call human approval plus the OS sandbox, which denies "
-    "outbound network wholesale (macOS Seatbelt / Linux Landlock+seccomp) "
-    "rather than per host. On an unsandboxed platform (explicit "
-    "PYHARNESS_ALLOW_UNSANDBOXED opt-in only) approval is the only gate.",
+    "Containment is the OS sandbox, which denies outbound network wholesale "
+    "(macOS Seatbelt / Linux Landlock+seccomp) rather than per host; approval "
+    "is an audit and review gate on top, not the containment. On an "
+    "unsandboxed platform (explicit PYHARNESS_ALLOW_UNSANDBOXED opt-in only) "
+    "approval is all that is left.",
     "packages": "Deliberate boundary: pip must reach the package index, which "
     "is outside any task's host scope by nature. Contained instead by per-call "
     "approval and the install sandbox profile (network allowed, writes "

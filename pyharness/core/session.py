@@ -266,10 +266,12 @@ class Session:
                 "skills.save_skill",
                 "skills.edit_skill",
                 "packages.install",
-                # An arbitrary program, run parent-side. The OS sandbox jails its
-                # filesystem/network, but the command itself is unvetted — and on
-                # an unsandboxed platform there is no jail at all — so a human
-                # signs each one.
+                # Gated because it runs parent-side, not because a program is
+                # worse than a cell: a cell's own subprocess is equally
+                # contained (the child's jail is inherited across exec). `bash`
+                # is the path whose jail is applied by a per-platform wrap that
+                # degrades to nothing where there is no OS sandbox, so a human
+                # signs each one. Full reasoning in ShellCapability.preview.
                 "shell.bash",
                 "tools.add_mcp_server",  # mounting a server installs code
                 # Approving a spawn is approving the child's whole plan: task,

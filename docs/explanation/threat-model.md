@@ -296,6 +296,21 @@ floor directly.
 
 ## Residual risks that are not scored anywhere
 
+- **Local execution is contained but not audited.** A cell can call
+  `subprocess.run` (or `os.execv`, or libc via `ctypes`) and no audit record is
+  written, while `shell.bash` — the same act, routed through the broker — is
+  approval-gated and chained. The asymmetry is deliberate on both halves.
+  *Contained:* whatever it spawns inherits the child's sandbox and reduced
+  environment, so it reaches no network, writes nothing outside the workspace,
+  and reads nothing under `$HOME` (asserted by
+  `test_sandbox_is_inherited_by_a_subprocess_agent_code_spawns` and
+  `test_no_escape_by_exec`). *Not audited:* the chain records what crosses the
+  perimeter, not what happens inside the box — and no other option exists, since
+  any interception placed in the child is advisory against code that owns that
+  process. `bash` is gated for a different reason: it runs parent-side, where
+  the jail is applied by a wrap rather than inherited. The practical cost is
+  that an agent hitting approval fatigue on `bash` has an unaudited alternative,
+  so per-command usage numbers are a floor, not a census.
 - **DNS rebinding (TOCTOU).** The egress guard resolves a hostname and the HTTP
   client resolves it again at connect, so a deliberately racing resolver can
   present a different address to the socket than to the guard. Resolution

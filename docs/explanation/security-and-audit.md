@@ -27,9 +27,14 @@ author time (this holds for the [reflection pass](../how-to/observability.md#pos
 proposals too — reflection routes its skill writes through the same broker gate).
 A `save_skill` prompt shows the **bundled source** it is approving, not just the
 skill's name: that code is what a later run executes.
-`shell.bash` is approval-gated too: it runs an arbitrary program parent-side, and
-while the OS sandbox (below) jails its filesystem and network, the command itself
-is unvetted — and on a platform with no sandbox there is no jail at all. It also gates
+`shell.bash` is approval-gated too, and the reason is narrower than it looks: it
+executes **parent-side**, so its jail is applied by a per-platform wrap
+(`sandboxed_shell_argv`) that has to be right, and that falls back to no jail at
+all on a platform without an OS sandbox. It is *not* gated because running a
+program is more dangerous than running a cell — a cell's own `subprocess.run` is
+an arbitrary program too, and it inherits the child's jail rather than needing
+one applied. See [local execution is contained but not
+audited](threat-model.md#residual-risks-that-are-not-scored-anywhere). It also gates
 **state-changing HTTP** (`http.request` with POST/PUT/PATCH/DELETE) and
 **state-changing browser actions** (`click` / `fill` / `fill_secret` /
 `fill_totp` / `select_option` / `press` / `upload`), since those act outward on the user's
@@ -615,6 +620,19 @@ because without it the session never starts.
 > audit chain records effects that cross the perimeter, not every `savefig`. The
 > workspace is inspectable on disk; the broker is where outward actions are gated
 > and logged.
+>
+> **The same rule covers local execution.** A cell that calls `subprocess.run`,
+> `os.execv` or `ctypes` runs a program inside the jail without an audit record,
+> exactly as a cell computing in-process does. That is the perimeter rule applied
+> consistently, not an oversight — and it is also the only option available:
+> hooking `subprocess` in the child would be advisory, since agent code owns that
+> process and can reach `posix_spawn` or libc directly. The audit chain is
+> trustworthy *because* it lives in the parent, on the far side of the IPC
+> boundary, recording calls that arrive there. Anything such a subprocess tries
+> to do outward — network, writes outside the workspace, reads of `$HOME` — is
+> denied by the OS sandbox it inherits, which
+> `test_remote_kernel.py::test_sandbox_is_inherited_by_a_subprocess_agent_code_spawns`
+> and `test_linux_sandbox.py::test_no_escape_by_exec` assert directly.
 
 ## Audit — a tamper-evident record
 

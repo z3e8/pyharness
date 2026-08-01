@@ -392,6 +392,48 @@ def test_sandbox_denies_outbound_network(kernel_factory, tmp_path):
     assert out == "denied"
 
 
+# Run one hop further out, in a process the cell spawned rather than the cell
+# itself. Both probes must be denied for the jail to be inherited across exec.
+_SUBPROCESS_ESCAPE_PROBE = """\
+import socket
+try:
+    socket.create_connection(('1.1.1.1', 80), timeout=3)
+    print('CONNECTED')
+except OSError:
+    print('net-denied')
+try:
+    open('../escape.txt', 'w').write('x')
+    print('WROTE')
+except OSError:
+    print('write-denied')
+"""
+
+
+@requires_sandbox
+def test_sandbox_is_inherited_by_a_subprocess_agent_code_spawns(
+    kernel_factory, tmp_path
+):
+    # The macOS counterpart to test_linux_sandbox.py::test_no_escape_by_exec,
+    # and the load-bearing half of a stated boundary: raw `subprocess` from a
+    # cell is *contained* (this test) but deliberately *unaudited* (see the
+    # residual risk in docs/explanation/threat-model.md). The audit claim rests
+    # on the containment claim, so the containment claim is asserted rather
+    # than asserted-in-prose.
+    #
+    # Two hops out, not one — the jail must survive exec transitively, or an
+    # agent could trampoline through a helper process to reach the network.
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        f"import subprocess, sys\n"
+        f"probe = {_SUBPROCESS_ESCAPE_PROBE!r}\n"
+        "r = subprocess.run([sys.executable, '-c', probe], capture_output=True, text=True)\n"
+        "print(r.stdout.strip())\n"
+    )
+    assert out.split() == ["net-denied", "write-denied"]
+    assert not (tmp_path / "escape.txt").exists()
+
+
 @requires_sandbox
 def test_sandbox_still_allows_broker_writes_and_compute(kernel_factory, tmp_path):
     # The sandbox blocks the child's own writes, not the broker's: `write()`

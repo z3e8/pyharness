@@ -19,10 +19,25 @@ class ShellCapability:
         return {"bash": self.bash}
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """An arbitrary program is an arbitrary program — the OS sandbox confines
-        fs/network but not what the command *does*, and on an unsandboxed platform
-        there is no jail at all — so class it OUTWARD and show the human the
-        command line itself."""
+        """OUTWARD because `bash` runs **parent-side**, not because running a
+        program is inherently worse than running a cell.
+
+        Worth being precise, since the obvious rationale ("an arbitrary program
+        is an arbitrary program") does not survive contact: a cell's own
+        `subprocess.run` is an arbitrary program too, and it is *equally*
+        contained — the child is already jailed and the OS sandbox is inherited
+        across `exec` (macOS Seatbelt, Linux Landlock+seccomp), on top of the
+        reduced environment `reduce_environ()` installs. So the gate is not
+        buying containment over a cell.
+
+        What it buys is that this is the one exec path whose jail is applied
+        **by construction** rather than inherited: `bash` executes in the
+        unsandboxed parent, so `sandboxed_shell_argv` has to wrap it correctly
+        per platform, and returns None — no jail at all, env scrubbing only — on
+        a platform with no OS sandbox. A wrap that must be right is worth a human
+        looking at the command line; an inherited jail is not. See the residual
+        risk in docs/explanation/threat-model.md: local execution inside the box
+        is contained but deliberately unaudited."""
         cmd = kwargs.get("cmd") or (args[0] if args else "?")
         return ActionCategory.OUTWARD, f"bash: {truncate(str(cmd), 300)}"
 
