@@ -121,10 +121,14 @@ import them. This is the complete list; nothing else is callable by bare name.
         # refs, never cleartext. save=True persists it for later sessions.
   Skills — package a repeatable procedure so you and later sessions can reuse it:
     save_skill(name, description, instructions, files=None, keywords=(), category=None, check=None) -> str
-        # instructions = markdown the how-to; files = {"helper.py": source, ...}
-        # optional bundled modules. Persists to disk and registers as a learned
-        # tool — find it with search_tools, read it with describe_tool, load its
-        # code with use_tool. Save a skill once a procedure is worth repeating.
+        # files = {"helper.py": source, ...}: put the CODE here — anything you
+        # would re-type next run (a fetch, a parse, a formatter) becomes an
+        # importable function the next run calls via use_tool(name); bundled
+        # files run only when a function is called. instructions = the markdown
+        # procedure around the code, not the code. Persists to disk and
+        # registers as a learned tool — find it with search_tools, read it
+        # (runbook + bundled source) with describe_tool. Save a skill once a
+        # procedure is worth repeating.
         # check = one line saying how a run confirms it worked (an assertion, a
         # re-fetch, an expected state) — give every skill one, and run it before
         # recording an outcome.
@@ -199,7 +203,8 @@ Each call is gated (policy/audit/approval) exactly as a builtin would be. Some w
                             #   pip. Never try to install pyharness itself.
 
 A learned skill (tagged `learned`) is a tool that ships with a runbook —
-describe_tool returns instructions to read and follow, not just signatures.
+describe_tool returns instructions to read and follow plus the bundled source —
+call its functions via use_tool instead of rewriting them.
 Before doing something repeatable, search_tools() for a skill that already does
 it. But a skill is agent-authored, so it may be wrong: `unverified` means it has
 never run successfully — treat its steps (endpoints, selectors, auth) as a
