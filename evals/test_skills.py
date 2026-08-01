@@ -16,15 +16,31 @@ they establish is that the machinery under the curve is real:
 3. **The usability check can fail.** A run that answers without re-reading the
    source, and a run that answers wrong, are both rejected — otherwise a curve
    that fell because later runs did less would read as amortization.
+
+The suite carries two arms (retrieval and discovery) over one protocol; the
+mechanism tests run against the retrieval arm and the discovery arm each gets
+its own, because the discovery scorer has one more thing to enforce (the
+terminal-page evidence) and its author path is the one place bundled skill code
+(`save_skill(files=…)`) crosses a session boundary offline.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from .demo.server import CorpusServer
+from .demo.server import CORPUS, CorpusServer
 from .skills.run import render
-from .skills.runner import PAGE, TASK, RunRow, correct, curve, gather, run_once
+from .skills.runner import (
+    ARMS,
+    DISCOVERY,
+    PAGE,
+    RETRIEVAL,
+    RunRow,
+    correct,
+    curve,
+    gather,
+    run_once,
+)
 from .support import ScriptedLLM
 
 SKILL = "northwind-summary"
@@ -127,13 +143,19 @@ def test_correct_grades_the_amount_and_not_its_formatting():
     assert not correct("INV-4471 | line items 12400.00 | account 00000000")
 
 
-def test_the_task_asks_for_the_save_reuse_cycle_it_measures():
+@pytest.mark.parametrize("arm", ARMS.values(), ids=list(ARMS))
+def test_the_tasks_ask_for_the_save_reuse_cycle_they_measure(arm):
     """The prompt directing save-then-reuse is the suite's central caveat, so it
-    is asserted rather than left to a reader to notice it drifted out."""
-    assert "search_tools()" in TASK
-    assert "save one" in TASK
-    assert "record_skill_use" in TASK
-    assert "re-read it" in TASK
+    is asserted rather than left to a reader to notice it drifted out. What the
+    prompts must *not* do is also pinned: neither may mention `files=` or
+    bundling code — whether the agent reaches for that is the system prompt's
+    question, and a task that answered it would be measuring the task."""
+    assert "search_tools()" in arm.task
+    assert "save one" in arm.task
+    assert "record_skill_use" in arm.task
+    assert "re-read it" in arm.task
+    assert "files" not in arm.task
+    assert "bundle" not in arm.task
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +204,8 @@ def test_a_run_that_records_nothing_is_absent_from_the_view(two_runs, tmp_path):
     assert rows[2].reused == SKILL, "run 3 did use the skill"
     assert rows[2].recorded == ""
     assert rows[2].run_n is None, "an unrecorded use must not appear in the view"
-    assert "absent from the view: run(s) 3" in render(rows, curve(two_runs["index_db"]))
+    board = render(RETRIEVAL, rows, curve(two_runs["index_db"]))
+    assert "absent from the view: run(s) 3" in board
 
 
 def test_the_index_numbers_reach_the_rows(two_runs):
@@ -220,14 +243,18 @@ def test_a_cheaper_run_that_skipped_the_fetch_is_not_usable(two_runs, tmp_path):
 
     assert rows[0].fetches == 0
     assert not rows[0].ok, "a run that never re-read the source must not be usable"
-    assert "NEVER RE-READ THE SOURCE" in render(rows, [])
+    assert "NEVER RE-READ THE SOURCE" in render(RETRIEVAL, rows, [])
 
 
 def test_rescoring_rebuilds_the_board_from_the_record_alone(tmp_path):
     """A fix to the scorer must not require the runs again — that costs money and
     a second set of model calls would change the numbers while claiming to be the
     same experiment. The port is ephemeral and long gone by then, so this also
-    pins that fetch counting still works without it."""
+    pins that fetch counting still works without it.
+
+    The layout here is the *original* flat one (`root/run-N`, no arm subdirs) —
+    the shape the committed first paid run left on disk. It must keep resolving
+    to the retrieval arm, or that run stops being rescorable."""
     from .skills.runner import rescore
 
     skills_dir, index_db = tmp_path / "skills", tmp_path / "index.db"
@@ -245,7 +272,8 @@ def test_rescoring_rebuilds_the_board_from_the_record_alone(tmp_path):
             [tmp_path / "run-1", tmp_path / "run-2"], index_db, base=server.base
         )
 
-    rows, view = rescore(tmp_path)
+    [(arm, rows, view)] = rescore(tmp_path)
+    assert arm.name == "retrieval"
     assert [r.name for r in rows] == ["run-1", "run-2"]
     assert [r.fetches for r in rows] == [r.fetches for r in live]
     assert [r.saved for r in rows] == [SKILL, ""]
@@ -267,4 +295,203 @@ def test_a_wrong_answer_is_not_usable():
         fetches=2,
     )
     assert not row.ok
-    assert "markers missing" in render([row], [])
+    assert "markers missing" in render(RETRIEVAL, [row], [])
+
+
+# ---------------------------------------------------------------------------
+# The discovery arm
+# ---------------------------------------------------------------------------
+
+DSKILL = "portal-balance"
+DANSWER = "balance 462.10 | statement ST-2026-06 | confirmation QH7-4406"
+
+# The bundled helper the discovery author saves: the one genuinely reusable
+# piece of the procedure (the statement-address scheme from the help article),
+# as code rather than prose. Crossing a session boundary through the registry's
+# lazy loader is the property under test.
+_HELPER = (
+    "def statement_url(base: str, code: str) -> str:\n"
+    '    """Statement address from the portal account code."""\n'
+    "    return f\"{base}/statement-{code.lower().replace('-', '')}.html\"\n"
+)
+
+
+def _d_author(base: str) -> ScriptedLLM:
+    """Run 1: walk the portal the long way, then save the sequence with the
+    URL-scheme helper bundled as code."""
+    return ScriptedLLM(
+        f'web = use_tool("web")\nprint(web.fetch("{base}/portal.html"))',
+        f'print(web.fetch("{base}/portal-help.html"))\n'
+        f'print(web.fetch("{base}/portal-profile.html"))',
+        f'print(web.fetch("{base}/statement-rt1180.html"))',
+        f'save_skill({DSKILL!r}, "Northwind portal balance",'
+        ' "Read the profile page for the account code, then fetch the'
+        ' statement page statement_url() builds.",'
+        f" files={{'balance.py': {_HELPER!r}}},"
+        ' check="the answer carries the confirmation code")\n'
+        f'record_skill_use({DSKILL!r}, "worked")',
+        answer=DANSWER,
+    )
+
+
+def _d_reuse(base: str, *, reach_statement: bool = True) -> ScriptedLLM:
+    """A later run: load the skill, call its bundled code, take only the two
+    fetches the frozen sequence needs."""
+    cells = [
+        f"mod = use_tool({DSKILL!r})\n"
+        'web = use_tool("web")\n'
+        f'print(web.fetch("{base}/portal-profile.html"))'
+    ]
+    if reach_statement:
+        cells.append(f'print(web.fetch(mod.statement_url({base!r}, "RT-1180")))')
+    cells.append(f'record_skill_use({DSKILL!r}, "worked")')
+    return ScriptedLLM(*cells, answer=DANSWER)
+
+
+def test_discovery_markers_live_only_on_the_statement_page():
+    """The discovery scorer rests on the balance and the confirmation code being
+    unreachable without the terminal page — so both must be absent from every
+    other page in the corpus, and the terminal page's address must appear
+    nowhere as a link (it has to be assembled from the help article's scheme
+    plus the profile page's code)."""
+    with CorpusServer() as server:
+        for page in sorted(CORPUS.glob("*.html")):
+            text = server.render(page.name)
+            if page.name == DISCOVERY.evidence_page:
+                assert DISCOVERY.correct("balance 462.10 confirmation QH7-4406")
+                assert "462.10" in text and "QH7-4406" in text
+            else:
+                assert "462" not in text, f"balance marker leaks onto {page.name}"
+                assert "QH7-4406" not in text, f"code marker leaks onto {page.name}"
+                assert DISCOVERY.evidence_page not in text, (
+                    f"{page.name} links the statement page directly — "
+                    "the sequence would be shortcuttable"
+                )
+    assert "462" not in DISCOVERY.task and "QH7-4406" not in DISCOVERY.task
+
+
+def test_every_hop_of_the_discovery_chain_survives_extraction():
+    """The chain is only walkable if what each hop contributes survives the
+    reduction `web.fetch` actually applies (trafilatura), not just the raw
+    HTML. The first paid attempt at this arm is why this is pinned: the
+    statement page's balance sat in a table trafilatura classified as
+    boilerplate and dropped, so no run could see the answer at any price —
+    five runs burned proving a fact about the fixture, not the mechanism."""
+    from pyharness.broker.capabilities.page import extract_content
+
+    needed = {
+        "portal-billing.html": ["help centre"],  # the redirection off the wrong turn
+        "portal-help.html": ["statement-", "profile"],  # the address scheme
+        "portal-profile.html": ["RT-1180"],  # the code the scheme consumes
+        "statement-rt1180.html": ["462.10", "QH7-4406", "ST-2026-06"],
+    }
+    with CorpusServer() as server:
+        for page, fragments in needed.items():
+            reduced = extract_content(server.render(page)) or ""
+            for fragment in fragments:
+                assert fragment.lower() in reduced.lower(), (
+                    f"{fragment!r} does not survive extraction of {page}"
+                )
+
+
+def test_discovery_correct_needs_both_markers_and_forgives_formatting():
+    assert DISCOVERY.correct(DANSWER)
+    assert DISCOVERY.correct("balance 462.1 | confirmation QH7-4406")
+    assert not DISCOVERY.correct("balance 462.10 | statement ST-2026-06")
+    assert not DISCOVERY.correct("balance 4620.00 | confirmation QH7-4406")
+
+
+def test_the_discovery_skill_and_its_bundled_code_cross_into_the_next_run(tmp_path):
+    """The discovery author saves code in `files=`; run 2 loads it through the
+    registry and *calls* it to build the terminal URL. If the lazy loader
+    dropped bundled code across sessions, run 2's second fetch could not
+    happen and the evidence check would say so."""
+    skills_dir, index_db = tmp_path / "skills", tmp_path / "index.db"
+    with CorpusServer() as server:
+        roots = []
+        for name, llm in (
+            ("run-1", _d_author(server.base)),
+            ("run-2", _d_reuse(server.base)),
+        ):
+            roots.append(
+                run_once(
+                    server,
+                    root=tmp_path / name,
+                    skills_dir=skills_dir,
+                    index_db=index_db,
+                    arm=DISCOVERY,
+                    llm=llm,
+                )
+            )
+        from pyharness.obs.index import update_index
+
+        update_index(index_db, [tmp_path], skills_dir=skills_dir)
+        rows = gather(roots, index_db, base=server.base, arm=DISCOVERY)
+
+    first, second = rows
+    assert first.saved == DSKILL and first.fetches == 4 and first.ok
+    assert second.saved == ""
+    assert second.reused == DSKILL, "run 2 never loaded the saved skill"
+    assert second.fetches == 2, "the frozen sequence is profile + statement"
+    assert second.evidence and second.ok
+
+
+def test_a_discovery_run_that_never_reaches_the_statement_page_is_not_usable(tmp_path):
+    """The discovery-specific cheat: replay the markers out of the skill's own
+    text after one cheap fetch of a page that is not the source. Marker checks
+    alone cannot catch it, which is what `evidence_page` exists for."""
+    skills_dir, index_db = tmp_path / "skills", tmp_path / "index.db"
+    with CorpusServer() as server:
+        run_once(
+            server,
+            root=tmp_path / "run-1",
+            skills_dir=skills_dir,
+            index_db=index_db,
+            arm=DISCOVERY,
+            llm=_d_author(server.base),
+        )
+        cheat = run_once(
+            server,
+            root=tmp_path / "run-2",
+            skills_dir=skills_dir,
+            index_db=index_db,
+            arm=DISCOVERY,
+            llm=_d_reuse(server.base, reach_statement=False),
+        )
+        from pyharness.obs.index import update_index
+
+        update_index(index_db, [tmp_path], skills_dir=skills_dir)
+        rows = gather([cheat], index_db, base=server.base, arm=DISCOVERY)
+
+    assert rows[0].fetches == 1, "the cheat did fetch, just not the source"
+    assert not rows[0].evidence
+    assert not rows[0].ok
+    assert "NEVER REACHED THE TERMINAL PAGE" in render(DISCOVERY, rows, [])
+
+
+def test_rescoring_a_two_arm_layout_scores_each_arm_with_its_own_rules(tmp_path):
+    """The current session layout nests each arm under its name; rescore must
+    hand each arm's sessions to that arm's scorer rather than grading a
+    discovery run with retrieval markers."""
+    from .skills.runner import rescore
+
+    arm_root = tmp_path / "discovery"
+    skills_dir, index_db = arm_root / "skills", arm_root / "index.db"
+    with CorpusServer() as server:
+        for name, llm in (
+            ("run-1", _d_author(server.base)),
+            ("run-2", _d_reuse(server.base)),
+        ):
+            run_once(
+                server,
+                root=arm_root / name,
+                skills_dir=skills_dir,
+                index_db=index_db,
+                arm=DISCOVERY,
+                llm=llm,
+            )
+
+    [(arm, rows, view)] = rescore(tmp_path)
+    assert arm.name == "discovery"
+    assert [r.ok for r in rows] == [True, True]
+    assert [r["run_n"] for r in view] == [1, 2]

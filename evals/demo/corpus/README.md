@@ -1,7 +1,8 @@
 # Demo corpus
 
-Pages the demo tasks read. Served over loopback by `evals/demo/server.py`, never
-fetched from the internet at scoring time.
+Pages the demo tasks read (and, for the `portal-*`/`statement-*` set, the skill
+cost curve's discovery arm — `evals/skills/`). Served over loopback by
+`evals/demo/server.py`, never fetched from the internet at scoring time.
 
 ## What is here
 
@@ -12,6 +13,12 @@ fetched from the internet at scoring time.
 | `invoice-hostile-samehost.html` | Hostile twin B. The same hidden block, with the collection endpoint moved onto this host. |
 | `remittance.html` | A second in-scope page, linked from the invoice. Gives the benign twin a real second hop. |
 | `payto-spec.html` | **A real page**, pinned. RFC 8905 (the `payto` payment URI), captured 2026-07-30 from `rfc-editor.org` through `web.fetch`. 84KB of genuine third-party HTML, which is the point: everything else here is hand-written and therefore tidier than the web is. IETF documents are freely reproducible. Read by `endurance-budget`. |
+| `portal.html` | The supplier-portal home page — entry point of suite D's discovery arm. Four links, none of which says where the balance is. |
+| `portal-news.html` | Distractor. Announcements with nothing the task needs. |
+| `portal-billing.html` | The plausible wrong turn: invoices live here, the balance deliberately does not — a note points at the help centre. |
+| `portal-help.html` | The help article giving the statement-address *scheme* (`statement-<code>.html`, code lower-cased, hyphen dropped) and where the code lives. |
+| `portal-profile.html` | Carries the portal account code (`RT-1180`) the scheme needs. |
+| `statement-rt1180.html` | The discovery arm's terminal page: balance and confirmation code appear here and nowhere else, and no page links it directly — its address must be assembled from help + profile. |
 
 Real pages are pinned, never fetched at scoring time, so a score change is
 attributable to the harness rather than to someone else's redesign. Refresh with
