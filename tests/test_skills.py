@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 
 import pytest
 
 from pyharness.broker.capabilities.skills import SkillsCapability
 from pyharness.broker.dispatch import PermissionDenied
+from pyharness.broker.remote.sandbox import macos_sandbox_supported
 from pyharness.core.session import Session
 from pyharness.tools.registry import Registry
 from pyharness.tools.skills import (
@@ -440,9 +442,10 @@ def test_bundled_code_calls_a_capability_through_the_broker(tmp_path):
 
 def test_bundled_code_reaches_capabilities_from_the_out_of_process_kernel(tmp_path):
     """The production path: agent code runs in the sandboxed child, use_tool
-    hands it a RemoteToolSpec proxy, and the bundled function executes
-    parent-side inside the tools.invoke dispatch — where the ambient builtins
-    must resolve and the nested capability call must be audited."""
+    hands it the skill's source as a RemoteSkillSpec, and the bundled function
+    executes *in the child* — where the ambient builtins must resolve to the
+    child's broker proxies and the nested capability call must still be
+    audited parent-side."""
     session = Session(
         tmp_path / "s",
         skills_dir=tmp_path / "skills",
@@ -559,5 +562,147 @@ def test_ambient_builtins_do_not_become_skill_functions(tmp_path):
         mod = session.registry.use("tidy")
         mod.only("x")  # force the deferred exec (ambient names now seeded)
         assert [fname for fname, _ in _public_functions(mod)] == ["only"]
+    finally:
+        session.close()
+
+
+def _skill_session(tmp_path, name, files, **kwargs):
+    """A session with one saved skill, ready for the out-of-process reuse path."""
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+        **kwargs,
+    )
+    session.broker.namespace()["save_skill"](
+        name, f"{name} skill", f"call into {name}", files=files
+    )
+    return session
+
+
+def test_bundled_code_executes_inside_the_child_not_the_host(tmp_path):
+    """The structural claim, independent of any OS sandbox: a bundled function
+    runs in the *child* process. Parent-side execution — the old behavior — put
+    agent-authored code outside every confinement the child is given, so which
+    process runs it is the whole security property, and a pid is the one witness
+    that cannot be faked by a proxy standing in for the real function."""
+    session = _skill_session(
+        tmp_path,
+        "whereami",
+        {"impl.py": "import os\ndef pid():\n    return os.getpid()\n"},
+    )
+    try:
+        out = session.kernel.run(
+            "import os\n"
+            "print(use_tool('whereami').pid() == os.getpid(), os.getpid() != "
+            f"{os.getpid()})\n"
+        )
+        assert out == "True True"
+    finally:
+        session.close()
+
+
+@pytest.mark.skipif(
+    not macos_sandbox_supported(), reason="OS sandbox only built for macOS"
+)
+def test_bundled_code_cannot_escape_the_sandbox(tmp_path):
+    """The record this closes: raw socket/filesystem access inside a bundled
+    function used to run unjailed in the host process. It must now be denied
+    exactly as the same line in a cell is."""
+    session = _skill_session(
+        tmp_path,
+        "escape",
+        {
+            "impl.py": (
+                "import socket\n"
+                "def net():\n"
+                "    try:\n"
+                "        socket.create_connection(('1.1.1.1', 80), timeout=5)\n"
+                "        return 'CONNECTED'\n"
+                "    except OSError:\n"
+                "        return 'denied'\n"
+                "def write_outside(path):\n"
+                "    try:\n"
+                "        open(path, 'w').write('x')\n"
+                "        return 'WROTE'\n"
+                "    except OSError:\n"
+                "        return 'denied'\n"
+            )
+        },
+    )
+    try:
+        escape = tmp_path / "escaped.txt"
+        out = session.kernel.run(
+            "s = use_tool('escape')\n"
+            f"print(s.net(), s.write_outside({str(escape)!r}))\n"
+        )
+        assert out == "denied denied"
+        assert not escape.exists()
+    finally:
+        session.close()
+
+
+def test_bundled_sibling_import_resolves_in_the_child(tmp_path):
+    """A skill's files may import one another. Nothing is on disk for the child
+    to read (the skills root is under $HOME, inside the read jail), so the
+    sibling has to resolve from the source that crossed the pipe."""
+    session = _skill_session(
+        tmp_path,
+        "twofile",
+        {
+            "helper.py": "def double(n):\n    return n * 2\n",
+            "main.py": "import helper\ndef run(n):\n    return helper.double(n) + 1\n",
+        },
+    )
+    try:
+        assert session.kernel.run("print(use_tool('twofile').run(20))") == "41"
+    finally:
+        session.close()
+
+
+def test_a_bundled_file_cannot_shadow_a_stdlib_module(tmp_path):
+    """The finder is appended to sys.meta_path, never prepended, so the real
+    stdlib wins a name collision. The in-process loader's sys.path.insert(0) has
+    the opposite precedence.
+
+    `colorsys`, not `json`: the collision only bites a module not already in
+    sys.modules, and anything the harness itself imports is cached long before
+    a skill loads — which is exactly why the hazard is easy to miss."""
+    session = _skill_session(
+        tmp_path,
+        "shadowy",
+        {
+            "colorsys.py": "def rgb_to_hls(*a):\n    return 'HIJACKED'\n",
+            "impl.py": (
+                "import colorsys\n"
+                "def probe():\n"
+                "    return colorsys.rgb_to_hls(1.0, 0.0, 0.0), colorsys.__file__\n"
+            ),
+        },
+    )
+    try:
+        out = session.kernel.run(
+            "import sys\n"
+            "assert 'colorsys' not in sys.modules, 'precondition: not preimported'\n"
+            "hls, origin = use_tool('shadowy').probe()\n"
+            "print(hls != 'HIJACKED', origin.endswith('colorsys.py'), "
+            "'<skill:' not in origin)\n"
+        )
+        assert out == "True True True"
+    finally:
+        session.close()
+
+
+def test_bundled_import_failure_names_the_skill_and_file_in_the_child(tmp_path):
+    """Error attribution survives the move: a failing bundled import reports the
+    skill and file, in the same shape the in-process loader produces."""
+    session = _skill_session(
+        tmp_path,
+        "broken",
+        {"impl.py": "import nope_not_a_module\ndef go():\n    pass\n"},
+    )
+    try:
+        out = session.kernel.run("use_tool('broken').go()")
+        assert "skill 'broken': bundled file impl.py failed to import" in out
     finally:
         session.close()

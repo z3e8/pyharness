@@ -9,6 +9,7 @@ from types import ModuleType
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...tools.registry import Registry, _public_functions
+from ...tools.skills import SKILL_DIR_ATTR
 from ...util import summarize_args
 
 _SECRET_PREFIX = "secret:"
@@ -114,6 +115,12 @@ class ToolsCapability:
             return module
         gated = ModuleType(name)
         gated.__doc__ = module.__doc__
+        # A learned skill keeps its source marker across the wrapper. Out of
+        # process the host reads it and ships source to the child instead of
+        # this proxy module, so the skill runs sandboxed (`_seal_for_wire`);
+        # in process there is no child and these gated proxies are what runs.
+        if (skill_dir := getattr(module, SKILL_DIR_ATTR, None)) is not None:
+            setattr(gated, SKILL_DIR_ATTR, skill_dir)
         for fname, func in _public_functions(module):
             proxy = self._gated_proxy(name, fname)
             functools.wraps(func)(proxy)  # copy __doc__/__wrapped__ (signature)

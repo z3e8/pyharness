@@ -3242,7 +3242,7 @@ def test_remote_module_unknown_function_lists_available():
     from pyharness.broker.remote.child import _RemoteModule
     from pyharness.broker.remote.protocol import RemoteToolSpec
 
-    mod = _RemoteModule(None, RemoteToolSpec("web", ("fetch", "search")))
+    mod = _RemoteModule(None, RemoteToolSpec("web", ("fetch", "search")), {})
 
     with pytest.raises(AttributeError) as exc:
         _ = mod.query

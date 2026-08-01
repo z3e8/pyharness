@@ -21,8 +21,11 @@ class SkillsCapability:
     works out-of-process), registered immediately for this session, and reloaded
     automatically in later ones. The agent finds it with `search_tools()`, reads
     it (instructions + bundled source) with `describe_tool()`, and loads its code
-    with `use_tool()` — lazily: bundled files execute only when a function is
-    actually called."""
+    with `use_tool()` — nothing in a bundled file executes before that.
+
+    Bundled code is agent-authored, so it executes where the agent's own code
+    does: inside the sandboxed child, with the session builtins ambient (see
+    `RemoteSkillSpec`)."""
 
     name = "skills"
 
@@ -104,8 +107,10 @@ class SkillsCapability:
         cells: call use_tool/search_tools/read/llm/… directly and reach
         external capabilities the usual way (e.g. `web = use_tool("web")` then
         `web.fetch(url)`). Never `import pyharness` — the builtins are not
-        package exports, and that import fails. Every call bundled code makes
-        is policy/audit/budget-gated the same as your own.
+        package exports, and that import fails. Bundled code runs in the same
+        sandboxed process your cells do and under the same limits: every call it
+        makes is policy/audit/budget-gated the same as your own, and raw
+        filesystem or network access is jailed the same way too.
 
         `check` is the skill's success test — one line saying how a run confirms
         it worked (an assertion, a re-fetch, an expected state) — so

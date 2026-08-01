@@ -80,3 +80,25 @@ class RemoteToolSpec:
 
     name: str
     functions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RemoteSkillSpec:
+    """A picklable learned skill: its bundled **source**, not a proxy.
+
+    The deliberate exception to `RemoteToolSpec`'s rule. An installed module or
+    an MCP wrapper *is* capability code — it opens its own sockets, so running
+    it in the child would bypass the broker outright. A learned skill is not:
+    it is agent-authored Python whose only reach outside the process is the
+    session builtins seeded into its globals, and in the child those builtins
+    are the same broker proxies a cell gets. So shipping the source and
+    executing it child-side loses no mediation and gains the thing parent-side
+    execution threw away — the OS sandbox. Raw `socket`/`open('~/.ssh/...')`
+    inside a bundled function is jailed exactly as it is inside a cell.
+
+    `sources` carries every bundled file (private ones too, for sibling
+    imports); `load_order` names the public ones in execution order."""
+
+    name: str
+    sources: tuple[tuple[str, str], ...]
+    load_order: tuple[str, ...]

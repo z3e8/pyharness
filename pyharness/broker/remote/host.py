@@ -15,9 +15,10 @@ from types import ModuleType
 
 from ...core.session_venv import SessionVenv
 from ...tools.registry import _public_functions
+from ...tools.skills import SKILL_DIR_ATTR, skill_load_order, skill_sources
 from .child import child_main
 from .linux_sandbox import linux_sandbox_supported
-from .protocol import RemoteError, RemoteToolSpec, recv_json
+from .protocol import RemoteError, RemoteSkillSpec, RemoteToolSpec, recv_json
 from .sandbox import check_unsandboxed_platform, make_child_executable
 
 # Serializes the set_executable -> Process.start critical section across every
@@ -407,10 +408,22 @@ def _safe_exc(exc: BaseException) -> BaseException:
 
 
 def _seal_for_wire(value):
-    """Convert a parent-only result into something that can cross the pipe. Live
-    tool modules become a `RemoteToolSpec` (rebuilt as a proxy module in the
-    child); everything else passes through and is pickled as-is."""
+    """Convert a parent-only result into something that can cross the pipe.
+
+    Live tool modules become a `RemoteToolSpec` (rebuilt as a proxy module in
+    the child, so their functions still execute parent-side behind the broker).
+    A *learned skill* instead becomes a `RemoteSkillSpec` carrying its source:
+    agent-authored code belongs in the agent's sandboxed userland, and its
+    builtins resolve to the child's broker proxies there, so nothing is
+    unmediated by the move. Everything else passes through and is pickled."""
     if isinstance(value, ModuleType):
+        skill_dir = getattr(value, SKILL_DIR_ATTR, None)
+        if skill_dir is not None:
+            return RemoteSkillSpec(
+                value.__name__.rsplit(".", 1)[-1],
+                skill_sources(skill_dir),
+                skill_load_order(skill_dir),
+            )
         funcs = tuple(name for name, _ in _public_functions(value))
         return RemoteToolSpec(value.__name__.rsplit(".", 1)[-1], funcs)
     return value

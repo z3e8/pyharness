@@ -101,6 +101,16 @@ tests hold to:
 - **Fixed harness-authored argv** — venv creation, the desktop-notify helper —
   is unwrapped because no agent-controlled argument reaches it.
 
+**A learned skill's bundled code is inside the box, not beside it.** It is the
+one class of *agent-authored* code that is not a cell, so it is confined like
+one: `use_tool` ships the skill's source across the IPC boundary and the child
+executes it, under the same sandbox profile, with the same broker proxies in
+scope. It ran parent-side until 2026-08-01, which made it the sharpest hole in
+this table — approval-gated, but unconfined and unaudited once approved. Two
+things follow from the fix. The move costs no mediation, because a skill's only
+reach outside the process was ever the builtins in its globals, and in the child
+those are the same proxies a cell calls.
+
 ## Dispatch is centralized; containment is not
 
 This is the load-bearing structural fact about the codebase, and it is the

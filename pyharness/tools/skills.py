@@ -22,6 +22,14 @@ agent cells) and seeds each bundled module's globals with it before exec, so
 skill code calls `use_tool`/`read`/`llm`/… directly — never `import pyharness`.
 Every such call routes through the broker's dispatch (policy → audit → budget)
 exactly as if the agent had written it in a cell.
+
+**Where it executes.** Out-of-process (the default kernel), a skill's source is
+shipped to the sandboxed child and executed *there*, in the agent's own
+userland — see `RemoteSkillSpec`. A skill is agent-authored code, so it belongs
+under the same Seatbelt/Landlock confinement as a cell; the builtins it calls
+are the child's broker proxies, so its side effects are gated identically. The
+loader below is therefore the *in-process* path (`unsafe_in_process`, tests) and
+the source of the `describe_tool` rendering both paths share.
 """
 
 from __future__ import annotations
@@ -41,6 +49,12 @@ from ..util import ensure_private_dir
 from .registry import Registry
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# Marks a synthesized skill module as a learned skill and records where its
+# source lives. The out-of-process host reads it to decide that this module's
+# code should cross to the child as *source* rather than as a broker proxy
+# (`host._seal_for_wire`); nothing else depends on it.
+SKILL_DIR_ATTR = "__skill_dir__"
 
 
 def validate_skill_name(name: str) -> str:
@@ -283,6 +297,7 @@ def _build_skill_module(
     `__getattr__` (PEP 562) triggers the deferred execution on first attribute
     access, so they still resolve by name."""
     module = ModuleType(name)
+    setattr(module, SKILL_DIR_ATTR, str(skill_dir))
     state: dict = {"loaded": False, "funcs": {}}
     for py in _skill_files(skill_dir):
         try:
@@ -392,6 +407,29 @@ def _exec_skill_files(
 def _skill_files(skill_dir: Path) -> list[Path]:
     """The bundled files that form a skill's public surface, in load order."""
     return [py for py in sorted(skill_dir.glob("*.py")) if not py.stem.startswith("_")]
+
+
+def skill_sources(skill_dir: str | Path) -> tuple[tuple[str, str], ...]:
+    """Every bundled file as `(filename, source)` pairs — private (`_`-prefixed)
+    ones included, since a public file may import them as siblings.
+
+    This is how a skill reaches the sandboxed child: over the pipe, not off
+    disk. The child's read jail covers `$HOME`, and the skills root lives under
+    `~/.pyharness/skills`, so it could not open these files itself even though
+    it is the right process to run them in."""
+    out = []
+    for py in sorted(Path(skill_dir).glob("*.py")):
+        try:
+            out.append((py.name, py.read_text()))
+        except OSError:  # unreadable file: the child fails on the import instead
+            continue
+    return tuple(out)
+
+
+def skill_load_order(skill_dir: str | Path) -> tuple[str, ...]:
+    """The public bundled files, in the order they execute — the same order and
+    membership `_exec_skill_files` uses in process."""
+    return tuple(py.name for py in _skill_files(Path(skill_dir)))
 
 
 def _import_file(path: Path, mod_name: str, ambient: dict | None = None) -> ModuleType:
