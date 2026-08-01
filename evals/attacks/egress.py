@@ -12,6 +12,7 @@ separate claims are under attack here:
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import socket
 
@@ -161,6 +162,137 @@ def _non_http_scheme() -> Verdict:
     return refused_with(
         lambda: _fetch("file:///etc/passwd"), EgressBlocked, "only http/https"
     )
+
+
+# --- the gap between vetting a host and connecting to it ---------------------
+#
+# Both attacks below live in that gap. The guard clears a *name*; the socket is
+# opened to an *address*. Anything that can make those two disagree — a second
+# DNS lookup, or a second interpretation of the same hostname — reaches a host
+# nobody vetted.
+
+# A host whose two IDNA encodings are different names. CPython's resolver
+# applies IDNA 2003 and maps the sharp s to "ss"; httpx (and every browser)
+# applies IDNA 2008 and produces the xn-- form.
+_IDNA_HOST = "faß.example.com"
+_IDNA_2003 = "fass.example.com"
+_IDNA_2008 = "xn--fa-hia.example.com"
+
+
+def _idna_confusion() -> Verdict:
+    """Spell the target so the guard and the client read different hostnames out
+    of it: the one the guard resolves is a harmless public site, the one the
+    client connects to is the metadata service."""
+    from pyharness.security.egress import EgressBlocked
+
+    with resolver({_IDNA_2003: PUBLIC_IP, _IDNA_2008: METADATA_IP}):
+        return refused_with(
+            lambda: _fetch(f"http://{_IDNA_HOST}/latest/meta-data/"),
+            EgressBlocked,
+            "blocked address",
+        )
+
+
+def _idna_confusion_control() -> None:
+    """The two spellings really are different names, and the one the *client*
+    would use really is the dangerous one. Without this the attack could pass on
+    a platform where both encodings agree, where it proves nothing."""
+    import httpx
+
+    must(
+        _IDNA_HOST.encode("idna").decode() == _IDNA_2003,
+        "this platform's resolver does not map the name to the IDNA 2003 form; "
+        "there is no divergence here for the attack to exploit",
+    )
+    must(
+        httpx.URL(f"http://{_IDNA_HOST}/").raw_host.decode() == _IDNA_2008,
+        "the HTTP client does not encode the name to the IDNA 2008 form; the "
+        "attack is not describing this client's behaviour",
+    )
+
+
+class _RecordingTransport:
+    """Stands in for the socket layer: records the request the harness actually
+    handed to the network instead of sending it."""
+
+    def __init__(self):
+        self.requests: list = []
+
+    def handle_request(self, request):
+        import httpx
+
+        self.requests.append(request)
+        return httpx.Response(200, request=request)
+
+    def close(self) -> None:
+        pass
+
+    def hosts(self) -> list[str]:
+        return [request.url.host for request in self.requests]
+
+
+@contextlib.contextmanager
+def _rebinding_scenario():
+    """A resolver that answers honestly once and rebinds to the metadata service
+    on every lookup after, plus the transport that records where the harness
+    actually ended up."""
+    import httpx
+
+    from pyharness.security import egress
+
+    answers = iter([PUBLIC_IP])
+
+    def _rebind(host: str):
+        address = next(answers, METADATA_IP)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+    original = egress._resolve_host
+    egress._resolve_host = _rebind
+    recorder = _RecordingTransport()
+    client = httpx.Client(transport=egress.PinnedTransport(inner=recorder))
+    try:
+        yield client, recorder
+    finally:
+        client.close()
+        egress._resolve_host = original
+
+
+def _dns_rebinding() -> Verdict:
+    """Answer the guard's lookup with a public address and the connection's
+    lookup with the metadata service — the classic TOCTOU on a name-based
+    egress check."""
+    with _rebinding_scenario() as (client, recorder):
+        client.get("http://rebind.test/latest/meta-data/iam/")
+        return judge(
+            attacker_won=METADATA_IP in recorder.hosts(),
+            ran=len(recorder.requests) == 1,
+            ran_evidence=(
+                f"the request never reached the transport ({recorder.hosts()}), so "
+                "where it would have connected is unknown"
+            ),
+        )
+
+
+def _rebinding_control() -> None:
+    """The rebinding resolver is live and would in fact hand the metadata address
+    to a second lookup. Without this the attack scores a free BLOCKED against a
+    resolver that never rebinds."""
+    from pyharness.security import egress
+
+    with _rebinding_scenario() as (client, recorder):
+        client.get("http://rebind.test/one")
+        second = [info[4][0] for info in egress._resolve_host("rebind.test")]
+        must(
+            second == [METADATA_IP],
+            f"the scenario's resolver does not rebind on the second lookup (got "
+            f"{second}) — there is no TOCTOU here to defend against",
+        )
+        must(
+            recorder.hosts() == [PUBLIC_IP],
+            f"the request did not go to the first, vetted answer either (got "
+            f"{recorder.hosts()}) — the attack cannot tell pinning from a "
+            "transport that never connects",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +503,30 @@ ATTACKS = [
         ),
         run=_metadata_ipv6_mapped,
         control=_metadata_ipv6_mapped_control,
+    ),
+    Attack(
+        id="ssrf-idna-confusion",
+        surface="egress",
+        description="spell a host so the guard and the client read different names",
+        property=(
+            "A host is vetted as the exact name the connection will use. A "
+            "spelling that two pieces of software disagree about cannot get one "
+            "host approved and a different one contacted."
+        ),
+        run=_idna_confusion,
+        control=_idna_confusion_control,
+    ),
+    Attack(
+        id="ssrf-dns-rebinding",
+        surface="egress",
+        description="rebind the hostname to the metadata endpoint after the check",
+        property=(
+            "The harness talks to the address it approved. Changing where a name "
+            "points, in the moment between the check and the connection, does not "
+            "change where the request goes."
+        ),
+        run=_dns_rebinding,
+        control=_rebinding_control,
     ),
     Attack(
         id="egress-non-http-scheme",

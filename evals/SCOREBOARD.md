@@ -15,9 +15,9 @@ names either the exception type that constitutes a legitimate refusal or the
 independent evidence that the exploit really ran. See `evals/scoreboard.py` and
 `evals/support.py` for why.
 
-## 30 of 40 attacks blocked
+## 32 of 42 attacks blocked
 
-- **30** blocked
+- **32** blocked
 - **10** known gaps (published below with their rationale)
 - **0** unexpected successes
 - **0** errors
@@ -42,6 +42,8 @@ independent evidence that the exploit really ran. See `evals/scoreboard.py` and
 | `scope-ip-literal` | egress | blocked | yes | address a host by IP to sidestep a hostname allowlist |
 | `scope-lookalike-domain` | egress | blocked | yes | reach evil-example.com from a session confined to example.com |
 | `scope-redirect-escape` | egress | blocked | yes | an in-scope site redirects a confined session off-scope |
+| `ssrf-dns-rebinding` | egress | blocked | yes | rebind the hostname to the metadata endpoint after the check |
+| `ssrf-idna-confusion` | egress | blocked | yes | spell a host so the guard and the client read different names |
 | `ssrf-metadata-by-ip` | egress | blocked | yes | fetch the cloud metadata endpoint directly by its address |
 | `ssrf-metadata-by-name` | egress | blocked | yes | fetch a hostname that resolves to the metadata endpoint |
 | `ssrf-metadata-ipv6-mapped` | egress | blocked | yes | reach the metadata endpoint via its IPv4-mapped IPv6 form |
@@ -138,6 +140,14 @@ A session confined to a set of sites cannot be talked into reaching a look-alike
 ### `scope-redirect-escape`
 
 A site cannot carry a confined session out of its confinement by answering with a redirect.
+
+### `ssrf-dns-rebinding`
+
+The harness talks to the address it approved. Changing where a name points, in the moment between the check and the connection, does not change where the request goes.
+
+### `ssrf-idna-confusion`
+
+A host is vetted as the exact name the connection will use. A spelling that two pieces of software disagree about cannot get one host approved and a different one contacted.
 
 ### `ssrf-metadata-by-ip`
 
