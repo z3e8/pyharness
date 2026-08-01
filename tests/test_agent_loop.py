@@ -242,11 +242,27 @@ def test_dynamic_context_is_appended_to_system_prompt(tmp_path):
     assert str(tmp_path) in system
 
 
+def _jpeg_of(width: int, height: int) -> bytes:
+    """The smallest byte string that reads as a JPEG of the given size — the
+    outbox parses the header, so a fake screenshot has to be a real one."""
+    sof0 = (
+        b"\xff\xc0"
+        + (11).to_bytes(2, "big")
+        + b"\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+    )
+    return b"\xff\xd8" + sof0
+
+
+_FAKE_SHOT = _jpeg_of(64, 48)
+
+
 class _LookKernel:
     """A kernel whose cell attaches an image to the outbox, as browser.look would
     during real execution, then returns text output."""
 
-    def __init__(self, outbox, data=b"\xff\xd8jpeg"):
+    def __init__(self, outbox, data=_FAKE_SHOT):
         self.outbox = outbox
         self.data = data
 
@@ -271,7 +287,7 @@ def test_agent_attaches_image_blocks_from_outbox():
     content = tool_msg["content"][0]["content"]
     assert content[0] == {"type": "text", "text": "looked"}
     assert content[1]["type"] == "image"
-    assert base64.b64decode(content[1]["source"]["data"]) == b"\xff\xd8jpeg"
+    assert base64.b64decode(content[1]["source"]["data"]) == _FAKE_SHOT
 
 
 def test_agent_persists_images_and_emits_media_events(tmp_path):
@@ -295,7 +311,7 @@ def test_agent_persists_images_and_emits_media_events(tmp_path):
 
     files = sorted(media_dir.glob("*.jpg"))
     assert len(files) == 1
-    assert files[0].read_bytes() == b"\xff\xd8jpeg"
+    assert files[0].read_bytes() == _FAKE_SHOT
     media_events = [kw for (k, kw) in events if k == "media"]
     assert len(media_events) == 1
     assert media_events[0]["src"] == f"/media/sess-1/{files[0].name}"

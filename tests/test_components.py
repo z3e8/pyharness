@@ -1422,7 +1422,9 @@ class _FakePage:
         self, path=None, *, type=None, quality=None, full_page=False, clip=None
     ):
         self.calls.append(("screenshot", path, type, full_page, clip))
-        return b"\xff\xd8fake-jpeg-bytes"  # look() reads the return; screenshot(path=) ignores it
+        # look() reads the return (and MediaOutbox parses its header, so this has
+        # to be a real JPEG); screenshot(path=) ignores it.
+        return _jpeg_of(1280, 720)
 
     def evaluate(self, script):
         self.calls.append(("evaluate", script))
@@ -1803,21 +1805,22 @@ def test_browser_upload_preview_names_the_file(tmp_path):
 def test_media_outbox_attach_drain_and_caps():
     from pyharness.core.media import MediaOutbox
 
+    small = _jpeg_of(8, 8)
     box = MediaOutbox(max_bytes=100, max_items=2)
-    box.attach(media_type="image/jpeg", data=b"abc")
+    box.attach(media_type="image/jpeg", data=small)
     blocks = box.drain()
     assert len(blocks) == 1 and blocks[0]["type"] == "image"
     assert blocks[0]["source"]["media_type"] == "image/jpeg"
-    assert base64.b64decode(blocks[0]["source"]["data"]) == b"abc"
+    assert base64.b64decode(blocks[0]["source"]["data"]) == small
     assert box.drain() == []  # drained empties the buffer
 
-    box.attach(media_type="image/jpeg", data=b"x")
-    box.attach(media_type="image/jpeg", data=b"y")
+    box.attach(media_type="image/jpeg", data=small)
+    box.attach(media_type="image/jpeg", data=small)
     with pytest.raises(ValueError):  # over the per-cell count
-        box.attach(media_type="image/jpeg", data=b"z")
+        box.attach(media_type="image/jpeg", data=small)
     box.drain()
     with pytest.raises(ValueError):  # over the per-image byte cap
-        box.attach(media_type="image/jpeg", data=b"x" * 101)
+        box.attach(media_type="image/jpeg", data=small + b"\x00" * 101)
 
 
 def _jpeg_of(width: int, height: int) -> bytes:
@@ -1844,16 +1847,86 @@ def _png_of(width: int, height: int) -> bytes:
     )
 
 
-def test_image_size_reads_jpeg_and_png_headers():
-    from pyharness.core.media import image_size
+def _gif_of(width: int, height: int) -> bytes:
+    return (
+        b"GIF89a" + width.to_bytes(2, "little") + height.to_bytes(2, "little") + b"\x00"
+    )
+
+
+def _webp_lossy_of(width: int, height: int) -> bytes:
+    """A `VP8 ` (lossy) WebP header: RIFF container, 3-byte frame tag, start
+    code, then the 14-bit dimensions."""
+    frame = b"\x00\x00\x00" + b"\x9d\x01\x2a"
+    frame += width.to_bytes(2, "little") + height.to_bytes(2, "little")
+    return b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8 " + b"\x00" * 4 + frame
+
+
+def _webp_lossless_of(width: int, height: int) -> bytes:
+    """A `VP8L` (lossless) WebP header: width-1 and height-1 packed as two
+    14-bit fields into one little-endian uint32 after the 0x2f signature."""
+    bits = (width - 1) | ((height - 1) << 14)
+    body = b"\x2f" + bits.to_bytes(4, "little")
+    return b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8L" + b"\x00" * 4 + body
+
+
+def _webp_extended_of(width: int, height: int) -> bytes:
+    """A `VP8X` (extended) WebP header: a flags word, then canvas width-1 and
+    height-1 as 24-bit little-endian fields."""
+    body = b"\x00" * 4 + (width - 1).to_bytes(3, "little")
+    body += (height - 1).to_bytes(3, "little")
+    return b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8X" + b"\x00" * 4 + body
+
+
+def test_image_size_reads_every_format_the_api_accepts():
+    """All four accepted formats parse, so `attach`'s fail-closed rule never
+    refuses an image the API would have taken."""
+    from pyharness.core.media import SUPPORTED_MEDIA_TYPES, image_size
 
     assert image_size("image/jpeg", _jpeg_of(1280, 9001)) == (1280, 9001)
     assert image_size("image/png", _png_of(640, 480)) == (640, 480)
-    # No header we can read -> None, and attach() then lets the bytes through
-    # rather than guessing (the byte cap still applies).
-    assert image_size("image/gif", b"GIF89a") is None
+    assert image_size("image/gif", _gif_of(320, 200)) == (320, 200)
+    # WebP stores its size three different ways depending on the encoding.
+    assert image_size("image/webp", _webp_lossy_of(1024, 768)) == (1024, 768)
+    assert image_size("image/webp", _webp_lossless_of(1024, 768)) == (1024, 768)
+    assert image_size("image/webp", _webp_extended_of(9000, 12)) == (9000, 12)
+    assert set(SUPPORTED_MEDIA_TYPES) == {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+    }
+
+
+def test_image_size_returns_none_for_a_header_it_cannot_read():
+    """Truncated, corrupt, or unsupported -> None, which `attach` treats as a
+    refusal rather than letting unmeasured bytes through."""
+    from pyharness.core.media import image_size
+
+    assert image_size("image/tiff", b"II*\x00") is None  # not an accepted format
     assert image_size("image/jpeg", b"\xff\xd8truncated") is None
     assert image_size("image/png", b"\x89PNG\r\n\x1a\n") is None
+    assert image_size("image/gif", b"GIF89a") is None
+    assert image_size("image/webp", b"RIFF\x00\x00\x00\x00WEBPVP8 ") is None
+    assert (
+        image_size("image/webp", b"RIFF\x00\x00\x00\x00WEBPXXXX" + b"\x00" * 20) is None
+    )
+
+
+def test_media_outbox_refuses_an_image_it_cannot_measure():
+    """An image whose dimensions can't be read is not attached.
+
+    Unreachable today (only `browser.look` attaches, and it always produces
+    JPEG), and that is the point: the moment a second image source appears, an
+    unmeasurable image must not reach the history on trust — an oversized block
+    the API refuses is permanent, and this is the only door."""
+    from pyharness.core.media import MediaOutbox
+
+    box = MediaOutbox()
+    with pytest.raises(ValueError, match="cannot read the dimensions"):
+        box.attach(media_type="image/jpeg", data=b"\xff\xd8truncated")
+    with pytest.raises(ValueError, match="cannot read the dimensions"):
+        box.attach(media_type="image/tiff", data=b"II*\x00")
+    assert box.drain() == []  # nothing unmeasured was staged
 
 
 def test_media_outbox_refuses_an_image_past_the_api_dimension_limit():
@@ -1931,9 +2004,9 @@ def test_browser_look_stages_image_and_returns_no_bytes(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
     cap.media = box
     r = cap.look()
-    assert r["attached"] is True and r["bytes"] == len(b"\xff\xd8fake-jpeg-bytes")
+    assert r["attached"] is True and r["bytes"] == len(_jpeg_of(1280, 720))
     # The raw bytes are staged for the agent loop, never returned to agent code.
-    assert "fake-jpeg-bytes" not in repr(r)
+    assert "\\xff\\xd8" not in repr(r)
     blocks = box.drain()
     assert len(blocks) == 1 and blocks[0]["source"]["media_type"] == "image/jpeg"
 
