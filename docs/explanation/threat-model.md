@@ -109,7 +109,8 @@ scope. It ran parent-side until 2026-08-01, which made it the sharpest hole in
 this table — approval-gated, but unconfined and unaudited once approved. Two
 things follow from the fix. The move costs no mediation, because a skill's only
 reach outside the process was ever the builtins in its globals, and in the child
-those are the same proxies a cell calls.
+those are the same proxies a cell calls. And a save's approval prompt now shows
+the bundled source, since approving a skill is approving code that runs later.
 
 ## Dispatch is centralized; containment is not
 

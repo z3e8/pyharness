@@ -8,9 +8,16 @@ from ...tools.skills import (
     edit_skill_md,
     record_use,
     register_skill_dir,
+    render_files_preview,
     validate_skill_name,
     write_skill,
 )
+
+
+def _positional_files(args: tuple):
+    """`save_skill`'s `files` as a positional — the shape the child's IPC sends
+    (name, description, instructions, files, ...)."""
+    return args[3] if len(args) >= 4 else None
 
 
 class SkillsCapability:
@@ -25,7 +32,8 @@ class SkillsCapability:
 
     Bundled code is agent-authored, so it executes where the agent's own code
     does: inside the sandboxed child, with the session builtins ambient (see
-    `RemoteSkillSpec`)."""
+    `RemoteSkillSpec`). Saving is approval-gated and the prompt shows the source,
+    because that source runs on a later call."""
 
     name = "skills"
 
@@ -68,7 +76,12 @@ class SkillsCapability:
         """All ops only write under the skills root, so they are LOCAL. Saving or
         editing a skill gates on a supply-chain sign-off (that content auto-loads
         in later sessions); recording a use writes only metadata, so it isn't
-        gated."""
+        gated.
+
+        A save shows the **bundled source**, not just the skill's name. That
+        code executes on a later run — approving the name alone was approving
+        something the human could not see. `edit_skill` never touches bundled
+        files, so its preview stays about the instruction edits."""
         name = kwargs.get("name") or (args[0] if args else "?")
         if op == "record_skill_use":
             outcome = kwargs.get("outcome") or (args[1] if len(args) >= 2 else "?")
@@ -76,7 +89,11 @@ class SkillsCapability:
         if op == "edit_skill":
             edits = kwargs.get("edits") or (args[1] if len(args) >= 2 else [])
             return ActionCategory.LOCAL, f"apply {len(edits)} edit(s) to skill {name!r}"
-        return ActionCategory.LOCAL, f"save skill {name!r} to {self.skills_dir}"
+        files = kwargs.get("files") if "files" in kwargs else _positional_files(args)
+        summary = f"save skill {name!r} to {self.skills_dir}"
+        if code := render_files_preview(dict(files or {})):
+            summary += "\n" + code
+        return ActionCategory.LOCAL, summary
 
     def save_skill(
         self,

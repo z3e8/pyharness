@@ -246,7 +246,8 @@ IPC boundary rather than a proxy, so raw filesystem or network access inside a
 bundled function is jailed exactly as the same line in a cell is.
 
 > Saving or editing a skill requires human approval by default (it writes
-> content that auto-loads in later sessions) — see
+> content that auto-loads in later sessions), and a save's prompt shows the
+> bundled source it is signing off on — see
 > [the approval policy](../explanation/security-and-audit.md).
 
 **Every skill should carry a `check`** — one line saying how a run confirms the

@@ -535,6 +535,40 @@ def _render_sources(name: str, skill_dir: Path) -> str | None:
     return head + "\n\n" + "\n\n".join(blocks)
 
 
+# How much bundled source the *approval prompt* shows. Tighter than the
+# describe_tool limits above: this text is read in a terminal by a human
+# deciding yes/no, and it lands in the audit record for the approval. A file
+# past the limit collapses to its outline; describe_tool still shows it whole.
+_PREVIEW_FULL_LIMIT = 2_000  # chars per file shown in full
+_PREVIEW_TOTAL_LIMIT = 6_000  # chars across files
+
+
+def render_files_preview(files: dict[str, str], indent: str = "    ") -> str:
+    """The bundled code a `save_skill` approval is signing off on.
+
+    Without this the approver saw only the skill's *name*, while the code it
+    bundles later executes on a real run — the one thing a supply-chain sign-off
+    exists to look at. Rendered from the pending `files` argument (nothing is on
+    disk yet at decision time), small files in full and large ones as outlines."""
+    if not files:
+        return ""
+    blocks: list[str] = []
+    total = 0
+    for fname in sorted(files):
+        src = (files[fname] or "").rstrip()
+        lines = src.count("\n") + 1
+        if len(src) <= _PREVIEW_FULL_LIMIT and total + len(src) <= _PREVIEW_TOTAL_LIMIT:
+            total += len(src)
+            body = src
+        else:
+            body = _outline(src)
+            fname = f"{fname} ({lines} lines — outline only)"
+        blocks.append(f"--- {fname}\n{body}")
+    text = f"bundles {len(files)} file(s), which run when the skill is called:\n"
+    text += "\n".join(blocks)
+    return "\n".join(indent + line for line in text.splitlines())
+
+
 def _outline(src: str) -> str:
     """A large file reduced to its top-level def/class headers plus docstring
     first lines — enough to see what's callable without the body."""

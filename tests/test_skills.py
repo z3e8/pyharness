@@ -19,6 +19,7 @@ from pyharness.tools.skills import (
     parse_skill_md,
     read_journal,
     record_use,
+    render_files_preview,
     write_skill,
 )
 
@@ -706,3 +707,38 @@ def test_bundled_import_failure_names_the_skill_and_file_in_the_child(tmp_path):
         assert "skill 'broken': bundled file impl.py failed to import" in out
     finally:
         session.close()
+
+
+def test_save_skill_approval_shows_the_bundled_source(tmp_path):
+    """Approving a save is a supply-chain sign-off on code that runs later, so
+    the prompt has to carry the code. It used to show only the skill's name."""
+    seen = []
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda request: (seen.append(request), True)[1],
+        unsafe_in_process=True,
+    )
+    try:
+        session.broker.namespace()["save_skill"](
+            "audited",
+            "does a thing",
+            "call go()",
+            files={"impl.py": "def go():\n    return bash('id')\n"},
+        )
+        summary = next(r.summary for r in seen if r.action == "skills.save_skill")
+        assert "impl.py" in summary
+        assert "return bash('id')" in summary
+    finally:
+        session.close()
+
+
+def test_large_bundled_file_previews_as_an_outline(tmp_path):
+    """A big file collapses to its def outline rather than flooding the prompt;
+    the human still sees every callable it is approving."""
+    body = "\n".join(f"    x{i} = {i}" for i in range(600))
+    files = {"big.py": f"def huge():\n    '''Do a lot.'''\n{body}\n    return x0\n"}
+    text = render_files_preview(files)
+    assert "outline only" in text
+    assert "def huge()" in text and "Do a lot." in text
+    assert "x599 = 599" not in text

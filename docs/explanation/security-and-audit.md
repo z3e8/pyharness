@@ -25,6 +25,8 @@ Rules match by prefix, so `"files"` gates every file operation and
 content that would load and run in later sessions, so a human signs off at
 author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
 proposals too — reflection routes its skill writes through the same broker gate).
+A `save_skill` prompt shows the **bundled source** it is approving, not just the
+skill's name: that code is what a later run executes.
 `shell.bash` is approval-gated too: it runs an arbitrary program parent-side, and
 while the OS sandbox (below) jails its filesystem and network, the command itself
 is unvetted — and on a platform with no sandbox there is no jail at all. It also gates

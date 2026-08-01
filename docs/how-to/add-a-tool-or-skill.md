@@ -77,7 +77,9 @@ returns the bundled code as a module.
 - **You can author one by hand** — just create that directory; it loads next
   session, no code required. A hand-authored skill also starts unverified.
 - `save_skill` requires approval by default (it writes code that auto-runs
-  later) — see [Security & audit](../explanation/security-and-audit.md).
+  later), and **the prompt shows the bundled source** — full text for small
+  files, a def outline for large ones — because that source is what a later run
+  executes. See [Security & audit](../explanation/security-and-audit.md).
 - **Trust is earned by a real run.** A new or revised skill is `unverified`
   (tagged in `search_tools`, spelled out in `describe_tool`) — treat its steps as
   a hypothesis. After running it, call `record_skill_use(name, "worked"|"failed",
