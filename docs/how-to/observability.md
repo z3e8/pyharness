@@ -37,6 +37,30 @@ pyharness-watch .sessions/cli-...   # pin one session
 pyharness-watch --port 7000
 ```
 
+## Share a finished session — the static export
+
+`--static` bakes sessions into self-contained HTML instead of serving them: one
+page per session plus an `index.html`, no server, no assets, no network.
+
+```bash
+pyharness-watch .sessions/cli-... --static out/     # one session
+pyharness-watch .sessions --static out/             # every session under a dir
+```
+
+It is the *same page* as the live view — `watch.py` owns the renderer and the
+export only swaps the feed (a baked event array for the SSE stream), so the two
+cannot drift. Three things differ, all because a record is not a live view:
+screenshots are inlined as `data:` URIs (there is no server to fetch
+`/media/...`), absolute paths are redacted (a trace records the session root and
+the preamble names the workspace — both carry your home directory), and the
+clock is frozen at the session's real duration instead of ticking from whenever
+the page was opened.
+
+Spawn children are not given their own pages — they are baked into the parent's,
+where the viewer already renders them as nested panels.
+
+`make site` rebuilds the committed demo pages under `evals/demo/site/`.
+
 Pointed at a directory of sessions it follows the most recently active *root*
 session (plus any sub-agents it spawns) and switches the top-level view only
 when a genuinely new root session starts — a running sub-agent never steals the

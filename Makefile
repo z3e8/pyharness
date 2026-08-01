@@ -55,6 +55,16 @@ dev: run
 watch:
 	uv run pyharness-watch
 
+## site: rebuild the committed static session pages from the demo run
+# The pages are the artifact — .sessions/ is gitignored, so a stranger cloning
+# the repo cannot regenerate them. SESSIONS names the run to bake; the four
+# published pages are chosen in evals/demo/site/README.md.
+SITE_RUN ?= .sessions/demo-20260730-225820/invoice-exfiltration
+.PHONY: site
+site:
+	uv run pyharness-watch $(SITE_RUN) --static evals/demo/site \
+		--title "pyharness — containment, one session at a time"
+
 ## up: start the optional Phoenix OTel backend (then set PYHARNESS_TELEMETRY_ENABLED=true)
 .PHONY: up
 up: .env

@@ -29,6 +29,7 @@ import mimetypes
 import re
 import threading
 import time
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -255,8 +256,27 @@ def main() -> None:
         "with the latter, follows the most recently active session (default: .sessions)",
     )
     parser.add_argument("--port", type=int, default=6061)
+    parser.add_argument(
+        "--static",
+        metavar="OUT",
+        help="don't serve: bake the session(s) under `target` into "
+        "self-contained HTML in OUT (plus an index) and exit",
+    )
+    parser.add_argument(
+        "--title", default="pyharness sessions", help="index page title with --static"
+    )
     args = parser.parse_args()
-    server = WatchServer(Path(args.target).expanduser(), port=args.port)
+    target = Path(args.target).expanduser()
+    if args.static:
+        from .static import build_site, discover_sessions
+
+        sessions = discover_sessions(target)
+        if not sessions:
+            raise SystemExit(f"no sessions with a trace.jsonl under {target}")
+        written = build_site(sessions, args.static, title=args.title)
+        print(f"wrote {len(written)} files to {args.static}")
+        return
+    server = WatchServer(target, port=args.port)
     print(f"watching {args.target} → {server.url}  (Ctrl-C to stop)")
     try:
         server.serve_forever()
@@ -264,18 +284,18 @@ def main() -> None:
         pass
 
 
-# The page. Self-contained (no external assets); renders the SSE stream into a
-# turn-by-turn view. Each event is tagged with the session it came from: root
+# The page template. Self-contained (no external assets); renders an event feed
+# into a turn-by-turn view. Each event is tagged with the session it came from: root
 # events land in the main log, a spawned sub-agent's events land in a nested,
 # collapsible panel opened at its spawn point. Sticky top region holds the
 # session/spend header, the filter+search toolbar, a pending-approval banner, and
 # the "now" bar for in-flight work. All trace text lands via textContent, never
 # innerHTML — trace content is untrusted.
-PAGE = r"""<!doctype html>
+_PAGE_TEMPLATE = r"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>pyharness — live</title>
+<title>@@TITLE@@</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -497,7 +517,7 @@ function renderBanner() {
     bannerEl.appendChild(item);
   }
 }
-setInterval(() => {
+const ticker = setInterval(() => {
   for (const item of [...nowEl.children, ...bannerEl.children]) {
     const s = (Date.now() - Number(item.dataset.t0)) / 1000;
     item.querySelector('.elapsed').textContent = s.toFixed(0) + 's';
@@ -727,14 +747,43 @@ function handle(e) {
   }
 }
 
-const source = new EventSource('/events');
-source.onopen = () => { document.getElementById('status').textContent = 'live'; };
-source.onerror = () => { document.getElementById('status').textContent = 'reconnecting…'; };
-source.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch (err) {} };
+/* @@FEED@@ */
 </script>
 </body>
 </html>
 """
+
+# The live feed: events arrive over SSE as the session writes them. The static
+# builder (obs/static.py) substitutes its own feed here — a baked array replayed
+# through the same `handle()` — so both views are the *same page* rendering the
+# same events, and a change to the renderer cannot drift between them.
+LIVE_FEED = r"""
+const source = new EventSource('/events');
+source.onopen = () => { document.getElementById('status').textContent = 'live'; };
+source.onerror = () => { document.getElementById('status').textContent = 'reconnecting…'; };
+source.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch (err) {} };
+"""
+
+_FEED_SLOT = "/* @@FEED@@ */"
+_TITLE_SLOT = "@@TITLE@@"
+
+
+def render_page(feed_js: str, *, title: str = "pyharness — live") -> str:
+    """The viewer page wired to a feed. `feed_js` is JavaScript that calls
+    `handle(event)` — from SSE (live) or from a baked array (static).
+
+    Raises if either slot has gone missing rather than quietly returning a page
+    with no feed in it: a viewer that renders an empty log is indistinguishable
+    from a session that did nothing."""
+    for slot in (_FEED_SLOT, _TITLE_SLOT):
+        if slot not in _PAGE_TEMPLATE:
+            raise RuntimeError(f"viewer page lost its {slot} slot")
+    return _PAGE_TEMPLATE.replace(_FEED_SLOT, feed_js).replace(
+        _TITLE_SLOT, escape(title)
+    )
+
+
+PAGE = render_page(LIVE_FEED)
 
 
 if __name__ == "__main__":
