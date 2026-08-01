@@ -5,22 +5,27 @@ A skill is a directory under the skills root:
     <skills_root>/<name>/
         SKILL.md        # frontmatter (name, description, keywords, category)
                         # + body = the procedure/instructions
-        *.py            # optional bundled modules, imported on first use
+        *.py            # optional bundled modules, executed on first call
 
 It registers as one learned tool (design §6, `source="learned"`): its
 description shows in `search_tools()`, `describe_tool()` reveals the full
-instructions plus any bundled functions, and `use_tool()` loads the bundled
-code. Both humans and the agent author skills — humans by writing the directory,
+instructions, the bundled functions, *and* the bundled source, and `use_tool()`
+returns the bundled code as a module. Bundled code is lazy end to end: the
+callable surface comes from parsing the source with `ast`, and nothing in a
+bundled file executes until the agent actually calls one of its functions.
+Both humans and the agent author skills — humans by writing the directory,
 the agent via the `save_skill` builtin — and either way they reload next session.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import inspect
 import json
 import re
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -141,6 +146,7 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         verified=journal["verified"],
         uses=tuple(journal["uses"]),
         check=meta.get("check") or None,
+        code=_render_sources(name, skill_dir),
     )
     return name
 
@@ -229,23 +235,114 @@ def write_skill(
 
 
 def _build_skill_module(name: str, skill_dir: Path) -> ModuleType:
-    """Import a skill's bundled *.py and expose their public functions as one
-    module named after the skill. The skill dir is on sys.path during import so
-    its files may import one another."""
+    """Synthesize a skill's module **without executing any bundled code**.
+
+    The public callable surface is discovered by parsing each bundled *.py with
+    `ast`: every top-level public `def`/`async def` becomes a lightweight stub
+    carrying the real name, signature, and docstring, so `describe`/`search`
+    can list and render the functions with zero side effects. The first call
+    to any stub executes all the bundled files (with the skill dir on sys.path
+    so they may import one another), swaps the real functions in, and
+    delegates; until then, nothing in the skill runs. A syntax error surfaces
+    here (parsing needs no execution); an import-time failure surfaces on first
+    call, attributed to the skill and file.
+
+    Functions created dynamically (a lambda assignment, a conditional `def`)
+    are not statically visible, so they don't list — but a module-level
+    `__getattr__` (PEP 562) triggers the deferred execution on first attribute
+    access, so they still resolve by name."""
     module = ModuleType(name)
+    state: dict = {"loaded": False, "funcs": {}}
+    for py in _skill_files(skill_dir):
+        try:
+            tree = ast.parse(py.read_text(), filename=str(py))
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"skill {name!r}: bundled file {py.name} has a syntax error: {exc}"
+            ) from exc
+        for node in tree.body:
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not node.name.startswith("_"):
+                setattr(
+                    module,
+                    node.name,
+                    _make_stub(name, skill_dir, module, state, node),
+                )
+
+    def __getattr__(attr: str):  # PEP 562: dynamic names still resolve by access
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        _exec_skill_files(name, skill_dir, module, state)
+        try:
+            return module.__dict__[attr]
+        except KeyError:
+            raise AttributeError(f"skill {name!r} has no attribute {attr!r}") from None
+
+    module.__getattr__ = __getattr__  # type: ignore[attr-defined]
+    return module
+
+
+def _make_stub(
+    name: str, skill_dir: Path, module: ModuleType, state: dict, node
+) -> Callable:
+    """A placeholder for one bundled function: lists and renders like the real
+    thing (name, signature, docstring), and on call triggers the deferred
+    execution then delegates to it."""
+    fname = node.name
+
+    def stub(*args, **kwargs):
+        _exec_skill_files(name, skill_dir, module, state)
+        func = state["funcs"].get(fname)
+        if func is None:
+            raise RuntimeError(
+                f"skill {name!r}: {fname}() is declared in the bundled source "
+                "but was not defined when the code ran"
+            )
+        return func(*args, **kwargs)
+
+    stub.__name__ = fname
+    stub.__qualname__ = fname
+    stub.__module__ = name  # so Registry._public_functions lists it
+    stub.__doc__ = ast.get_docstring(node)
+    stub.__signature__ = _signature_from_ast(node)  # type: ignore[attr-defined]
+    return stub
+
+
+def _exec_skill_files(
+    name: str, skill_dir: Path, module: ModuleType, state: dict
+) -> None:
+    """The deferred half: actually import the bundled files and bind their
+    public functions onto the synthesized module, replacing the stubs. Runs at
+    most once per built module; a failure is raised as a clear skill-attributed
+    error and leaves the module unloaded so a later call can retry."""
+    if state["loaded"]:
+        return
     sys.path.insert(0, str(skill_dir))
     try:
-        for py in sorted(skill_dir.glob("*.py")):
-            if py.stem.startswith("_"):
-                continue
-            sub = _import_file(py, f"pyharness_skill_{name}_{py.stem}")
+        funcs: dict[str, Callable] = {}
+        for py in _skill_files(skill_dir):
+            try:
+                sub = _import_file(py, f"pyharness_skill_{name}_{py.stem}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"skill {name!r}: bundled file {py.name} failed to import: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
             for fname, func in inspect.getmembers(sub, inspect.isfunction):
                 if not fname.startswith("_") and func.__module__ == sub.__name__:
                     func.__module__ = name  # so Registry._public_functions lists it
+                    funcs[fname] = func
                     setattr(module, fname, func)
+        state["funcs"] = funcs
+        state["loaded"] = True
     finally:
         sys.path.remove(str(skill_dir))
-    return module
+
+
+def _skill_files(skill_dir: Path) -> list[Path]:
+    """The bundled files that form a skill's public surface, in load order."""
+    return [py for py in sorted(skill_dir.glob("*.py")) if not py.stem.startswith("_")]
 
 
 def _import_file(path: Path, mod_name: str) -> ModuleType:
@@ -254,3 +351,114 @@ def _import_file(path: Path, mod_name: str) -> ModuleType:
     sys.modules[mod_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+class _SourceExpr:
+    """Wraps a default or annotation's *source text* so `inspect.Signature`
+    renders it verbatim — the value never exists because the code never ran."""
+
+    __slots__ = ("_src",)
+
+    def __init__(self, src: str):
+        self._src = src
+
+    def __repr__(self) -> str:
+        return self._src
+
+
+def _signature_from_ast(node) -> inspect.Signature:
+    """An `inspect.Signature` reconstructed from a `def`'s AST — defaults and
+    annotations render as their source text, since evaluating them would defeat
+    the point of not executing the file."""
+    P = inspect.Parameter
+    a = node.args
+    params: list[inspect.Parameter] = []
+    positional = list(a.posonlyargs) + list(a.args)
+    defaults = [None] * (len(positional) - len(a.defaults)) + list(a.defaults)
+    for arg, default in zip(positional, defaults, strict=True):
+        kind = P.POSITIONAL_ONLY if arg in a.posonlyargs else P.POSITIONAL_OR_KEYWORD
+        params.append(_parameter(arg, kind, default))
+    if a.vararg:
+        params.append(_parameter(a.vararg, P.VAR_POSITIONAL, None))
+    for arg, default in zip(a.kwonlyargs, a.kw_defaults, strict=True):
+        params.append(_parameter(arg, P.KEYWORD_ONLY, default))
+    if a.kwarg:
+        params.append(_parameter(a.kwarg, P.VAR_KEYWORD, None))
+    returns = _SourceExpr(ast.unparse(node.returns)) if node.returns else P.empty
+    return inspect.Signature(params, return_annotation=returns)
+
+
+def _parameter(arg, kind, default) -> inspect.Parameter:
+    return inspect.Parameter(
+        arg.arg,
+        kind,
+        default=(
+            _SourceExpr(ast.unparse(default))
+            if default is not None
+            else inspect.Parameter.empty
+        ),
+        annotation=(
+            _SourceExpr(ast.unparse(arg.annotation))
+            if arg.annotation
+            else inspect.Parameter.empty
+        ),
+    )
+
+
+# How much bundled source `describe_tool` shows. Small files appear in full —
+# seeing the actual code is what makes the agent call it instead of rewriting
+# it — while a large file collapses to its def/class outline (signatures +
+# docstring first lines), which is what's needed to decide to call it. The
+# total across files is capped so a many-file skill can't flood the context.
+_SOURCE_FULL_LIMIT = 4_000  # chars per file shown in full
+_SOURCE_TOTAL_LIMIT = 10_000  # chars across files; beyond this, outlines only
+
+
+def _render_sources(name: str, skill_dir: Path) -> str | None:
+    """The bundled code as text for `describe_tool`, clearly delimited per file.
+    Includes private (`_`-prefixed) files too — they are part of the skill even
+    though they only run when a public file imports them."""
+    blocks: list[str] = []
+    total = 0
+    for py in sorted(skill_dir.glob("*.py")):
+        try:
+            src = py.read_text().rstrip()
+        except OSError:
+            continue
+        if len(src) <= _SOURCE_FULL_LIMIT and total + len(src) <= _SOURCE_TOTAL_LIMIT:
+            total += len(src)
+            blocks.append(f"## {py.name}\n```python\n{src}\n```")
+        else:
+            lines = src.count("\n") + 1
+            blocks.append(
+                f"## {py.name} ({lines} lines — outline only; "
+                f"use_tool({name!r}) loads it)\n```python\n{_outline(src)}\n```"
+            )
+    if not blocks:
+        return None
+    head = (
+        f"Bundled code (nothing runs until you call a function via use_tool({name!r})):"
+    )
+    return head + "\n\n" + "\n\n".join(blocks)
+
+
+def _outline(src: str) -> str:
+    """A large file reduced to its top-level def/class headers plus docstring
+    first lines — enough to see what's callable without the body."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return src[:_SOURCE_FULL_LIMIT] + "\n# ... (truncated: file has a syntax error)"
+    lines: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+            lines.append(f"{prefix} {node.name}{_signature_from_ast(node)}: ...")
+        elif isinstance(node, ast.ClassDef):
+            lines.append(f"class {node.name}: ...")
+        else:
+            continue
+        doc = ast.get_docstring(node)
+        if doc:
+            lines[-1] += f"  # {doc.splitlines()[0]}"
+    return "\n".join(lines) if lines else "# (no top-level functions or classes)"
