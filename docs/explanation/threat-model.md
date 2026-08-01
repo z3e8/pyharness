@@ -311,11 +311,16 @@ floor directly.
   the jail is applied by a wrap rather than inherited. The practical cost is
   that an agent hitting approval fatigue on `bash` has an unaudited alternative,
   so per-command usage numbers are a floor, not a census.
-- **DNS rebinding (TOCTOU).** The egress guard resolves a hostname and the HTTP
-  client resolves it again at connect, so a deliberately racing resolver can
-  present a different address to the socket than to the guard. Resolution
-  *failure* fails closed, and the guard re-runs on every redirect hop, but
-  pinning the connection to the vetted IP is the durable fix and is not built.
+- **Egress on the two paths that cannot be pinned.** The `http` capability and
+  remote MCP now connect to the address the guard vetted, so neither a racing
+  resolver (DNS rebinding) nor a hostname the guard and the client read
+  differently (IDNA) reaches an unvetted host — both are scored,
+  `ssrf-dns-rebinding` and `ssrf-idna-confusion`. Two paths keep only the
+  name-based check: the **browser**, because Playwright owns Chromium's sockets
+  and nothing in-process can pin them (every request is re-vetted by the route
+  interceptor instead), and any session **behind an HTTP(S) proxy**, where the
+  socket goes to the proxy rather than to the vetted address. Both keep the
+  original resolve-then-connect race.
 - **Anything reached by compromising the parent**, per the adversary model above.
 - **`sessionStorage`-based logins** are not captured by a saved site profile, and
   profile auto-refresh persists every cookie the context accrued — so keep a

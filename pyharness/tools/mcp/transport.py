@@ -25,7 +25,7 @@ import time
 from collections import deque
 from typing import Protocol, runtime_checkable
 
-from ...security.egress import check_url
+from ...security.egress import check_url, pinned_client
 from ...security.env import minimal_environ
 
 # Protocol version we advertise at `initialize` (the current stable spec).
@@ -192,8 +192,6 @@ class HttpTransport:
         timeout: float = 30.0,
         allowed_hosts: frozenset[str] | None = None,
     ):
-        import httpx  # provided transitively via the anthropic dependency
-
         # A remote MCP URL is an outbound target like any other — an internal or
         # link-local endpoint (cloud metadata, a localhost admin service) would
         # otherwise let a `.mcp.json` entry point the parent at internal services
@@ -205,7 +203,12 @@ class HttpTransport:
         check_url(url, allowed_hosts)
         self.protocol_version = PROTOCOL_VERSION
         self._url = url
-        self._client = httpx.Client(timeout=timeout, headers=headers or {})
+        # The client's transport re-vets and pins each request to the address it
+        # cleared, so the per-request check below cannot be raced by a resolver
+        # that answers differently at connect time.
+        self._client = pinned_client(
+            allowed_hosts=allowed_hosts, timeout=timeout, headers=headers or {}
+        )
         self._session_id: str | None = None
 
     def request(self, message: dict) -> dict:

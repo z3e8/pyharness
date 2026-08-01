@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...core.workspace import Workspace
-from ...security.egress import check_url
+from ...security.egress import check_url, pinned_client
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
 from ...security.sink import SecretSink
@@ -159,14 +159,20 @@ class HttpSessionCapability:
         host = urlsplit(url).hostname if url else None
         return GrantScope("http", host.lower()) if host else None
 
+    def _client(self):
+        """A client whose transport re-vets and pins every request (see
+        `security.egress.PinnedTransport`), carrying this session's host scope —
+        so the address the socket reaches is the one the guard cleared, not one a
+        racing resolver substitutes afterwards."""
+        return pinned_client(allowed_hosts=self.allowed_hosts, timeout=30)
+
     def open_session(self) -> str:
         """Open a persistent session and return its id. Reuse the id across cells
         and calls; cookies set by the server persist on it until `close_session`."""
-        httpx = import_module("httpx")
         session_id = uuid4().hex
         # No client-level auto-redirects: `request` drives every redirect hop
         # itself so the egress guard re-checks each Location before it is chased.
-        self._clients[session_id] = httpx.Client(timeout=30)
+        self._clients[session_id] = self._client()
         return session_id
 
     def close_session(self, session_id: str) -> str:
@@ -273,8 +279,7 @@ class HttpSessionCapability:
 
         transient = session_id is None
         if transient:
-            httpx = import_module("httpx")
-            client = httpx.Client(timeout=30)
+            client = self._client()
         else:
             client = self._clients.get(session_id)
             if client is None:

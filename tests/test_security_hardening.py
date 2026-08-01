@@ -363,6 +363,150 @@ def test_egress_dns_failure_fails_closed(monkeypatch):
     assert check_url("https://8.8.8.8/") == "https://8.8.8.8/"
 
 
+def test_egress_vets_the_ascii_host_the_client_will_connect_to(monkeypatch):
+    # The guard used to read the hostname out of the URL and hand the *name* to
+    # the resolver, which applies IDNA 2003 (`faß.` -> `fass.`), while httpx
+    # connects to the IDNA 2008 form (`xn--fa-hia.`). Two different names, and
+    # only one of them vetted. Both sides must now agree on the A-label.
+    import httpx
+
+    from pyharness.security import egress
+
+    assert egress.ascii_host("faß.example.com") == "xn--fa-hia.example.com"
+    assert egress.ascii_host("faß.example.com") == (
+        httpx.URL("http://faß.example.com/").raw_host.decode()
+    )
+
+    resolved: list[str] = []
+    monkeypatch.setattr(
+        egress,
+        "_resolve_host",
+        lambda host: resolved.append(host) or [(2, 1, 6, "", ("203.0.113.10", 0))],
+    )
+    check_url("http://faß.example.com/")
+    assert resolved == ["xn--fa-hia.example.com"]
+
+    # A name that will not IDNA-encode is refused rather than passed through in
+    # some other spelling.
+    with pytest.raises(EgressBlocked):
+        egress.ascii_host("\N{ZERO WIDTH NO-BREAK SPACE}.example.com")
+
+
+def test_egress_scope_matches_unicode_entries_by_their_a_label():
+    from pyharness.security.egress import host_in_scope, normalize_scope_hosts
+
+    scope = normalize_scope_hosts(["faß.example.com"])
+    assert scope == frozenset({"xn--fa-hia.example.com"})
+    assert host_in_scope("api.xn--fa-hia.example.com", scope)
+
+
+def test_pinned_transport_connects_to_the_address_it_vetted(monkeypatch):
+    # DNS rebinding: the resolver answers with a public address when asked and a
+    # link-local one a moment later. The guard must connect to what it cleared,
+    # so there is no second lookup for the attacker's resolver to answer.
+    import httpx
+
+    from pyharness.security import egress
+
+    answers = iter([("203.0.113.10", 0), ("169.254.169.254", 0)])
+    monkeypatch.setattr(
+        egress, "_resolve_host", lambda host: [(2, 1, 6, "", next(answers))]
+    )
+
+    seen: list[httpx.Request] = []
+
+    class _Inner:
+        def handle_request(self, request):
+            seen.append(request)
+            return httpx.Response(200, request=request)
+
+        def close(self):
+            pass
+
+    client = httpx.Client(transport=egress.PinnedTransport(inner=_Inner()))
+    response = client.get("https://rebind.test/latest/meta-data/")
+
+    # The socket target is the vetted address; the rebound answer is never used.
+    assert seen[0].url.host == "203.0.113.10"
+    # ...while the request still speaks for the original name.
+    assert seen[0].headers["Host"] == "rebind.test"
+    assert seen[0].extensions["sni_hostname"] == "rebind.test"
+    # The caller's view is untouched, so redirects resolve against the name.
+    assert str(response.url) == "https://rebind.test/latest/meta-data/"
+    assert next(answers) == ("169.254.169.254", 0)  # the rebind was never consumed
+
+
+def test_pinned_transport_refuses_a_blocked_target(monkeypatch):
+    import httpx
+
+    from pyharness.security import egress
+
+    monkeypatch.setattr(
+        egress, "_resolve_host", lambda host: [(2, 1, 6, "", ("169.254.169.254", 0))]
+    )
+
+    class _Inner:
+        def handle_request(self, request):  # pragma: no cover - must not run
+            raise AssertionError("the transport connected to a blocked target")
+
+        def close(self):
+            pass
+
+    client = httpx.Client(transport=egress.PinnedTransport(inner=_Inner()))
+    with pytest.raises(EgressBlocked):
+        client.get("http://metadata.example/")
+
+
+def test_pinned_transport_enforces_the_host_scope(monkeypatch):
+    import httpx
+
+    from pyharness.security import egress
+
+    class _Inner:
+        def handle_request(self, request):  # pragma: no cover - must not run
+            raise AssertionError("the transport left the host scope")
+
+        def close(self):
+            pass
+
+    scope = egress.normalize_scope_hosts(["example.com"])
+    client = httpx.Client(transport=egress.PinnedTransport(scope, inner=_Inner()))
+    with pytest.raises(EgressBlocked, match="outside this session's allowed hosts"):
+        client.get("https://attacker.test/collect")
+
+
+def test_pinned_client_falls_back_to_a_plain_client_behind_a_proxy(monkeypatch):
+    # An explicit transport bypasses httpx's proxy mounts, and the socket goes to
+    # the proxy rather than to the address we vetted — so pinning is skipped
+    # there rather than silently breaking the proxy's routing.
+    from pyharness.security import egress
+
+    for name in ("ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+    with egress.pinned_client() as client:
+        assert isinstance(client._transport, egress.PinnedTransport)
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.internal:3128")
+    assert egress.proxy_configured()
+    with egress.pinned_client() as client:
+        assert not isinstance(client._transport, egress.PinnedTransport)
+
+
+def test_http_capability_clients_are_pinned_and_carry_the_scope(tmp_path):
+    from pyharness.broker.capabilities.http import HttpSessionCapability
+    from pyharness.core.workspace import Workspace
+    from pyharness.security import egress
+
+    scope = egress.normalize_scope_hosts(["example.com"])
+    cap = HttpSessionCapability(Workspace(tmp_path), allowed_hosts=scope)
+    session_id = cap.open_session()
+    transport = cap._clients[session_id]._transport
+    assert isinstance(transport, egress.PinnedTransport)
+    assert transport._allowed_hosts == scope
+    cap.close_session(session_id)
+
+
 def test_remote_mcp_url_is_egress_checked_at_mount(monkeypatch):
     # A `.mcp.json` (or add_mcp_server) entry pointing at an internal endpoint
     # must be refused before any request goes out — else the parent forwards

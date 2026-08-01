@@ -80,9 +80,14 @@ non-`http(s)` schemes and link-local targets (the cloud-metadata range
 followed manually, capped at 20) and, in the browser, on every request the page
 makes. See [the egress guard](../explanation/security-and-audit.md#egress-guard--no-requests-to-the-boxs-own-network).
 
+On the httpx paths (`http.request` / `web.fetch`, and remote MCP) the connection
+is **pinned to the address the check cleared**, so a resolver that answers
+differently at connect time reaches nothing new.
+
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `PYHARNESS_BLOCK_PRIVATE_NETWORK` | unset (off) | Also block loopback and private (RFC1918/ULA) ranges — a stricter posture that stops the agent reaching localhost/LAN services. Off by default so local dev works. Set `true`/`1`/`yes`/`on`. |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` | unset | Read by httpx, not by pyharness — but their presence disables connection pinning, because the socket then goes to the proxy rather than to the vetted address. The name-based egress check still applies; the resolve-then-connect race does not close. |
 
 ## OS sandbox
 

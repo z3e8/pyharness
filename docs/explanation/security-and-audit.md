@@ -258,14 +258,49 @@ cloud-metadata, is blocked unconditionally regardless of the flag.
 
 DNS resolution *failure* fails **closed**: a hostname that will not resolve is
 refused rather than waved through, so a name that resolves only intermittently
-(or only for the client's second, unguarded lookup) can't slip past the guard on
-the attempt where our lookup fails. The guard is otherwise best-effort
-defense-in-depth: it resolves the name here and the HTTP client resolves it again
-at connect, so a deliberately racing resolver (DNS rebinding) is not fully closed
-out — the guard vets the IPs *it* sees, not necessarily the one the socket
-ultimately connects to. Pinning the connection to the vetted IP is the durable
-fix (a custom httpx transport); it is not built in this version and the residual
-rebinding TOCTOU is tracked in `agents/issues.md`.
+can't slip past the guard on the attempt where our lookup fails.
+
+### Vetting a host, then connecting to it
+
+A check that reads a hostname out of a URL and leaves the client to open the
+socket has two seams between the decision and the connection, and an attacker
+only needs either one:
+
+- **A second lookup.** The guard resolves the name, the client resolves it
+  again, and a resolver under the attacker's control answers differently the
+  second time — classic DNS rebinding.
+- **A second parse.** The guard and the client each derive a hostname from the
+  same string and disagree. The sharpest case is IDNA: CPython's resolver
+  applies IDNA 2003 and reads `faß.example.com` as `fass.example.com`, while
+  httpx (and every browser) applies IDNA 2008 and reads it as
+  `xn--fa-hia.example.com`. One name is vetted; a different one is contacted.
+
+`PinnedTransport` (same module) closes both for every request the harness makes
+with httpx — the `http` capability's clients and the remote-MCP transport. It
+takes the host from httpx's *own* parse of the request it is about to send, vets
+it once, and then **connects to the address it vetted**: the URL's host is
+rewritten to that IP while the `Host` header and the TLS `sni_hostname` keep the
+original name, so name-based virtual hosting still routes and the certificate is
+still verified against the real name. There is no second parse to disagree with
+and no second lookup to race. `check_url` stays on the path as the pre-flight
+check — it refuses a bad target before a connection is opened or a credential
+attached, and its message names which rule fired — but the transport is the
+enforcement point. Both attacks are scored: `ssrf-dns-rebinding` and
+`ssrf-idna-confusion` in
+[the adversarial suite](#the-adversarial-suite--the-claims-attacked).
+
+Two paths stay name-based, and therefore best-effort:
+
+- **The browser.** Playwright owns Chromium's sockets, so nothing here can pin
+  them; the route interceptor re-vets every request the page makes instead.
+- **A session behind an HTTP(S) proxy.** The socket goes to the proxy, not to
+  the address we vetted, so pinning cannot describe the real connection —
+  `pinned_client` detects `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` and falls back
+  to a plain client with the name-based guard.
+
+Pinning also means a request goes to **one** address (IPv4 preferred when a host
+offers both). A host whose first address is down is not retried at a second: a
+fetch failure, traded for there being no unvetted address left to reach.
 
 ## Host-scoped sessions
 
@@ -308,8 +343,9 @@ and no `route_web_socket` handler exists); capabilities with
 fixed off-box targets (`inbox`'s IMAP server, `packages`' index), the
 per-command-gated `shell`, and local (command-run) MCP servers are outside
 the scope's remit — those stay behind per-call human approval and the OS
-sandbox; and the DNS-rebinding TOCTOU above applies to scope checks
-identically.
+sandbox; and the scope rides the same connection pinning as the SSRF rules on
+the httpx paths, so it inherits the same two best-effort exceptions — the
+browser, and a session behind a proxy.
 
 ## Cross-cutting policies are enumerated, not remembered
 
