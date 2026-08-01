@@ -20,7 +20,9 @@ class SkillsCapability:
     bundled .py modules — under the skills root. It is written parent-side (so it
     works out-of-process), registered immediately for this session, and reloaded
     automatically in later ones. The agent finds it with `search_tools()`, reads
-    it with `describe_tool()`, and loads its code with `use_tool()`."""
+    it (instructions + bundled source) with `describe_tool()`, and loads its code
+    with `use_tool()` — lazily: bundled files execute only when a function is
+    actually called."""
 
     name = "skills"
 
@@ -76,9 +78,21 @@ class SkillsCapability:
         category: str | None = None,
         check: str | None = None,
     ) -> str:
-        """Save a reusable skill = markdown `instructions` plus optional bundled
-        .py modules (`files` maps filename -> source). It reloads in later
-        sessions and is usable now via search_tools(name)/use_tool(name).
+        """Save a reusable skill = markdown `instructions` plus bundled .py
+        modules (`files` maps filename -> source). It reloads in later sessions
+        and is usable now via search_tools(name)/use_tool(name).
+
+        **Put the code in `files`, not in the markdown.** Anything you would
+        otherwise re-type on the next run — a fetch, a parse, a login sequence,
+        an output formatter — belongs in `files` as an importable function, so
+        the next run does `use_tool(name).summarize(...)` instead of rewriting
+        it from the instructions. `instructions` is for the procedure *around*
+        the code: when to use it, what to check, what can go wrong. A skill
+        whose markdown contains steps you could have written as a function has
+        saved the reader nothing. Bundled files are lazy — nothing in them
+        executes until a function is actually called — and their source is
+        shown by describe_tool, so future runs can see what is callable.
+
         `check` is the skill's success test — one line saying how a run confirms
         it worked (an assertion, a re-fetch, an expected state) — so
         record_skill_use rests on evidence, not impression."""

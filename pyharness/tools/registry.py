@@ -32,6 +32,9 @@ class ToolInfo:
     check: str | None = (
         None  # a learned skill's own success test ("how do I know it worked")
     )
+    code: str | None = (
+        None  # a learned skill's bundled source, pre-rendered for describe()
+    )
 
 
 class Registry:
@@ -175,11 +178,13 @@ class Registry:
         verified: bool = False,
         uses: tuple[dict, ...] = (),
         check: str | None = None,
+        code: str | None = None,
     ) -> str:
         """Register a learned skill — markdown instructions plus an optional
         bundled module built on first use (`source="learned"`). It is a tool
         like any other: `search`/`use` treat it the same, while `describe`
-        additionally surfaces the instructions. Skills are *not* featured: they
+        additionally surfaces the instructions and `code` (the bundled source,
+        pre-rendered by the loader side). Skills are *not* featured: they
         are found by query, not shown in the default browse, so saved procedures
         don't crowd the common-tools listing.
 
@@ -197,6 +202,7 @@ class Registry:
             verified=verified,
             uses=tuple(uses),
             check=check,
+            code=code,
         )
         return name
 
@@ -288,6 +294,8 @@ class Registry:
         if module is None:
             if info.instructions:  # instructions stand alone even if the code is down
                 lines.append(f"\n(bundled code unavailable: {info.error})")
+                if info.code:  # the source is static text — show it so it can be fixed
+                    lines += ["", info.code]
                 return "\n".join(lines)
             return f"# {name} — {info.summary} (unavailable: {info.error})"
         funcs = list(_public_functions(module))
@@ -297,6 +305,8 @@ class Registry:
             doc = (func.__doc__ or "").strip().splitlines()
             first = doc[0] if doc else ""
             lines.append(f"    {fname}{inspect.signature(func)}  # {first}".rstrip())
+        if info.code:  # a learned skill's bundled source, so the code gets called
+            lines += ["", info.code]
         return "\n".join(lines)
 
     def info(self, name: str) -> ToolInfo | None:
