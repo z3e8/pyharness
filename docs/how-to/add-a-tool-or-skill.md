@@ -51,6 +51,16 @@ returns the bundled code as a module.
   (with the skill dir on `sys.path`, so they may import one another). A syntax
   error is reported by `describe_tool`; an import-time failure surfaces on the
   first call as an error naming the skill and file.
+- **Bundled code has the session builtins in scope** — the same
+  [builtins](../reference/builtins.md) agent cells get (`use_tool`, `read`,
+  `llm`, …), seeded into each bundled module's globals when it first executes.
+  Reach external capabilities the usual way (`web = use_tool("web")` then
+  `web.fetch(url)`); never `import pyharness` — the builtins are not package
+  exports, and that import fails with a pointer here. Every capability call a
+  skill makes routes through the [broker](../explanation/broker.md) — policy,
+  audit, budget, approvals — exactly as if the agent had made it in a cell, so
+  a skill-mediated `web.fetch` and a direct one are indistinguishable in the
+  audit chain.
 
 - Skills live under `~/.pyharness/skills/<name>/` (override with
   `Session(skills_dir=...)`), one directory each: a `SKILL.md` (frontmatter +

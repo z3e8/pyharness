@@ -5,9 +5,12 @@ task over one shared skills root, haiku-4.5 at `tier="cheap"`) pointed at two
 task shapes. The **retrieval** arm ran 2026-07-31 ($0.0993 over five runs, plus
 a $0.0200 calibration probe); the **discovery** arm ran later the same day
 ($0.1577 over five runs, plus a $0.1949 set scrapped for a fixture bug —
-disclosed below). Refreshing either costs real model calls, so this is a dated
-artifact rather than a CI product; the offline suite (`make test`,
-`evals/test_skills.py`) keeps the machinery under it from rotting silently.
+disclosed below). A **third set** — the discovery arm re-run after the
+bundled-code fix its first set exposed ($0.1534) — was added the same day and
+is published below the original, which is kept verbatim. Refreshing any set
+costs real model calls, so this is a dated artifact rather than a CI product;
+the offline suite (`make test`, `evals/test_skills.py`) keeps the machinery
+under it from rotting silently.
 
 ## The claim under test, and the answers
 
@@ -25,6 +28,18 @@ saved fails on import (below) — so one run re-walked the whole site and one
 died at the step wall with the answer in hand. The mean says +17%; the
 distribution says amortization is real here and an identifiable bug is eating
 it.
+
+**Discovery arm, re-run after the fix — the identified breakage is gone.**
+Bundled code now runs with the session builtins ambient (the fix the first
+set's defect record asked for), and in the re-run the bundled function worked
+on its **first call in all three reuse runs** — zero ImportErrors paid, the
+frozen two-fetch sequence visible in each run's audit chain as broker-gated
+nested calls. The distribution's tail moved to where the counterfactual said it
+would: the best reuse run finished in 5 steps at $0.0128, **-53%** against its
+authoring run. The mean moved less — every reuse run also chose to re-verify
+the skill's answer with direct fetches (one re-walked the whole site), which is
+what the task's own "always re-read the source" line asks of it. Details and
+caveats below.
 
 **The boundary condition, stated as the finding:** a skill amortizes when the
 task's cost is *discovery* (working out which pages, in which order, with what
@@ -135,6 +150,87 @@ The counterfactual is visible in the record rather than speculative: run 5 is
 what every reuse run looks like when executing the skill costs almost nothing.
 A working bundled-code path would make run 5 the mode, not the tail.
 
+## Arm 2, re-run after the bundled-code fix (2026-07-31, $0.1534)
+
+The set above surfaced that bundled skill code had no supported way to reach a
+capability (`from pyharness import use_tool` → ImportError, paid by all four
+reuse runs). That was fixed — bundled code now executes with the session's
+builtins seeded into its globals, every call broker-gated — and the arm was
+re-run under the same protocol: five runs, one fresh shared skills root,
+haiku-4.5 at `tier="cheap"`, per-run budget cap, approvals granted. Same task,
+same corpus, same scorer; the only intended difference is the harness fix and
+its guidance (the system prompt's `save_skill` block now says builtins are in
+scope inside bundled files). Produced by
+`python -m evals.skills.run --arm discovery`:
+
+```
+
+  skill cost curve — discovery arm, 5 runs of one task ($0.1534)
+
+    run  outcome        cost      steps  llm  wall     skill / answer
+   !1    stopped:budget $0.0419   13     13     21.3s  no skill
+                                                      stopped:budget; NEVER REACHED THE TERMINAL PAGE; markers missing
+    2    answered       $0.0273   10     11     27.3s  saved northwind_supplier_balance, recorded northwind_supplier_balance:worked
+                                                      ok, 5 fetches
+    3    answered       $0.0381   11     12     26.6s  reused northwind_supplier_balance, recorded northwind_supplier_balance:worked
+                                                      ok, 4 fetches
+    4    answered       $0.0334   14     15     19.9s  reused northwind_supplier_balance, recorded northwind_supplier_balance:worked
+                                                      ok, 7 fetches
+    5    answered       $0.0128   5      6      11.5s  reused northwind_supplier_balance, recorded northwind_supplier_balance:worked
+                                                      ok, 4 fetches
+
+    run 1        $0.0419, 13 steps, 21.3s
+    runs 2-5      $0.0279 mean, 10.0 steps, 21.3s
+    delta        cost -33%, steps -23%, wall -0%
+
+    skill_run_costs (the view obs/index.py ships):
+      northwind_supplier_balance  run 1  $0.0273  answered
+      northwind_supplier_balance  run 2  $0.0381  answered
+      northwind_supplier_balance  run 3  $0.0334  answered
+      northwind_supplier_balance  run 4  $0.0128  answered
+
+  runs whose number is not usable:
+    run 1: stopped:budget; NEVER REACHED THE TERMINAL PAGE; markers missing
+
+```
+
+Read the per-run record before the headline delta — the -33% is against a run
+that failed for reasons unrelated to skills:
+
+- **Run 1 never discovered the sequence at all.** It went down the
+  `http.open_session` road (7 session opens, 5 requests, one browser attempt),
+  never assembled the statement URL, and hit the budget wall with no skill
+  saved and zero `web.fetch` calls. Model variance in discovery, not a skill
+  or harness effect; its number is marked unusable and it left nothing behind.
+- **Run 2 is therefore the authoring run**: walked the site (5 fetches),
+  bundled a complete `get_northwind_balance()` — and this author, having seen
+  the new guidance, opened it with `web = use_tool("web")` rather than an
+  import. Against run 2, the reuse mean ($0.0281) is **+3%** and the best
+  reuse run (5) is **-53%**.
+- **The fix held in all three reuse runs.** Each called the bundled function
+  first, it worked on the first call, and the audit chain shows the exact
+  claim under test: `tools.invoke northwind_supplier_balance.get_northwind_
+  balance` → nested `web.fetch` (profile) → nested `web.fetch` (statement),
+  every hop broker-gated and separately audited. No run wrote
+  `import pyharness` in any cell. The prior set's failure mode did not recur.
+- **What kept the mean flat is re-verification, not breakage.** After the
+  skill returned the answer, runs 3 and 5 re-fetched the same two pages
+  directly and run 4 re-walked the whole five-page chain. The task's own
+  "always re-read the source" line (and the scorer's terminal-page evidence
+  requirement) make some re-reading correct behavior; the frozen sequence
+  means it costs 2 fetches instead of 5, which is precisely run 5's shape.
+- **The saved skill froze the corpus server's ephemeral port** into its URLs
+  (`127.0.0.1:56952`). Within one set the server is one process, so it worked;
+  a later session against a restarted corpus would fail on the stale origin.
+  Real-world skill fragility, visible here because loopback ports rotate —
+  noted, not scored.
+
+Same caveats as the set above (n=5, one corpus, one model, cache accounting,
+instructed reuse), plus one more: the two discovery sets ran on different days'
+model states and their run 1s differ in kind (failed no-skill run vs
+successful authoring run), so cross-set comparisons should use the per-run
+record, not the two headline deltas.
+
 ## Changed after a paid run — full disclosure
 
 Nothing in either arm was tuned after seeing its published numbers. Two things
@@ -190,7 +286,7 @@ were changed after *a* paid run, and both are disclosed here:
 Regenerate from the sessions with `python -m evals.skills.run --rescore
 .sessions/<root>` (`.sessions/` is gitignored, so this only works on the
 machine that ran them: retrieval `skills-20260731`, discovery
-`skills-20260731`).
+`skills-20260731`, discovery re-run `skills-20260731`).
 
 Retrieval arm, verbatim from the run:
 

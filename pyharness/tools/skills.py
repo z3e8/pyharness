@@ -15,6 +15,13 @@ callable surface comes from parsing the source with `ast`, and nothing in a
 bundled file executes until the agent actually calls one of its functions.
 Both humans and the agent author skills — humans by writing the directory,
 the agent via the `save_skill` builtin — and either way they reload next session.
+
+Bundled code runs with the session's builtins ambient: the loader is handed a
+`namespace` provider (the same broker-gated proxies the kernel injects into
+agent cells) and seeds each bundled module's globals with it before exec, so
+skill code calls `use_tool`/`read`/`llm`/… directly — never `import pyharness`.
+Every such call routes through the broker's dispatch (policy → audit → budget)
+exactly as if the agent had written it in a cell.
 """
 
 from __future__ import annotations
@@ -113,20 +120,38 @@ def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
     return meta, body.strip()
 
 
-def load_skills(registry: Registry, skills_dir: str | Path) -> list[str]:
-    """Register every skill directory under `skills_dir` (none if it's absent)."""
+def load_skills(
+    registry: Registry,
+    skills_dir: str | Path,
+    *,
+    namespace: Callable[[], dict] | None = None,
+) -> list[str]:
+    """Register every skill directory under `skills_dir` (none if it's absent).
+
+    `namespace` is a zero-arg provider of the session's builtin namespace (the
+    broker-gated proxies agent cells get); it is evaluated lazily at first call
+    of a bundled function, so it may be wired before the broker exists. Without
+    one, bundled code has no capabilities in scope (bare-Registry use)."""
     skills_dir = Path(skills_dir)
     if not skills_dir.is_dir():
         return []
     loaded = []
     for child in sorted(skills_dir.iterdir()):
-        if child.is_dir() and (name := register_skill_dir(registry, child)):
+        if child.is_dir() and (
+            name := register_skill_dir(registry, child, namespace=namespace)
+        ):
             loaded.append(name)
     return loaded
 
 
-def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
-    """Register one skill directory; return its name (None if it has no SKILL.md)."""
+def register_skill_dir(
+    registry: Registry,
+    skill_dir: Path,
+    *,
+    namespace: Callable[[], dict] | None = None,
+) -> str | None:
+    """Register one skill directory; return its name (None if it has no SKILL.md).
+    `namespace` is threaded to the module loader — see `load_skills`."""
     md = skill_dir / "SKILL.md"
     if not md.exists():
         return None
@@ -140,7 +165,7 @@ def register_skill_dir(registry: Registry, skill_dir: Path) -> str | None:
         name,
         meta.get("description", ""),
         body,
-        loader=lambda: _build_skill_module(name, skill_dir),
+        loader=lambda: _build_skill_module(name, skill_dir, namespace),
         keywords=keywords,
         category=meta.get("category") or None,
         verified=journal["verified"],
@@ -234,7 +259,11 @@ def write_skill(
     return skill_dir
 
 
-def _build_skill_module(name: str, skill_dir: Path) -> ModuleType:
+def _build_skill_module(
+    name: str,
+    skill_dir: Path,
+    namespace: Callable[[], dict] | None = None,
+) -> ModuleType:
     """Synthesize a skill's module **without executing any bundled code**.
 
     The public callable surface is discovered by parsing each bundled *.py with
@@ -242,10 +271,12 @@ def _build_skill_module(name: str, skill_dir: Path) -> ModuleType:
     carrying the real name, signature, and docstring, so `describe`/`search`
     can list and render the functions with zero side effects. The first call
     to any stub executes all the bundled files (with the skill dir on sys.path
-    so they may import one another), swaps the real functions in, and
-    delegates; until then, nothing in the skill runs. A syntax error surfaces
-    here (parsing needs no execution); an import-time failure surfaces on first
-    call, attributed to the skill and file.
+    so they may import one another, and the session's builtin `namespace`
+    seeded into their globals so they reach capabilities the way agent cells
+    do), swaps the real functions in, and delegates; until then, nothing in
+    the skill runs. A syntax error surfaces here (parsing needs no execution);
+    an import-time failure surfaces on first call, attributed to the skill and
+    file.
 
     Functions created dynamically (a lambda assignment, a conditional `def`)
     are not statically visible, so they don't list — but a module-level
@@ -267,13 +298,13 @@ def _build_skill_module(name: str, skill_dir: Path) -> ModuleType:
                 setattr(
                     module,
                     node.name,
-                    _make_stub(name, skill_dir, module, state, node),
+                    _make_stub(name, skill_dir, module, state, node, namespace),
                 )
 
     def __getattr__(attr: str):  # PEP 562: dynamic names still resolve by access
         if attr.startswith("_"):
             raise AttributeError(attr)
-        _exec_skill_files(name, skill_dir, module, state)
+        _exec_skill_files(name, skill_dir, module, state, namespace)
         try:
             return module.__dict__[attr]
         except KeyError:
@@ -284,7 +315,12 @@ def _build_skill_module(name: str, skill_dir: Path) -> ModuleType:
 
 
 def _make_stub(
-    name: str, skill_dir: Path, module: ModuleType, state: dict, node
+    name: str,
+    skill_dir: Path,
+    module: ModuleType,
+    state: dict,
+    node,
+    namespace: Callable[[], dict] | None = None,
 ) -> Callable:
     """A placeholder for one bundled function: lists and renders like the real
     thing (name, signature, docstring), and on call triggers the deferred
@@ -292,7 +328,7 @@ def _make_stub(
     fname = node.name
 
     def stub(*args, **kwargs):
-        _exec_skill_files(name, skill_dir, module, state)
+        _exec_skill_files(name, skill_dir, module, state, namespace)
         func = state["funcs"].get(fname)
         if func is None:
             raise RuntimeError(
@@ -310,20 +346,33 @@ def _make_stub(
 
 
 def _exec_skill_files(
-    name: str, skill_dir: Path, module: ModuleType, state: dict
+    name: str,
+    skill_dir: Path,
+    module: ModuleType,
+    state: dict,
+    namespace: Callable[[], dict] | None = None,
 ) -> None:
     """The deferred half: actually import the bundled files and bind their
     public functions onto the synthesized module, replacing the stubs. Runs at
     most once per built module; a failure is raised as a clear skill-attributed
-    error and leaves the module unloaded so a later call can retry."""
+    error and leaves the module unloaded so a later call can retry.
+
+    The session's builtin namespace is resolved here — first call, broker long
+    since built — and seeded into each bundled module's globals before its code
+    runs, so both module-level statements and function bodies see the builtins
+    ambient, exactly like a cell. The proxies are broker-gated, so every
+    capability call a skill makes takes the full dispatch path."""
     if state["loaded"]:
         return
+    ambient = dict(namespace()) if namespace is not None else {}
     sys.path.insert(0, str(skill_dir))
     try:
         funcs: dict[str, Callable] = {}
         for py in _skill_files(skill_dir):
             try:
-                sub = _import_file(py, f"pyharness_skill_{name}_{py.stem}")
+                sub = _import_file(
+                    py, f"pyharness_skill_{name}_{py.stem}", ambient=ambient
+                )
             except Exception as exc:
                 raise RuntimeError(
                     f"skill {name!r}: bundled file {py.name} failed to import: "
@@ -345,9 +394,15 @@ def _skill_files(skill_dir: Path) -> list[Path]:
     return [py for py in sorted(skill_dir.glob("*.py")) if not py.stem.startswith("_")]
 
 
-def _import_file(path: Path, mod_name: str) -> ModuleType:
+def _import_file(path: Path, mod_name: str, ambient: dict | None = None) -> ModuleType:
+    """Import one bundled file, seeding `ambient` (the session builtins) into
+    its globals first so the file's code — module level and function bodies —
+    has them in scope. A file's own top-level `def`/assignment of the same name
+    simply overwrites the seeded value, so nothing a skill defines is shadowed."""
     spec = importlib.util.spec_from_file_location(mod_name, path)
     module = importlib.util.module_from_spec(spec)
+    if ambient:
+        module.__dict__.update(ambient)
     sys.modules[mod_name] = module
     spec.loader.exec_module(module)
     return module

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+import json
+
 import pytest
 
 from pyharness.broker.capabilities.skills import SkillsCapability
@@ -374,3 +377,187 @@ def test_save_skill_requires_approval_by_default(tmp_path):
     )
     assert "saved skill 'x'" in allowed.broker.namespace()["save_skill"]("x", "d", "i")
     allowed.close()
+
+
+# --- bundled code reaching capabilities (ambient builtins) --------------------
+
+
+def _audit(session_root):
+    return [
+        json.loads(line)
+        for line in (session_root / "audit.jsonl").read_text().splitlines()
+    ]
+
+
+def _stable(record: dict) -> dict:
+    """An audit record minus its chain/clock fields, for shape comparison."""
+    return {k: v for k, v in record.items() if k not in ("ts", "prev", "hash")}
+
+
+def test_bundled_code_calls_a_capability_through_the_broker(tmp_path):
+    """The session builtins are ambient inside bundled skill code — no import —
+    and a capability call the skill makes is a full broker dispatch: it lands
+    in the audit chain with exactly the record shape of a direct call."""
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+        unsafe_in_process=True,
+    )
+    try:
+        ns = session.broker.namespace()
+        ns["save_skill"](
+            "noter",
+            "write then read a note",
+            "call note(text)",
+            files={
+                "impl.py": (
+                    "def note(text):\n"
+                    "    write('note.txt', text)\n"
+                    "    return read('note.txt')\n"
+                )
+            },
+        )
+        # The reuse path the agent takes: use_tool, then call the function.
+        assert ns["use_tool"]("noter").note("hello") == "hello"
+
+        skill_writes = [
+            r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"
+        ]
+        assert [r.get("phase") for r in skill_writes] == ["start", "end"]
+        assert skill_writes[1]["ok"] is True
+
+        # The same call made directly by "agent code" is indistinguishable in
+        # the chain: identical record shape, field for field.
+        ns["write"]("note.txt", "hello")
+        direct_writes = [
+            r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"
+        ][2:]
+        assert [_stable(r) for r in direct_writes] == [_stable(r) for r in skill_writes]
+    finally:
+        session.close()
+
+
+def test_bundled_code_reaches_capabilities_from_the_out_of_process_kernel(tmp_path):
+    """The production path: agent code runs in the sandboxed child, use_tool
+    hands it a RemoteToolSpec proxy, and the bundled function executes
+    parent-side inside the tools.invoke dispatch — where the ambient builtins
+    must resolve and the nested capability call must be audited."""
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+    )
+    try:
+        session.broker.namespace()["save_skill"](
+            "noter",
+            "write then read a note",
+            "call note(text)",
+            files={
+                "impl.py": (
+                    "def note(text):\n"
+                    "    write('note.txt', text)\n"
+                    "    return read('note.txt')\n"
+                )
+            },
+        )
+        out = session.kernel.run("print(use_tool('noter').note('hello'))")
+        assert "hello" in out
+        writes = [r for r in _audit(tmp_path / "s") if r.get("action") == "files.write"]
+        assert [r.get("phase") for r in writes] == ["start", "end"]
+        assert writes[1]["ok"] is True
+    finally:
+        session.close()
+
+
+def test_bundled_code_import_of_a_builtin_fails_with_guidance(tmp_path):
+    """The failure suite D paid for: bundled code opening with
+    `from pyharness import use_tool`. It must fail at first call with an error
+    naming the skill and file and saying the builtins are already in scope."""
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+        unsafe_in_process=True,
+    )
+    try:
+        ns = session.broker.namespace()
+        ns["save_skill"](
+            "legacy",
+            "old broken pattern",
+            "call go()",
+            files={
+                "impl.py": "from pyharness import use_tool\ndef go():\n    return 1\n"
+            },
+        )
+        with pytest.raises(RuntimeError, match=r"skill 'legacy': bundled file impl.py"):
+            ns["use_tool"]("legacy").go()
+        with pytest.raises(RuntimeError, match="already in scope"):
+            ns["use_tool"]("legacy").go()
+    finally:
+        session.close()
+
+
+def test_package_attribute_guard_names_the_builtins():
+    import pyharness
+
+    # from-import — the exact line the model wrote — carries the guidance
+    with pytest.raises(ImportError, match="session builtin"):
+        exec("from pyharness import use_tool")
+    # plain attribute access gets the same pointer
+    with pytest.raises(ImportError, match="already in scope"):
+        _ = pyharness.save_skill
+    # unknown names stay ordinary AttributeErrors
+    with pytest.raises(AttributeError):
+        _ = pyharness.definitely_not_a_thing
+
+
+def test_builtin_guard_covers_every_live_op(tmp_path):
+    """Drift pin: every op a full parent session injects as a kernel builtin is
+    either guarded by the package `__getattr__` or shadowed by a real submodule
+    (`llm`). A new builtin that is neither shows up here."""
+    import pyharness
+
+    session = Session(
+        tmp_path / "drift", skills_dir=tmp_path / "skills", unsafe_in_process=True
+    )
+    try:
+        for op in session.broker.op_names():
+            try:
+                obj = getattr(pyharness, op)
+            except ImportError as exc:
+                assert "session builtin" in str(exc)
+            else:
+                assert inspect.ismodule(obj), (
+                    f"builtin {op!r} resolves to a package attribute that is "
+                    "neither the guard nor a submodule — add it to "
+                    "_KERNEL_BUILTINS in pyharness/__init__.py"
+                )
+    finally:
+        session.close()
+
+
+def test_ambient_builtins_do_not_become_skill_functions(tmp_path):
+    """Seeding the builtins into a bundled module's globals must not leak them
+    onto the skill's public surface — the skill exports what it defines."""
+    from pyharness.tools.registry import _public_functions
+
+    session = Session(
+        tmp_path / "s",
+        skills_dir=tmp_path / "skills",
+        approver=lambda *a: True,
+        unsafe_in_process=True,
+    )
+    try:
+        ns = session.broker.namespace()
+        ns["save_skill"](
+            "tidy",
+            "one function",
+            "call only(text)",
+            files={"impl.py": "def only(text):\n    return write('t.txt', text)\n"},
+        )
+        mod = session.registry.use("tidy")
+        mod.only("x")  # force the deferred exec (ambient names now seeded)
+        assert [fname for fname, _ in _public_functions(mod)] == ["only"]
+    finally:
+        session.close()

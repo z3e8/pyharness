@@ -124,11 +124,15 @@ import them. This is the complete list; nothing else is callable by bare name.
         # files = {"helper.py": source, ...}: put the CODE here — anything you
         # would re-type next run (a fetch, a parse, a formatter) becomes an
         # importable function the next run calls via use_tool(name); bundled
-        # files run only when a function is called. instructions = the markdown
-        # procedure around the code, not the code. Persists to disk and
-        # registers as a learned tool — find it with search_tools, read it
-        # (runbook + bundled source) with describe_tool. Save a skill once a
-        # procedure is worth repeating.
+        # files run only when a function is called. Inside bundled code your
+        # builtins are in scope exactly as in a cell: reach capabilities the
+        # usual way (web = use_tool("web"); web.fetch(url)) and never
+        # `import pyharness` — the builtins are not package exports, that
+        # import fails. Every call bundled code makes is gated like your own.
+        # instructions = the markdown procedure around the code, not the code.
+        # Persists to disk and registers as a learned tool — find it with
+        # search_tools, read it (runbook + bundled source) with describe_tool.
+        # Save a skill once a procedure is worth repeating.
         # check = one line saying how a run confirms it worked (an assertion, a
         # re-fetch, an expected state) — give every skill one, and run it before
         # recording an outcome.
