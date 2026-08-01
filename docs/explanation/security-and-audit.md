@@ -336,8 +336,12 @@ secret-carrying calls to in-scope hosts still prompt the human exactly as
 unscoped ones do.
 
 Known limits (stated design boundaries, named to the child in its preamble):
-exfiltration *to an in-scope host* remains possible (the scope bounds where,
-not what); subresource/iframe traffic is not scope-bound, and WebSocket
+exfiltration *to an in-scope host* remains possible — the scope bounds where,
+not what, so a permitted host with a free-form field (a search query, an issue
+comment, a filename) is a channel that passes every check by construction, and
+the payload is deliberately never inspected because that is content filtering
+(scored as `scope-abuse-in-scope-channel`, and the fine print on "if the data
+matters, scope the session"); subresource/iframe traffic is not scope-bound, and WebSocket
 traffic has no interception point at all (`context.route` does not cover WS
 and no `route_web_socket` handler exists); capabilities with
 fixed off-box targets (`inbox`'s IMAP server, `packages`' index), the
