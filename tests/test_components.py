@@ -1372,6 +1372,7 @@ class _FakePage:
         self.url = url
         self._text = text
         self._snapshot = snapshot
+        self.extent = (1280, 720)  # what evaluate() reports as the scrollable size
         self._wait_timeout = False  # when True, wait_for_selector raises TimeoutError
         self.calls: list = []
         self.keyboard = SimpleNamespace(
@@ -1417,9 +1418,15 @@ class _FakePage:
     def inner_text(self, selector):
         return self._text
 
-    def screenshot(self, path=None, *, type=None, quality=None, full_page=False):
-        self.calls.append(("screenshot", path, type))
+    def screenshot(
+        self, path=None, *, type=None, quality=None, full_page=False, clip=None
+    ):
+        self.calls.append(("screenshot", path, type, full_page, clip))
         return b"\xff\xd8fake-jpeg-bytes"  # look() reads the return; screenshot(path=) ignores it
+
+    def evaluate(self, script):
+        self.calls.append(("evaluate", script))
+        return list(self.extent)
 
 
 def _browser_with_fake(ws, vault=None, text="page body", snapshot=_FAKE_SNAPSHOT):
@@ -1811,6 +1818,110 @@ def test_media_outbox_attach_drain_and_caps():
     box.drain()
     with pytest.raises(ValueError):  # over the per-image byte cap
         box.attach(media_type="image/jpeg", data=b"x" * 101)
+
+
+def _jpeg_of(width: int, height: int) -> bytes:
+    """The smallest byte string that reads as a JPEG of the given size: SOI, one
+    APP0 segment to prove the walker skips payloads, then a baseline SOF0."""
+    app0 = b"\xff\xe0" + (4).to_bytes(2, "big") + b"\x00\x00"
+    sof0 = (
+        b"\xff\xc0"
+        + (11).to_bytes(2, "big")
+        + b"\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+    )
+    return b"\xff\xd8" + app0 + sof0
+
+
+def _png_of(width: int, height: int) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+    )
+
+
+def test_image_size_reads_jpeg_and_png_headers():
+    from pyharness.core.media import image_size
+
+    assert image_size("image/jpeg", _jpeg_of(1280, 9001)) == (1280, 9001)
+    assert image_size("image/png", _png_of(640, 480)) == (640, 480)
+    # No header we can read -> None, and attach() then lets the bytes through
+    # rather than guessing (the byte cap still applies).
+    assert image_size("image/gif", b"GIF89a") is None
+    assert image_size("image/jpeg", b"\xff\xd8truncated") is None
+    assert image_size("image/png", b"\x89PNG\r\n\x1a\n") is None
+
+
+def test_media_outbox_refuses_an_image_past_the_api_dimension_limit():
+    """An oversized image must fail here, not in the message history.
+
+    The API refuses an image past its per-edge limit — and because the block
+    stays in `messages`, every later call re-sends it and fails identically, so
+    one screenshot ends the session rather than the turn. The cap belongs at the
+    only door into the model's context."""
+    from pyharness.core.media import MAX_IMAGE_EDGE_PX, MediaOutbox
+
+    box = MediaOutbox()
+    box.attach(media_type="image/jpeg", data=_jpeg_of(1280, MAX_IMAGE_EDGE_PX))
+    box.drain()
+
+    with pytest.raises(ValueError, match=f"{MAX_IMAGE_EDGE_PX}px"):
+        box.attach(media_type="image/jpeg", data=_jpeg_of(1280, MAX_IMAGE_EDGE_PX + 1))
+    with pytest.raises(ValueError, match=f"{MAX_IMAGE_EDGE_PX}px"):  # width too
+        box.attach(media_type="image/png", data=_png_of(MAX_IMAGE_EDGE_PX + 1, 10))
+    assert box.drain() == []  # nothing oversized was staged
+
+
+def test_strip_image_blocks_clears_a_poisoned_history():
+    from pyharness.core.media import strip_image_blocks
+
+    image = {"type": "image", "source": {"type": "base64", "data": "..."}}
+    messages = [
+        {"role": "user", "content": "plain string content is left alone"},
+        {
+            "role": "user",
+            "content": [
+                # The shape `look` produces: images nested inside a tool_result.
+                {"type": "tool_result", "content": [{"type": "text"}, dict(image)]},
+                dict(image),
+            ],
+        },
+    ]
+    assert strip_image_blocks(messages) == 2
+    assert strip_image_blocks(messages) == 0  # idempotent: nothing left to drop
+    assert "'type': 'image'" not in repr(messages)
+    assert messages[0]["content"] == "plain string content is left alone"
+    replaced = messages[1]["content"][1]
+    assert replaced["type"] == "text" and "dropped" in replaced["text"]
+
+
+def test_look_clips_a_page_too_tall_for_the_api(tmp_path):
+    """`look(full_page=True)` on a long document must not build an image the API
+    will refuse — the failure is unrecoverable once the block is in history."""
+    from pyharness.core.media import MAX_IMAGE_EDGE_PX, MediaOutbox
+
+    cap, page = _browser_with_fake(Workspace(tmp_path))
+    cap.media = MediaOutbox()
+
+    page.extent = (1280, 720)
+    cap.look(full_page=True)
+    assert page.calls[-1][3] is True and page.calls[-1][4] is None  # plain full page
+
+    page.extent = (1280, 40_000)  # a long RFC, the shape that killed a demo run
+    result = cap.look(full_page=True)
+    _, _, _, full_page, clip = page.calls[-1]
+    assert full_page is False  # clip and full_page are exclusive in Playwright
+    assert clip == {"x": 0, "y": 0, "width": 1280, "height": MAX_IMAGE_EDGE_PX}
+    assert "scroll()" in result["clipped"] and "40000" in result["clipped"]
+
+    # The viewport shot is never clipped — only full_page can outgrow the limit.
+    cap.media = MediaOutbox()
+    cap.look()
+    assert page.calls[-1][4] is None
 
 
 def test_browser_look_stages_image_and_returns_no_bytes(tmp_path):

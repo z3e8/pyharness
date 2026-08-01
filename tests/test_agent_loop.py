@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from pyharness import Budget
 from pyharness.core.agent import Agent, render_context
 from pyharness.core.kernel import Kernel
@@ -545,3 +547,66 @@ def test_agent_healthy_call_records_no_attempt_events():
     )
     assert agent.run("answer", []) == "done"
     assert not [t for k, t in events if k == "llm_attempt"]
+
+
+class _ImageRejectingLLM(ScriptedLLM):
+    """Refuses any request whose history still carries an image, the way the API
+    refuses one past its dimension limit: a deterministic 400, not a transient."""
+
+    def complete(self, **kwargs):
+        if "'type': 'image'" in repr(kwargs["messages"]):
+            exc = ValueError(
+                "Error code: 400 — messages.1.content.18.image.source.base64.data: "
+                "At least one of the image dimensions exceed max allowed size"
+            )
+            exc.status_code = 400
+            raise exc
+        return super().complete(**kwargs)
+
+
+def test_agent_drops_images_the_api_refuses_and_retries():
+    """A refused image is a dead *session*, not a dead turn, unless it is removed.
+
+    The block stays in `messages`, so every later call re-sends it and fails
+    identically — the run cannot recover, and the outcome is `error` rather than
+    anything the task was measuring. Dropping the images downgrades that to a
+    degraded turn.
+    """
+    from pyharness.core.media import MediaOutbox
+
+    outbox = MediaOutbox()
+    events = []
+    llm = _ImageRejectingLLM([_tool_completion("look()"), _text_completion("done")])
+    agent = Agent(
+        llm,
+        _LookKernel(outbox),
+        Budget(),
+        media=outbox,
+        on_event=lambda k, t, **kw: events.append((k, t)),
+    )
+
+    assert agent.run("look at it", []) == "done"
+    assert [t for k, t in events if k == "note" and "refused" in t]
+    # The image is gone from history, so nothing re-poisons the next turn.
+    assert "'type': 'image'" not in repr(llm.calls[-1])
+
+
+def test_agent_reraises_a_failure_that_is_not_a_refused_image():
+    """The recovery is narrow on purpose: anything else must still surface."""
+
+    class _BrokenLLM(ScriptedLLM):
+        def complete(self, **kwargs):
+            exc = ValueError("Error code: 400 — messages: too many tokens")
+            exc.status_code = 400
+            raise exc
+
+    events = []
+    agent = Agent(
+        _BrokenLLM([_text_completion("unused")]),
+        Kernel({}),
+        Budget(),
+        on_event=lambda k, t, **kw: events.append((k, t)),
+    )
+    with pytest.raises(ValueError, match="too many tokens"):
+        agent.run("answer", [])
+    assert [t for k, t in events if k == "error"]

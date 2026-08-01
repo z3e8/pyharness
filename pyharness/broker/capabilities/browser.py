@@ -4,6 +4,7 @@ from importlib import import_module
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from ...core.media import MAX_IMAGE_EDGE_PX
 from ...core.workspace import Workspace
 from ...security.egress import EgressBlocked, check_url
 from ...security.grants import GrantScope
@@ -736,15 +737,63 @@ class BrowserCapability:
         pixels: the image stays in history and costs context on every later turn.
         A secret visible on screen reaches the model this way, so under the default
         policy `look` needs approval once this session has typed a secret into the
-        page."""
+        page.
+
+        `full_page=True` on a document longer than the API's per-image limit is
+        capped at the top of the page and says so in `clipped` — scroll and look
+        again for the rest."""
         session = self._session(session_id)
         if self.media is None:
             raise RuntimeError(
                 "look() has no image channel in this session; use screenshot() to save to disk"
             )
-        data = session.page.screenshot(type="jpeg", quality=80, full_page=full_page)
+        shot: dict = {"type": "jpeg", "quality": 80}
+        clipped_from: tuple[int, int] | None = None
+        if full_page:
+            width, height = self._page_extent(session)
+            if max(width, height) > MAX_IMAGE_EDGE_PX:
+                # A full-page shot of a long document exceeds the API's per-edge
+                # image limit, and an oversized block cannot be taken back out of
+                # the model's history once it is in — every later call re-sends it.
+                # Capture the top instead and report the real extent, so the agent
+                # scrolls rather than losing the session. (`clip` and `full_page`
+                # are mutually exclusive in Playwright; clip alone still captures
+                # past the viewport.)
+                clipped_from = (width, height)
+                shot["clip"] = {
+                    "x": 0,
+                    "y": 0,
+                    "width": min(width, MAX_IMAGE_EDGE_PX),
+                    "height": min(height, MAX_IMAGE_EDGE_PX),
+                }
+            else:
+                shot["full_page"] = True
+        data = session.page.screenshot(**shot)
         self.media.attach(media_type="image/jpeg", data=data)
-        return self._state(session, attached=True, bytes=len(data))
+        extra: dict = {"attached": True, "bytes": len(data)}
+        if clipped_from is not None:
+            extra["clipped"] = (
+                f"page is {clipped_from[0]}x{clipped_from[1]}px, past the "
+                f"{MAX_IMAGE_EDGE_PX}px the API accepts — captured the top-left "
+                f"{MAX_IMAGE_EDGE_PX}px; scroll() and look() again for the rest"
+            )
+        return self._state(session, **extra)
+
+    @staticmethod
+    def _page_extent(session: _BrowserSession) -> tuple[int, int]:
+        """The full scrollable page size in CSS pixels, for deciding whether a
+        full-page shot would exceed the image limit. Fail-*open* on a page that
+        won't answer (returns 0x0, so the shot proceeds unclipped): the per-edge
+        cap in `MediaOutbox.attach` still catches an oversized image before it can
+        reach the history, and there it is a clean error rather than a dead run."""
+        try:
+            width, height = session.page.evaluate(
+                "() => [document.documentElement.scrollWidth,"
+                " document.documentElement.scrollHeight]"
+            )
+            return int(width), int(height)
+        except Exception:  # noqa: BLE001 - a page that can't measure itself gets the plain path
+            return 0, 0
 
     def has_injected_secrets(self, session_id: str | None = None) -> bool:
         """Whether a session has typed a vault secret into the page. The default

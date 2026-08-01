@@ -11,6 +11,7 @@ from ..budget import Budget
 from ..llm.client import TIERS
 from ..obs import telemetry
 from .kernel import Kernel
+from .media import strip_image_blocks
 
 SYSTEM_PROMPT = """\
 You are the orchestrator of pyharness. You act by writing Python.
@@ -440,23 +441,39 @@ class Agent:
             # Paired with the llm_call event below: start without a matching
             # llm_call = a completion in flight (or one that died).
             self.on_event("llm_start", "", tier=self.tier)
+            call = dict(
+                system=system_segments,
+                messages=messages,
+                tier=self.tier,
+                tools=[RUN_PYTHON_TOOL],
+                on_token=_on_token,
+                on_thinking=_on_thinking,
+                on_attempt=_on_attempt,
+                # The elision frontier: everything at or before it is
+                # byte-stable across steps, so the prompt cache breakpoint
+                # belongs there once elision starts mutating mid-history.
+                cache_anchor=_cache_anchor(messages, self.keep_outputs),
+            )
             try:
-                completion = self.llm.complete(
-                    system=system_segments,
-                    messages=messages,
-                    tier=self.tier,
-                    tools=[RUN_PYTHON_TOOL],
-                    on_token=_on_token,
-                    on_thinking=_on_thinking,
-                    on_attempt=_on_attempt,
-                    # The elision frontier: everything at or before it is
-                    # byte-stable across steps, so the prompt cache breakpoint
-                    # belongs there once elision starts mutating mid-history.
-                    cache_anchor=_cache_anchor(messages, self.keep_outputs),
-                )
+                completion = self.llm.complete(**call)
             except Exception as exc:
-                self.on_event("error", f"LLM call failed: {exc}")
-                raise
+                # An image the API refuses is not a failed turn, it is a failed
+                # *session*: the block stays in `messages`, so every later call
+                # re-sends it and fails identically. Dropping the images is the
+                # only escape, and a degraded turn beats a dead session.
+                dropped = _drop_rejected_images(exc, messages)
+                if not dropped:
+                    self.on_event("error", f"LLM call failed: {exc}")
+                    raise
+                self.on_event(
+                    "note",
+                    f"dropped {dropped} image(s) the API refused, retrying: {exc}",
+                )
+                try:
+                    completion = self.llm.complete(**call)
+                except Exception as retry_exc:
+                    self.on_event("error", f"LLM call failed: {retry_exc}")
+                    raise
 
             usage = completion.usage
             self.on_event(
@@ -634,6 +651,21 @@ def _elide_old_outputs(messages: list[dict], keep_recent: int) -> None:
         for block in msg["content"]:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 block["content"] = _elided(block.get("content"))
+
+
+def _drop_rejected_images(exc: Exception, messages: list[dict]) -> int:
+    """Strip images from `messages` when `exc` is the API refusing one, and
+    return how many went. Zero means the failure was something else and the
+    caller should re-raise.
+
+    Narrow on purpose. Only a 400 naming an image qualifies: 4xx request errors
+    are deterministic, so resending is pointless unless the offending block is
+    gone, and every other failure mode already has its own retry path in the
+    client. `status_code` is read off the exception rather than matched against
+    an SDK exception class so this stays independent of the provider library."""
+    if getattr(exc, "status_code", None) != 400 or "image" not in str(exc).lower():
+        return 0
+    return strip_image_blocks(messages)
 
 
 def _cache_anchor(messages: list[dict], keep_recent: int) -> int | None:
