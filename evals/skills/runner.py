@@ -1,27 +1,42 @@
-"""Run the same task five times over one skills root, and read the curve back.
+"""Run one task five times over one skills root, and read the curve back.
+
+The suite carries two *arms* — same protocol, different task shapes — because
+the first paid run produced a null result that was probably about the task
+rather than about skills:
+
+**retrieval** — two known-URL hops, arithmetic, a fixed output shape. The work
+is fetching; the only thing a skill can remove is discovering the two URLs,
+which was already cheap. This arm did not amortize (+40% cost on runs 2-5) and
+the numbers are kept in `CURVE.md`.
+
+**discovery** — the same corpus, but the answer sits at the end of a sequence
+the prompt does not reveal: navigate a portal, find which section actually
+holds the balance, read a help article for the statement-address scheme, pull
+an account code off the profile page, construct the terminal URL. The expensive
+part is figuring out which pages to read, and that is exactly what a saved
+skill can freeze. If amortization exists anywhere on this corpus, it is here.
 
 The measurement rests on three things, and dropping any of them turns the curve
 into a number that always goes down:
 
-**One task, one skills root, one index.** The runs differ only in what the skills
-root already contains. Everything else the demo suite keeps hermetic is kept
-hermetic here too — no shared skills dir, no global index, no MCP config from the
-operator's checkout — because a cost curve that depends on which skills happen to
-be installed on this laptop measures the laptop.
+**One task, one skills root, one index — per arm.** The runs differ only in
+what the arm's skills root already contains. The arms do not share a root
+either: a discovery run that finds the retrieval arm's skill in `search_tools`
+is contaminated by the other experiment. Everything else the demo suite keeps
+hermetic is kept hermetic here too.
 
-**A cheaper run must still be a correct run.** A run that answers from memory, or
-answers wrong, is cheaper for a reason nobody wants. Every run is checked for two
-markers that can only come from the two pages (the total, and an account number
-that appears solely on the second hop), and separately for whether it actually
-re-read the source. A run that got cheaper by skipping the fetch is reported as
-such rather than counted as amortization.
+**A cheaper run must still be a correct run.** A run that answers from memory,
+or answers wrong, is cheaper for a reason nobody wants. Every run is checked
+for markers that can only come from the pages, and separately for whether it
+actually re-read the source. The discovery arm goes one further: its terminal
+page must appear among the run's *successful* outbound calls, because its
+markers could otherwise be replayed out of the skill's own text after a single
+cheap fetch of the entry page.
 
 **The curve comes out of the shipped view.** `skill_run_costs` in
 `pyharness/obs/index.py` is what the agent itself can query with `stats()`; if
-the suite computed its own per-run cost it would be grading a different artifact
-than the one the harness publishes. The view only knows about sessions that
-*recorded* a skill use, so the per-session table is reported next to it — a run
-missing from the view is a fact about the mechanism, not a gap to paper over.
+the suite computed its own per-run cost it would be grading a different
+artifact than the one the harness publishes.
 """
 
 from __future__ import annotations
@@ -33,18 +48,24 @@ from pathlib import Path
 from ..demo.runner import read_outbound
 from ..demo.server import CorpusServer
 
-# The task, verbatim and identical on every run. Two properties matter:
-#
-# - It is a *procedure*, not a lookup: two hops, an arithmetic cross-check and a
-#   fixed output shape. A one-fetch task has no procedure to amortize, so a flat
-#   curve on one would say nothing about skills.
-# - It names the save/reuse cycle out loud. That is a deliberate choice and a
-#   published caveat: this suite measures whether reuse is cheaper, not whether a
-#   model spontaneously thinks to reuse. Left implicit, a run where the model
-#   simply never saved a skill would produce a flat curve that reads as "skills
-#   don't amortize" while having tested nothing — the same failure the demo
-#   suite's first paid run made.
-TASK = """\
+# Both tasks name the save/reuse cycle out loud. That is a deliberate choice and
+# a published caveat: this suite measures whether reuse is cheaper, not whether
+# a model spontaneously thinks to reuse. Left implicit, a run where the model
+# simply never saved a skill would produce a flat curve that reads as "skills
+# don't amortize" while having tested nothing — the same failure the demo
+# suite's first paid run made. Neither task mentions `files=` or bundling code:
+# whether the agent reaches for `save_skill(files=…)` is a question about the
+# system prompt's own nudge, and a task that answered it for the model would be
+# measuring the task.
+_CYCLE = """\
+This same {what} is requested every run. Before you start, search_tools() for a
+saved skill that already does it: if there is one, follow it; if there is not,
+save one once you have the answer — {essence} — so the next
+run is cheaper. Either way, record_skill_use(name, "worked" or "failed") before
+you reply.
+"""
+
+_RETRIEVAL_TASK = """\
 Produce the Northwind billing summary for invoice INV-4471.
 
 The invoice is at {url}; its remittance details are on a page linked from it.
@@ -56,35 +77,97 @@ printed> | pay <beneficiary>, account <account number>
 The invoice page is the source of truth and may change between runs, so always
 re-read it rather than answering from a previous run's numbers.
 
-This same summary is requested every run. Before you start, search_tools() for a
-saved skill that already does it: if there is one, follow it; if there is not,
-save one once you have the answer — the URLs and the exact steps — so the next
-run is cheaper. Either way, record_skill_use(name, "worked" or "failed") before
-you reply.
-"""
+""" + _CYCLE.format(what="summary", essence="the URLs and the exact steps")
 
-# Markers that can only come from the two corpus pages. The total is on the
-# invoice; the account number appears solely on the remittance page, so a run
-# that never took the second hop cannot produce it.
+_DISCOVERY_TASK = """\
+Report the current balance of the Northwind supplier portal account.
+
+The portal home page is at {url}; the balance is somewhere behind it, and the
+portal's own pages say where. Reply with exactly one line:
+
+balance <current balance as printed> | statement <statement id> | \
+confirmation <confirmation code as printed>
+
+The portal is the source of truth and may change between runs, so always
+re-read it rather than answering from a previous run's numbers.
+
+""" + _CYCLE.format(what="report", essence="the pages and the exact steps")
+
+
+@dataclass(frozen=True)
+class Arm:
+    """One task shape, run N times over its own skills root.
+
+    `markers` are patterns that must all match the (comma-stripped) answer, and
+    each must be producible only by reading the pages — the scorer's whole
+    value is that a run cannot fake them. `evidence_page`, when set, is a page
+    whose *successful* fetch must appear in the audit chain: the last line of
+    defense against a later run replaying the markers out of the skill's text.
+    """
+
+    name: str
+    page: str  # the entry page, formatted into the task as {url}
+    task: str
+    markers: tuple[re.Pattern[str], ...]
+    evidence_page: str = ""
+    budget_usd: float = 0.03
+    max_steps: int = 14
+
+    def correct(self, answer: str) -> bool:
+        """Whether an answer carries every marker. Thousands separators are
+        stripped first: `1,240.00` and `1240.00` are the same answer, and
+        scoring them differently would grade formatting."""
+        normalized = answer.replace(",", "")
+        return all(m.search(normalized) for m in self.markers)
+
+
+# Retrieval markers: the total is on the invoice; the account number appears
+# solely on the remittance page, so a run that never took the second hop cannot
+# produce it. The total is matched with a pattern rather than a literal, and the
+# first paid run is why: three of five runs summed the line items in Python and
+# reported the float `1240.0`, and a literal `1240.00` failed them for decimal
+# places — grading formatting, which this check exists not to do.
 #
-# The total is matched with a pattern rather than a literal, and the first paid
-# run is why: three of five runs summed the line items in Python and reported the
-# float, `1240.0`. Every one of them had fetched both pages and had the arithmetic
-# right, and a literal `1240.00` failed them for the number of decimal places —
-# grading formatting, which this check exists not to do. The trailing `\b` still
-# rejects a wrong amount that happens to start with the same digits.
-_TOTAL = re.compile(r"\b1240(\.\d+)?\b")
-_ACCOUNT = "00000000"
+# Discovery markers: the balance and the confirmation code both appear solely on
+# the statement page, whose address exists nowhere — it must be assembled from
+# the help article's scheme plus the profile page's account code. The prompt
+# carries neither marker, so a run that shortcut the sequence has nothing to
+# copy from.
+ARMS: dict[str, Arm] = {
+    "retrieval": Arm(
+        name="retrieval",
+        page="invoice-benign.html",
+        task=_RETRIEVAL_TASK,
+        markers=(re.compile(r"\b1240(\.\d+)?\b"), re.compile(r"00000000")),
+    ),
+    "discovery": Arm(
+        name="discovery",
+        page="portal.html",
+        task=_DISCOVERY_TASK,
+        markers=(re.compile(r"\b462(\.\d+)?\b"), re.compile(r"QH7-4406")),
+        evidence_page="statement-rt1180.html",
+        # The naive path is twice the retrieval arm's depth (portal → a wrong
+        # turn or two → help → profile → statement), so the ceilings are wider;
+        # the cap is still what stops a pathological run, not what shapes a
+        # normal one.
+        budget_usd=0.04,
+        max_steps=18,
+    ),
+}
 
-PAGE = "invoice-benign.html"
+RETRIEVAL = ARMS["retrieval"]
+DISCOVERY = ARMS["discovery"]
+
+# The retrieval arm's names, kept at module level: they are the original
+# single-arm surface (`--rescore` over a pre-arm session layout resolves to
+# them) and the offline tests pin them.
+TASK = RETRIEVAL.task
+PAGE = RETRIEVAL.page
 
 
 def correct(answer: str) -> bool:
-    """Whether an answer carries both markers. Thousands separators are stripped
-    first: `1,240.00` and `1240.00` are the same answer, and scoring them
-    differently would grade formatting."""
-    normalized = answer.replace(",", "")
-    return bool(_TOTAL.search(normalized)) and _ACCOUNT in normalized
+    """The retrieval arm's scorer, kept as the module-level name."""
+    return RETRIEVAL.correct(answer)
 
 
 @dataclass
@@ -99,8 +182,10 @@ class RunRow:
     steps: int
     llm_calls: int
     wall_s: float
+    arm: str = "retrieval"
     answer: str = ""
     fetches: int = 0  # outbound calls that reached the corpus origin
+    evidence: bool = True  # the arm's evidence page was among them, if required
     saved: str = ""  # skill authored this run, if any
     reused: str = ""  # skill loaded from the registry this run, if any
     recorded: str = ""  # outcome recorded against a skill this run, if any
@@ -108,9 +193,15 @@ class RunRow:
 
     @property
     def ok(self) -> bool:
-        """A run whose number is usable: it finished, it re-read the source, and
-        it produced both markers."""
-        return self.outcome == "answered" and self.fetches > 0 and correct(self.answer)
+        """A run whose number is usable: it finished, it re-read the source
+        (including the arm's terminal page, where one is required), and it
+        produced every marker."""
+        return (
+            self.outcome == "answered"
+            and self.fetches > 0
+            and self.evidence
+            and ARMS[self.arm].correct(self.answer)
+        )
 
 
 def run_once(
@@ -119,12 +210,13 @@ def run_once(
     root: Path,
     skills_dir: Path,
     index_db: Path,
+    arm: Arm = RETRIEVAL,
     llm=None,
-    budget_usd: float = 0.03,
-    max_steps: int = 14,
+    budget_usd: float | None = None,
+    max_steps: int | None = None,
     tier: str = "cheap",
 ) -> Path:
-    """Run the task once and return the session dir.
+    """Run the arm's task once and return the session dir.
 
     `llm=None` uses the real client at `tier` and costs money; the tests pass a
     scripted model, which is how every path here except the model call is
@@ -142,11 +234,13 @@ def run_once(
     session = Session(
         root,
         llm=llm,
-        budget=Budget(limit_usd=budget_usd),
+        budget=Budget(
+            limit_usd=budget_usd if budget_usd is not None else arm.budget_usd
+        ),
         allowed_hosts=[server.host],
         approver=lambda request: ApprovalOutcome.ONCE,
         tier=tier,
-        max_steps=max_steps,
+        max_steps=max_steps if max_steps is not None else arm.max_steps,
         # The shared state under test, and nothing else shared: the skills root
         # and the index carry run 1's work into run 2, the way they would across
         # two real sessions.
@@ -155,7 +249,7 @@ def run_once(
         mcp_config=None,
     )
     try:
-        session.run(TASK.format(url=server.url(PAGE)))
+        session.run(arm.task.format(url=server.url(arm.page)))
     except Exception:  # noqa: BLE001 — the digest below says what happened
         pass
     finally:
@@ -198,20 +292,20 @@ def _reused(session_dir: Path, names: set[str]) -> str:
     return ""
 
 
-def _corpus_fetches(session_dir: Path, base: str = "") -> int:
-    """Outbound calls that *succeeded* against the corpus origin this run — the
-    evidence that the run re-read its source rather than answering from the
-    skill's own text.
+def _corpus_hits(session_dir: Path, base: str = "") -> list[str]:
+    """URLs of outbound calls that *succeeded* against the corpus origin this
+    run — the evidence that the run re-read its source rather than answering
+    from the skill's own text.
 
     `base` is empty when rescoring an old run, whose ephemeral port is long
     gone. That is safe rather than loose: the session is scoped to the corpus
     host, so a successful outbound call could not have reached anywhere else.
     """
-    return sum(
-        1
+    return [
+        a.url
         for a in read_outbound(session_dir / "audit.jsonl")
         if a.ok and a.url.startswith(base)
-    )
+    ]
 
 
 def curve(index_db: Path) -> list[dict]:
@@ -227,8 +321,25 @@ def curve(index_db: Path) -> list[dict]:
     )
 
 
-def rescore(root: Path) -> tuple[list[RunRow], list[dict]]:
-    """Re-derive the board from a finished run's own durable record.
+def _arm_layout(root: Path) -> list[tuple[Arm, Path]]:
+    """Which arms a finished suite root holds, and where.
+
+    Two layouts exist: the current one nests each arm under its name
+    (`root/<arm>/run-N` with the arm's own `skills/` and `index.db`), and the
+    original single-arm run (`root/run-N`) predates arms entirely — it was the
+    retrieval task, so it resolves to the retrieval arm. Keeping the old shape
+    readable is what keeps the committed first run rescorable.
+    """
+    nested = [
+        (ARMS[p.name], p)
+        for p in sorted(root.iterdir())
+        if p.is_dir() and p.name in ARMS
+    ]
+    return nested or [(RETRIEVAL, root)]
+
+
+def rescore(root: Path) -> list[tuple[Arm, list[RunRow], list[dict]]]:
+    """Re-derive every arm's board from a finished run's own durable record.
 
     The suite's numbers are expensive and the scorer is not: a fix to how a run
     is judged should not need the runs made again, both because that costs money
@@ -238,15 +349,24 @@ def rescore(root: Path) -> tuple[list[RunRow], list[dict]]:
     """
     from pyharness.obs.index import query, update_index
 
-    index_db = root / "index.db"
-    update_index(index_db, [root], skills_dir=root / "skills")
-    resolved = root.resolve()
-    ordered = query(index_db, "SELECT id FROM sessions ORDER BY started", limit=1000)
-    roots = [Path(r["id"]) for r in ordered if Path(r["id"]).parent == resolved]
-    return gather(roots, index_db, base=""), curve(index_db)
+    results: list[tuple[Arm, list[RunRow], list[dict]]] = []
+    for arm, arm_root in _arm_layout(root):
+        index_db = arm_root / "index.db"
+        update_index(index_db, [arm_root], skills_dir=arm_root / "skills")
+        resolved = arm_root.resolve()
+        ordered = query(
+            index_db, "SELECT id FROM sessions ORDER BY started", limit=1000
+        )
+        roots = [Path(r["id"]) for r in ordered if Path(r["id"]).parent == resolved]
+        results.append(
+            (arm, gather(roots, index_db, base="", arm=arm), curve(index_db))
+        )
+    return results
 
 
-def gather(roots: list[Path], index_db: Path, *, base: str = "") -> list[RunRow]:
+def gather(
+    roots: list[Path], index_db: Path, *, base: str = "", arm: Arm = RETRIEVAL
+) -> list[RunRow]:
     """Join the index's per-session numbers to the evidence on disk, in run
     order. `roots` are the session dirs in the order they were run."""
     from pyharness.obs.index import query
@@ -270,6 +390,7 @@ def gather(roots: list[Path], index_db: Path, *, base: str = "") -> list[RunRow]
         saved, recorded = _skill_events(root)
         started = indexed_row.get("started") or 0.0
         ended = indexed_row.get("ended") or 0.0
+        hits = _corpus_hits(root, base)
         rows.append(
             RunRow(
                 n=n,
@@ -280,8 +401,11 @@ def gather(roots: list[Path], index_db: Path, *, base: str = "") -> list[RunRow]
                 steps=int(indexed_row.get("steps") or 0),
                 llm_calls=int(indexed_row.get("llm_calls") or 0),
                 wall_s=max(0.0, ended - started),
+                arm=arm.name,
                 answer=str(indexed_row.get("answer") or ""),
-                fetches=_corpus_fetches(root, base),
+                fetches=len(hits),
+                evidence=not arm.evidence_page
+                or any(arm.evidence_page in url for url in hits),
                 saved=saved,
                 reused=_reused(root, saved_names),
                 recorded=recorded,
@@ -293,7 +417,7 @@ def gather(roots: list[Path], index_db: Path, *, base: str = "") -> list[RunRow]
 
 @dataclass
 class Curve:
-    """The five rows plus the one comparison the suite exists to make."""
+    """One arm's rows plus the one comparison the suite exists to make."""
 
     rows: list[RunRow] = field(default_factory=list)
 
