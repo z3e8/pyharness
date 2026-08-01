@@ -78,7 +78,8 @@ def test_bundled_code_is_lazy_until_first_call(tmp_path):
     mod = reg.use("lazy")
     assert not marker.exists()
     # yet the AST-derived listing shows the real signature and docstring
-    assert "hello(name='world')" in details and "Say hi." in details
+    # (the indented line is the Functions entry, not the source block)
+    assert "    hello(name='world')  # Say hi." in details
     # the first call executes the file — exactly then
     assert mod.hello("ada") == "hi ada"
     assert marker.read_text() == "imported"
