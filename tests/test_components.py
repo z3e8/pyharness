@@ -1438,16 +1438,16 @@ def _browser_with_fake(ws, vault=None, text="page body", snapshot=_FAKE_SNAPSHOT
 
 def test_browser_actions_return_structured_result(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    r = cap.goto("sid", "http://x")
+    r = cap.goto("http://x")
     assert r == {"url": "http://x", "title": "Title", "status": 200}
-    assert cap.click("sid", "#go")["title"] == "Title"
-    assert cap.fill("sid", "#name", "Ada")["url"] == "http://x"
+    assert cap.click("#go")["title"] == "Title"
+    assert cap.fill("#name", "Ada")["url"] == "http://x"
     assert ("fill", "#name", "Ada") in page.calls
 
 
 def test_browser_fill_secret_injects_parent_side_and_hides_value(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    result = cap.fill_secret("sid", "#password", "pw")
+    result = cap.fill_secret("#password", "pw")
     # The cleartext was typed into the page but never returned to the caller.
     assert ("fill", "#password", "hunter2") in page.calls
     assert "hunter2" not in repr(result)
@@ -1457,9 +1457,9 @@ def test_browser_masks_injected_secret_in_returned_url(tmp_path):
     # A secret can land in the url (e.g. a GET query string); the result's url
     # field must mask it just like read_text does — no round-trip to agent code.
     cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    cap.fill_secret("sid", "#password", "pw")
+    cap.fill_secret("#password", "pw")
     page.url = "http://x/callback?token=hunter2"  # secret landed in the query string
-    r = cap.click("sid", "#submit")  # click doesn't change the fake url
+    r = cap.click("#submit")  # click doesn't change the fake url
     assert "hunter2" not in r["url"]
     assert "***" in r["url"]
 
@@ -1468,8 +1468,8 @@ def test_browser_read_text_masks_injected_secret(tmp_path):
     cap, page = _browser_with_fake(
         Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), text="you typed hunter2 ok"
     )
-    cap.fill_secret("sid", "#password", "pw")
-    r = cap.read_text("sid")
+    cap.fill_secret("#password", "pw")
+    r = cap.read_text()
     assert "hunter2" not in r["text"]
     assert "***" in r["text"]
 
@@ -1490,7 +1490,7 @@ def test_browser_fill_totp_types_code_never_seed_or_code(tmp_path, monkeypatch):
     cap, page = _browser_with_fake(
         Workspace(tmp_path), vault=Vault({"github_totp": seed})
     )
-    result = cap.fill_totp("sid", "#otp", "github_totp")
+    result = cap.fill_totp("#otp", "github_totp")
     # The derived code was typed into the page; neither it nor the seed returns.
     assert ("fill", "#otp", "287082") in page.calls
     assert seed not in repr(result) and "287082" not in repr(result)
@@ -1503,11 +1503,11 @@ def test_browser_fill_totp_masks_echoed_code_and_gates_look(tmp_path, monkeypatc
         vault=Vault({"github_totp": _rfc_seed("sha1")}),
         text="code 287082 accepted",
     )
-    cap.fill_totp("sid", "#otp", "github_totp")
-    r = cap.read_text("sid")
+    cap.fill_totp("#otp", "github_totp")
+    r = cap.read_text()
     assert "287082" not in r["text"] and "***" in r["text"]
     # A second factor in the page is a secret on screen: the look gate applies.
-    assert cap.has_injected_secrets("sid")
+    assert cap.has_injected_secrets()
 
 
 def test_browser_read_text_returns_full_page_and_can_save(tmp_path, monkeypatch):
@@ -1516,13 +1516,13 @@ def test_browser_read_text_returns_full_page_and_can_save(tmp_path, monkeypatch)
     page = "p" * 30_000
     cap, _ = _browser_with_fake(Workspace(tmp_path), text=page)
     # Under the ceiling the whole page rides back inline, uncapped.
-    r = cap.read_text("sid")
+    r = cap.read_text()
     assert r["saved"] is False and r["text"] == page
     # Past the ceiling it spills to the workspace with the full text on disk.
     monkeypatch.setattr(payload, "INLINE_TEXT_LIMIT", 100)
     ws = Workspace(tmp_path)
     cap2, _ = _browser_with_fake(ws, text=page)
-    r2 = cap2.read_text("sid")
+    r2 = cap2.read_text()
     assert r2["saved"] is True and r2["text"] is None
     assert ws.path(r2["path"]).read_text() == page
 
@@ -1532,19 +1532,47 @@ def test_browser_audit_summary_never_holds_secret_value(tmp_path):
 
     # The agent passes the secret *name*, so the audited arg rendering can never
     # contain the value — same invariant the C1 http body-injection test relies on.
-    assert "hunter2" not in summarize_args(("sid", "#password", "pw"), {})
+    assert "hunter2" not in summarize_args(("#password", "pw"), {})
 
 
 def test_browser_screenshot_rejects_workspace_escape(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
     with pytest.raises(ValueError):
-        cap.screenshot("sid", "../outside.png")
+        cap.screenshot("../outside.png")
 
 
 def test_browser_unknown_session_raises(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
     with pytest.raises(KeyError):
-        cap.goto("nope", "http://x")
+        cap.goto("http://x", session_id="nope")
+
+
+def test_browser_session_id_defaults_to_the_only_open_browser(tmp_path):
+    """`session_id` is an optional last keyword, not a leading positional.
+
+    The natural call shape used to bind the url to `session_id` and report the
+    *url* as missing, which cost real steps on nearly every browser task. With no
+    id the action goes to the one open browser; ambiguity is an error naming the
+    ids, never a guess."""
+    cap, _ = _browser_with_fake(Workspace(tmp_path))
+    assert cap.goto("http://x")["url"] == "http://x"
+
+    from pyharness.broker.capabilities.browser import _BrowserSession
+    from pyharness.security.sink import SecretSink
+
+    cap._sessions["second"] = _BrowserSession(
+        browser=_FakeClient(),
+        context=_FakeClient(),
+        page=_FakePage(),
+        sink=SecretSink(None),
+    )
+    with pytest.raises(KeyError, match="several browser sessions"):
+        cap.goto("http://x")
+    assert cap.goto("http://x", session_id="second")["url"] == "http://x"
+
+    cap._sessions.clear()
+    with pytest.raises(KeyError, match="no browser session is open"):
+        cap.goto("http://x")
 
 
 def test_mutating_browser_requires_approval(tmp_path):
@@ -1565,12 +1593,12 @@ def test_mutating_browser_requires_approval(tmp_path):
     broker.register(cap)
     ns = broker.namespace()
 
-    ns["goto"]("sid", "http://x")  # navigation: free
-    ns["read_text"]("sid")  # read: free
+    ns["goto"]("http://x")  # navigation: free
+    ns["read_text"]()  # read: free
     assert prompted == []
 
     with pytest.raises(PermissionDenied):
-        ns["click"]("sid", "#submit")  # state-changing: gated, denied here
+        ns["click"]("#submit")  # state-changing: gated, denied here
     assert [r.action for r in prompted] == ["browser.click"]
     # The preview enriches the confirmation with the page the click lands on.
     assert prompted[0].category is ActionCategory.OUTWARD
@@ -1582,7 +1610,7 @@ def test_mutating_browser_requires_approval(tmp_path):
 
 def test_browser_snapshot_returns_refs_and_stores_it(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    r = cap.snapshot("sid")
+    r = cap.snapshot()
     assert r["url"] == "http://start" and r["title"] == "Title"
     assert "[ref=e6]" in r["text"] and "/url: /careers" in r["text"]
     # Stored so refs and preview() can resolve against it.
@@ -1597,8 +1625,8 @@ def test_browser_snapshot_masks_injected_secret(tmp_path):
     cap, _ = _browser_with_fake(
         Workspace(tmp_path), vault=Vault({"pw": "hunter2"}), snapshot=snap
     )
-    cap.fill_secret("sid", "#password", "pw")
-    r = cap.snapshot("sid")
+    cap.fill_secret("#password", "pw")
+    r = cap.snapshot()
     assert "hunter2" not in r["text"] and "***" in r["text"]
 
 
@@ -1609,7 +1637,7 @@ def test_browser_snapshot_can_save(tmp_path, monkeypatch):
     monkeypatch.setattr(payload, "INLINE_TEXT_LIMIT", 100)
     ws = Workspace(tmp_path)
     cap, _ = _browser_with_fake(ws, snapshot=big)
-    r = cap.snapshot("sid")
+    r = cap.snapshot()
     assert r["saved"] is True and r["text"] is None
     assert ws.path(r["path"]).read_text() == big
     # Even spilled to disk, the ref stays resolvable — stored snapshot is the text.
@@ -1618,63 +1646,63 @@ def test_browser_snapshot_can_save(tmp_path, monkeypatch):
 
 def test_browser_click_by_ref_resolves_to_aria_ref(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cap.click("sid", ref="e6")
+    cap.snapshot()
+    cap.click(ref="e6")
     assert ("click", "aria-ref=e6") in page.calls
 
 
 def test_browser_fill_by_ref(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cap.fill("sid", ref="e5", value="ada@x.com")
+    cap.snapshot()
+    cap.fill(ref="e5", value="ada@x.com")
     assert ("fill", "aria-ref=e5", "ada@x.com") in page.calls
 
 
 def test_browser_ref_without_snapshot_fails_fast(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
     with pytest.raises(ValueError, match="snapshot"):
-        cap.click("sid", ref="e6")
+        cap.click(ref="e6")
     assert not any(c[0] == "click" for c in page.calls)  # never reached Playwright
 
 
 def test_browser_unknown_ref_fails_fast(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
+    cap.snapshot()
     with pytest.raises(ValueError, match="not in the current snapshot"):
-        cap.click("sid", ref="e9")
+        cap.click(ref="e9")
     assert not any(c[0] == "click" for c in page.calls)
 
 
 def test_browser_ref_substring_is_not_a_false_match(tmp_path):
     # "[ref=e1]" must not match a snapshot that only contains "[ref=e12]".
     cap, _ = _browser_with_fake(Workspace(tmp_path), snapshot="- button [ref=e12]")
-    cap.snapshot("sid")
+    cap.snapshot()
     with pytest.raises(ValueError, match="not in the current snapshot"):
-        cap.click("sid", ref="e1")
-    cap.click("sid", ref="e12")  # the real ref resolves
+        cap.click(ref="e1")
+    cap.click(ref="e12")  # the real ref resolves
 
 
 def test_browser_selector_and_ref_mutually_exclusive(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
+    cap.snapshot()
     with pytest.raises(ValueError, match="exactly one"):
-        cap.click("sid", "#go", ref="e6")
+        cap.click("#go", ref="e6")
     with pytest.raises(ValueError, match="exactly one"):
-        cap.click("sid")  # neither
+        cap.click()  # neither
 
 
 def test_browser_goto_invalidates_refs(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cap.goto("sid", "http://elsewhere")  # navigation clears the snapshot
+    cap.snapshot()
+    cap.goto("http://elsewhere")  # navigation clears the snapshot
     with pytest.raises(ValueError, match="snapshot"):
-        cap.click("sid", ref="e6")
+        cap.click(ref="e6")
 
 
 def test_browser_preview_shows_ref_element(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cat, summary = cap.preview("click", ("sid",), {"ref": "e6"})
+    cap.snapshot()
+    cat, summary = cap.preview("click", (), {"ref": "e6"})
     assert cat is ActionCategory.OUTWARD
     assert "[ref=e6]" in summary and "Submit application" in summary
 
@@ -1684,38 +1712,38 @@ def test_browser_preview_shows_ref_element(tmp_path):
 
 def test_browser_select_option_by_ref(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cap.select_option("sid", ref="e6", label="Remote")
+    cap.snapshot()
+    cap.select_option(ref="e6", label="Remote")
     assert ("select_option", "aria-ref=e6", {"label": "Remote"}) in page.calls
 
 
 def test_browser_press_targets_element_or_focused(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.snapshot("sid")
-    cap.press("sid", "Enter", ref="e6")
+    cap.snapshot()
+    cap.press("Enter", ref="e6")
     assert ("press", "aria-ref=e6", "Enter") in page.calls
-    cap.press("sid", "Tab")  # no target -> goes to the focused element
+    cap.press("Tab")  # no target -> goes to the focused element
     assert ("keyboard.press", "Tab") in page.calls
 
 
 def test_browser_scroll_uses_wheel(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    cap.scroll("sid", 400)
+    cap.scroll(400)
     assert ("wheel", 0, 400) in page.calls
 
 
 def test_browser_wait_for_found_and_timeout(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path))
-    assert cap.wait_for("sid", "#ready")["found"] is True
+    assert cap.wait_for("#ready")["found"] is True
     page._wait_timeout = True  # a real Playwright TimeoutError becomes a clean False
-    assert cap.wait_for("sid", "#never")["found"] is False
+    assert cap.wait_for("#never")["found"] is False
 
 
 def test_browser_upload_stages_workspace_file(tmp_path):
     ws = Workspace(tmp_path)
     cap, page = _browser_with_fake(ws)
-    cap.snapshot("sid")
-    r = cap.upload("sid", "resume.pdf", ref="e5")
+    cap.snapshot()
+    r = cap.upload("resume.pdf", ref="e5")
     call = next(c for c in page.calls if c[0] == "set_input_files")
     assert call[1] == "aria-ref=e5" and call[2] == str(ws.path("resume.pdf"))
     assert r["uploaded"] == "resume.pdf"
@@ -1724,7 +1752,7 @@ def test_browser_upload_stages_workspace_file(tmp_path):
 def test_browser_upload_rejects_workspace_escape(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
     with pytest.raises(ValueError):
-        cap.upload("sid", "../secret.pdf", "#f")
+        cap.upload("../secret.pdf", "#f")
 
 
 def test_browser_g9_verb_gating(tmp_path):
@@ -1745,19 +1773,19 @@ def test_browser_g9_verb_gating(tmp_path):
     broker.register(cap)
     ns = broker.namespace()
 
-    ns["scroll"]("sid", 200)  # viewport-only: free
-    ns["wait_for"]("sid", "#x")  # read: free
+    ns["scroll"](200)  # viewport-only: free
+    ns["wait_for"]("#x")  # read: free
     assert prompted == []
 
-    ns["select_option"]("sid", "#s", value="a")
-    ns["press"]("sid", "Enter", "#f")
-    ns["upload"]("sid", "cv.pdf", "#u")
+    ns["select_option"]("#s", value="a")
+    ns["press"]("Enter", "#f")
+    ns["upload"]("cv.pdf", "#u")
     assert prompted == ["browser.select_option", "browser.press", "browser.upload"]
 
 
 def test_browser_upload_preview_names_the_file(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))
-    cat, summary = cap.preview("upload", ("sid", "resume.pdf"), {"selector": "#f"})
+    cat, summary = cap.preview("upload", ("resume.pdf",), {"selector": "#f"})
     assert cat is ActionCategory.OUTWARD
     assert "resume.pdf" in summary and "#f" in summary
 
@@ -1791,7 +1819,7 @@ def test_browser_look_stages_image_and_returns_no_bytes(tmp_path):
     box = MediaOutbox()
     cap, _ = _browser_with_fake(Workspace(tmp_path))
     cap.media = box
-    r = cap.look("sid")
+    r = cap.look()
     assert r["attached"] is True and r["bytes"] == len(b"\xff\xd8fake-jpeg-bytes")
     # The raw bytes are staged for the agent loop, never returned to agent code.
     assert "fake-jpeg-bytes" not in repr(r)
@@ -1802,16 +1830,16 @@ def test_browser_look_stages_image_and_returns_no_bytes(tmp_path):
 def test_browser_look_without_media_channel_raises(tmp_path):
     cap, _ = _browser_with_fake(Workspace(tmp_path))  # no media wired
     with pytest.raises(RuntimeError, match="no image channel"):
-        cap.look("sid")
+        cap.look()
 
 
 def test_browser_look_gated_only_after_secret_injected(tmp_path):
     # Models the default-policy predicate: look is free until a secret is typed
     # into the page, then it needs approval (pixels can carry the secret).
     cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    assert cap.has_injected_secrets("sid") is False
-    cap.fill_secret("sid", "#password", "pw")
-    assert cap.has_injected_secrets("sid") is True
+    assert cap.has_injected_secrets() is False
+    cap.fill_secret("#password", "pw")
+    assert cap.has_injected_secrets() is True
 
 
 # --- Site profiles: persistent web identity (G3, Direction #5) ---------------
@@ -1988,7 +2016,7 @@ def test_save_profile_returns_counts_never_values(tmp_path):
     cap = BrowserCapability(Workspace(tmp_path), profiles=store)
     ctx = _profile_session(cap, profile=None)  # not yet a named profile
 
-    result = cap.save_profile("sid", "linkedin")
+    result = cap.save_profile("linkedin")
     assert result == {"profile": "linkedin", "cookies": 1, "origins": 1}
     assert "TOP-SECRET-COOKIE" not in repr(result)
     assert True in ctx.storage_state_calls  # indexed_db=True passed on save
@@ -2017,7 +2045,7 @@ def test_close_refreshes_profile_and_audits(tmp_path):
     cap = BrowserCapability(Workspace(tmp_path), profiles=store, audit=audit)
     _profile_session(cap, profile="linkedin")  # context now holds fresh _SENTINEL_STATE
 
-    cap.close_browser("sid")
+    cap.close_browser()
     assert store.load("linkedin") == _SENTINEL_STATE  # rotated state persisted
     entries = [
         json.loads(line)
@@ -2077,13 +2105,15 @@ def test_profile_ops_gating(tmp_path):
 
     ns["open_browser"](profile="linkedin")  # restores an identity: gated
     _profile_session(cap)
-    ns["save_profile"]("sid", "linkedin")  # persists a credential: gated
+    # Three browsers are open by now, so this is the case where session_id= is
+    # required rather than defaulted.
+    ns["save_profile"]("linkedin", session_id="sid")  # persists a credential: gated
     assert prompted == ["browser.open_browser", "browser.save_profile"]
 
     # Neither op is grant-coverable: scope() must yield None for both.
     assert "browser.open_browser" not in MUTATING_ACTIONS
     assert cap.scope("open_browser", (), {"profile": "linkedin"}) is None
-    assert cap.scope("save_profile", ("sid", "linkedin"), {}) is None
+    assert cap.scope("save_profile", ("linkedin",), {}) is None
 
 
 def test_open_browser_profile_preview_names_profile_and_domains(tmp_path):
@@ -2139,9 +2169,9 @@ def test_http_preview_shows_body_field_names_not_values(tmp_path):
 
 def test_browser_preview_masks_secret_in_page_url(tmp_path):
     cap, page = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
-    cap.fill_secret("sid", "#password", "pw")
+    cap.fill_secret("#password", "pw")
     page.url = "http://x/cb?token=hunter2"  # secret landed in the page's query string
-    cat, summary = cap.preview("click", ("sid", "#submit"), {})
+    cat, summary = cap.preview("click", ("#submit",), {})
     assert cat is ActionCategory.OUTWARD
     assert "hunter2" not in summary and "***" in summary
 
@@ -2464,13 +2494,11 @@ def test_http_and_browser_scope_extraction(tmp_path):
     )  # unparseable
 
     cap, _ = _browser_with_fake(Workspace(tmp_path))  # fake page url is http://start
-    assert cap.scope("click", ("sid",), {}) == GrantScope("browser", "start")
-    assert cap.scope("fill_secret", ("sid",), {}) is None  # credentials always prompt
-    assert (
-        cap.scope("fill_totp", ("sid",), {}) is None
-    )  # a second factor is a credential too
-    assert cap.scope("goto", ("sid",), {}) is None  # navigation is not a mutation
-    assert cap.scope("click", ("nope",), {}) is None  # no such session
+    assert cap.scope("click", (), {}) == GrantScope("browser", "start")
+    assert cap.scope("fill_secret", (), {}) is None  # credentials always prompt
+    assert cap.scope("fill_totp", (), {}) is None  # a second factor is a credential too
+    assert cap.scope("goto", (), {}) is None  # navigation is not a mutation
+    assert cap.scope("click", (), {"session_id": "nope"}) is None  # no such session
 
 
 def test_grant_covers_repeat_browser_actions(tmp_path):
@@ -2492,8 +2520,8 @@ def test_grant_covers_repeat_browser_actions(tmp_path):
     )
     broker.register(cap)
     ns = broker.namespace()
-    ns["click"]("sid", "#a")  # prompts once, mints a browser grant for host "start"
-    ns["fill"]("sid", "#b", "x")  # covered by the grant — no prompt
+    ns["click"]("#a")  # prompts once, mints a browser grant for host "start"
+    ns["fill"]("#b", "x")  # covered by the grant — no prompt
     assert prompts == ["browser.click"]
 
     import json
@@ -2536,8 +2564,8 @@ def test_revoked_grant_stops_covering_and_is_audited(tmp_path):
     broker.register(cap)
     ns = broker.namespace()
 
-    ns["click"]("sid", "#a")  # asked once
-    ns["fill"]("sid", "#b", "x")  # covered — not asked
+    ns["click"]("#a")  # asked once
+    ns["fill"]("#b", "x")  # covered — not asked
     assert prompts == ["browser.click"]
 
     (grant,) = broker.grants.active()
@@ -2546,7 +2574,7 @@ def test_revoked_grant_stops_covering_and_is_audited(tmp_path):
     assert broker.revoke_grant(grant.id) is None  # revoking twice is a no-op
 
     with pytest.raises(PermissionDenied):
-        ns["fill"]("sid", "#c", "y")  # no longer covered: asked, and refused
+        ns["fill"]("#c", "y")  # no longer covered: asked, and refused
     assert prompts == ["browser.click", "browser.fill"]
 
     import json
@@ -2585,9 +2613,9 @@ def test_grant_scoped_to_host(tmp_path):
     )
     broker.register(cap)
     ns = broker.namespace()
-    ns["click"]("sid", "#a")  # host "start"
+    ns["click"]("#a")  # host "start"
     page.url = "http://other.example.com/x"  # the page navigated elsewhere
-    ns["fill"]("sid", "#b", "y")  # different host -> the grant does not cover it
+    ns["fill"]("#b", "y")  # different host -> the grant does not cover it
     assert seen == ["start", "other.example.com"]
 
 
@@ -2645,8 +2673,8 @@ def test_fill_secret_not_covered_by_browser_grant(tmp_path):
     )
     broker.register(cap)
     ns = broker.namespace()
-    ns["click"]("sid", "#a")  # mints a browser grant
-    ns["fill_secret"]("sid", "#pw", "pw")  # credential release still prompts
+    ns["click"]("#a")  # mints a browser grant
+    ns["fill_secret"]("#pw", "pw")  # credential release still prompts
     assert prompts == ["browser.click", "browser.fill_secret"]
 
 
@@ -2673,9 +2701,9 @@ def test_fill_totp_not_covered_by_browser_grant(tmp_path, monkeypatch):
     )
     broker.register(cap)
     ns = broker.namespace()
-    ns["click"]("sid", "#a")  # mints a browser grant
-    ns["fill_totp"]("sid", "#otp", "github_totp")  # still prompts
-    ns["fill_totp"]("sid", "#otp", "github_totp")  # and prompts again — never minted
+    ns["click"]("#a")  # mints a browser grant
+    ns["fill_totp"]("#otp", "github_totp")  # still prompts
+    ns["fill_totp"]("#otp", "github_totp")  # and prompts again — never minted
     assert prompts == ["browser.click", "browser.fill_totp", "browser.fill_totp"]
 
 
@@ -2703,13 +2731,11 @@ def test_look_not_covered_by_browser_grant(tmp_path):
     broker = _broker(tmp_path, policy=pol, approver=approver)
     broker.register(cap)
     ns = broker.namespace()
-    ns["click"]("sid", "#a")  # mints a browser grant
+    ns["click"]("#a")  # mints a browser grant
     with pytest.raises(PermissionDenied):
-        ns["look"](
-            "sid"
-        )  # gated, not covered by the grant -> prompted (and denied here)
+        ns["look"]()  # gated, not covered by the grant -> prompted (and denied here)
     assert prompts == ["browser.click", "browser.look"]
-    assert cap.scope("look", ("sid",), {}) is None
+    assert cap.scope("look", (), {}) is None
 
 
 def test_cli_approve_offers_grant_when_scoped(monkeypatch, capsys):

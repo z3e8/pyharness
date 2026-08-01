@@ -39,14 +39,14 @@ prompts for approval, since it writes a standing credential:
 
 ```python
 b = use_tool("browser")
-sid = b.open_browser()
-b.goto(sid, "https://www.linkedin.com/login")
-b.snapshot(sid)                                 # see the fields
-b.fill_secret(sid, ref="e5", secret="linkedin_email")
-b.fill_secret(sid, ref="e6", secret="linkedin_password")
-b.click(sid, ref="e7")                          # sign in
-b.fill_totp(sid, ref="e9", secret="linkedin_totp")  # 2FA, if asked
-b.save_profile(sid, "linkedin")                 # approval prompt; cookies encrypted
+b.open_browser()                                # session_id= only if you open several
+b.goto("https://www.linkedin.com/login")
+b.snapshot()                                    # see the fields
+b.fill_secret(ref="e5", secret="linkedin_email")
+b.fill_secret(ref="e6", secret="linkedin_password")
+b.click(ref="e7")                               # sign in
+b.fill_totp(ref="e9", secret="linkedin_totp")   # 2FA, if asked
+b.save_profile("linkedin")                      # approval prompt; cookies encrypted
 ```
 
 The same pair covers a profile whose session has expired: the agent re-logs-in
@@ -60,8 +60,8 @@ Every later session opens already logged in — one approval, no login:
 ```python
 b = use_tool("browser")
 b.list_profiles()                               # -> ["linkedin"]  (names only)
-sid = b.open_browser(profile="linkedin")        # approval prompt: "open as linkedin"
-b.goto(sid, "https://www.linkedin.com/feed")    # already authenticated
+b.open_browser(profile="linkedin")              # approval prompt: "open as linkedin"
+b.goto("https://www.linkedin.com/feed")         # already authenticated
 ```
 
 When the session closes, the (rotated) state re-saves automatically, so the login

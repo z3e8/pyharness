@@ -111,10 +111,10 @@ pages) and the password *name* only:
 
 ```python
 login = create_login("https://app.example.com/signup")   # prompts for approval
-b = use_tool("browser"); sid = b.open_browser()["session_id"]
-b.goto(sid, "https://app.example.com/signup"); b.snapshot(sid)
-b.fill(sid, ref="e3", value=login["email"])
-b.fill_secret(sid, ref="e4", secret=login["password_secret"])  # prompts; value never seen
+b = use_tool("browser"); b.open_browser()
+b.goto("https://app.example.com/signup"); b.snapshot()
+b.fill(ref="e3", value=login["email"])
+b.fill_secret(ref="e4", secret=login["password_secret"])  # prompts; value never seen
 ```
 
 `length` (12–64) and `symbols` (`True`, `False`, or a string of the punctuation
@@ -141,7 +141,7 @@ its QR code at 2FA setup ("can't scan? enter this code"). Store it under
 pyharness-vault set github_totp     # paste the base32 seed (hidden)
 ```
 
-At a login's 2FA step the agent calls `browser.fill_totp(sid, ref="e5",
+At a login's 2FA step the agent calls `browser.fill_totp(ref="e5",
 secret="github_totp")`: the seed is resolved parent-side, the current
 6-digit code derived there (RFC 6238, stdlib), and typed into the field.
 Neither the seed nor the code ever reaches agent code, and both are masked out

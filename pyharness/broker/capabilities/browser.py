@@ -29,7 +29,7 @@ MUTATING_ACTIONS = frozenset(
     }
 )
 
-# Ops whose second positional arg is the element selector (used by preview() to
+# Ops whose *first* positional arg is the element selector (used by preview() to
 # describe the target). press/upload take other positional args first, so they
 # rely on the ref=/selector= keyword instead.
 _SELECTOR_POS_OPS = frozenset(
@@ -214,18 +214,18 @@ class BrowserCapability:
                 f"open a browser logged in as profile {profile!r}{self._profile_domains(profile)}",
             )
         if op == "save_profile":
-            name = kwargs.get("name") or (args[1] if len(args) >= 2 else None)
-            session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+            name = kwargs.get("name") or (args[0] if args else None)
+            session = self._peek(kwargs)
             where = f" from {session.sink.redact(session.page.url)}" if session else ""
             return (
                 ActionCategory.LOCAL,
                 f"save this browser's login state as encrypted profile {name!r}{where}",
             )
-        session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+        session = self._peek(kwargs)
         ref = kwargs.get("ref")
         selector = kwargs.get("selector")
-        if selector is None and op in _SELECTOR_POS_OPS and len(args) >= 2:
-            selector = args[1]
+        if selector is None and op in _SELECTOR_POS_OPS and args:
+            selector = args[0]
         if ref is not None:
             line = self._ref_line(session, ref) if session else None
             target = f"[ref={ref}] {line}" if line else f"[ref={ref}]"
@@ -234,7 +234,7 @@ class BrowserCapability:
         else:
             target = ""
         if op == "upload":  # name the file being staged into the page
-            path = kwargs.get("path") or (args[1] if len(args) >= 2 else None)
+            path = kwargs.get("path") or (args[0] if args else None)
             target = f"{target} file={path!r}".strip()
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
         return ActionCategory.OUTWARD, " ".join(f"{op} {target}{where}".split())
@@ -252,7 +252,7 @@ class BrowserCapability:
         names ("browser.click"), so the membership test re-dots it."""
         if f"browser.{op}" not in MUTATING_ACTIONS or op in _CREDENTIAL_OPS:
             return None
-        session = self._sessions.get(args[0] if args else kwargs.get("session_id"))
+        session = self._peek(kwargs)
         if session is None:
             return None
         host = urlsplit(session.page.url).hostname
@@ -306,11 +306,38 @@ class BrowserCapability:
             self._pw = sync_api.sync_playwright().start()
         return self._pw
 
-    def _session(self, session_id: str) -> _BrowserSession:
+    def _session(self, session_id: str | None) -> _BrowserSession:
+        """The session an action targets. `session_id=None` means "the browser
+        that is open" — the reason every action takes the id as an optional
+        keyword rather than a leading positional. Ambiguity (no session, or more
+        than one) is an error naming the ids, never a guess."""
+        if session_id is None:
+            if len(self._sessions) == 1:
+                return next(iter(self._sessions.values()))
+            if not self._sessions:
+                raise KeyError("no browser session is open — call open_browser() first")
+            raise KeyError(
+                "several browser sessions are open, so session_id= is required: "
+                + ", ".join(repr(sid) for sid in sorted(self._sessions))
+            )
         session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"no open browser session {session_id!r}")
         return session
+
+    def _peek(self, kwargs: dict) -> _BrowserSession | None:
+        """The session a *pending* call targets, for `preview`/`scope`, which run
+        before the call and must never raise — an unresolvable id yields None and
+        the caller degrades (a less specific prompt, or no grant) rather than
+        blowing up the approval."""
+        session_id = kwargs.get("session_id")
+        if session_id is None:
+            return (
+                next(iter(self._sessions.values()))
+                if len(self._sessions) == 1
+                else None
+            )
+        return self._sessions.get(session_id)
 
     def _state(self, session: _BrowserSession, **extra) -> dict:
         """The verifiable result shape shared by every action: where the page is
@@ -352,7 +379,7 @@ class BrowserCapability:
         )
         return session_id
 
-    def save_profile(self, session_id: str, name: str) -> dict:
+    def save_profile(self, name: str, *, session_id: str | None = None) -> dict:
         """Persist this browser's login state as an encrypted profile `name`, so a
         later `open_browser(profile=name)` opens already logged in. Save it after
         you have logged in (via `fill_secret`, with TOTP 2FA via `fill_totp` if
@@ -404,7 +431,7 @@ class BrowserCapability:
         except Exception:  # noqa: BLE001 - refresh is best-effort maintenance, never blocks teardown
             pass
 
-    def goto(self, session_id: str, url: str) -> dict:
+    def goto(self, url: str, *, session_id: str | None = None) -> dict:
         """Navigate to `url`. Returns the final url, page title, and HTTP status.
 
         Waits for `domcontentloaded` rather than the full `load` event: a heavy
@@ -432,7 +459,9 @@ class BrowserCapability:
             status=resp.status if resp is not None else None,
         )
 
-    def snapshot(self, session_id: str, save: str | None = None) -> dict:
+    def snapshot(
+        self, save: str | None = None, *, session_id: str | None = None
+    ) -> dict:
         """Read the page as an accessibility tree with stable element refs — the
         way to *see* what you can act on before clicking or filling.
 
@@ -490,7 +519,11 @@ class BrowserCapability:
         return f"aria-ref={ref}"
 
     def click(
-        self, session_id: str, selector: str | None = None, *, ref: str | None = None
+        self,
+        selector: str | None = None,
+        *,
+        ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Click an element, targeted by a snapshot `ref` (preferred — take a
         `snapshot()` first) or a CSS/text `selector`. State-changing — gated for
@@ -501,11 +534,11 @@ class BrowserCapability:
 
     def fill(
         self,
-        session_id: str,
         selector: str | None = None,
         value: str | None = None,
         *,
         ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Type `value` into a field, targeted by a snapshot `ref` (preferred) or a
         CSS/text `selector`. For credentials use `fill_secret` instead, so the
@@ -516,11 +549,11 @@ class BrowserCapability:
 
     def fill_secret(
         self,
-        session_id: str,
         selector: str | None = None,
         secret: str | None = None,
         *,
         ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Type a vault secret into a field, targeted by a snapshot `ref`
         (preferred) or a CSS/text `selector`. `secret` is the vault *name* of the
@@ -538,11 +571,11 @@ class BrowserCapability:
 
     def fill_totp(
         self,
-        session_id: str,
         selector: str | None = None,
         secret: str | None = None,
         *,
         ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Type the current 2FA code derived from a vault TOTP seed into a field,
         targeted by a snapshot `ref` (preferred) or a CSS/text `selector`.
@@ -563,13 +596,13 @@ class BrowserCapability:
 
     def select_option(
         self,
-        session_id: str,
         selector: str | None = None,
         *,
         ref: str | None = None,
         value: str | None = None,
         label: str | None = None,
         index: int | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Choose an option in a `<select>` dropdown, targeted by a snapshot `ref`
         (preferred) or a CSS/text `selector`. Give exactly one of `value=` (the
@@ -587,11 +620,11 @@ class BrowserCapability:
 
     def press(
         self,
-        session_id: str,
         key: str,
         selector: str | None = None,
         *,
         ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Press a key or chord (`"Enter"`, `"Tab"`, `"Control+A"`). With a `ref`/
         `selector` the key is sent to that element; otherwise to whatever is
@@ -603,7 +636,9 @@ class BrowserCapability:
             session.page.keyboard.press(key)
         return self._state(session)
 
-    def scroll(self, session_id: str, dy: int = 0, dx: int = 0) -> dict:
+    def scroll(
+        self, dy: int = 0, dx: int = 0, *, session_id: str | None = None
+    ) -> dict:
         """Scroll the viewport by `dy` (and `dx`) pixels — positive `dy` scrolls
         down. For lazy-loaded content, scroll then `snapshot` again. Free (viewport
         only, no remote effect)."""
@@ -613,10 +648,11 @@ class BrowserCapability:
 
     def wait_for(
         self,
-        session_id: str,
         selector: str,
         state: str = "visible",
         timeout_ms: int = 10_000,
+        *,
+        session_id: str | None = None,
     ) -> dict:
         """Wait until `selector` reaches `state` (`"visible"`/`"attached"`/
         `"hidden"`/`"detached"`). Returns `{... , "found": bool}` — a timeout is a
@@ -634,11 +670,11 @@ class BrowserCapability:
 
     def upload(
         self,
-        session_id: str,
         path: str,
         selector: str | None = None,
         *,
         ref: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Attach a workspace file to a file-input, targeted by a snapshot `ref`
         (preferred) or a CSS/text `selector`. `path` is workspace-relative and
@@ -652,7 +688,11 @@ class BrowserCapability:
         return self._state(session, uploaded=path)
 
     def read_text(
-        self, session_id: str, selector: str | None = None, save: str | None = None
+        self,
+        selector: str | None = None,
+        save: str | None = None,
+        *,
+        session_id: str | None = None,
     ) -> dict:
         """Read visible text from the page (or the element matching `selector`).
         Any secret this session injected is masked before returning.
@@ -673,7 +713,7 @@ class BrowserCapability:
         )
         return session.sink.redacted(body)
 
-    def screenshot(self, session_id: str, path: str) -> dict:
+    def screenshot(self, path: str, *, session_id: str | None = None) -> dict:
         """Save a PNG screenshot to a workspace-relative `path` (resolved
         parent-side, escape-guarded) and return where it landed. A secret visible
         on screen appears in the image, and the agent can read the PNG back from
@@ -685,7 +725,7 @@ class BrowserCapability:
         session.page.screenshot(path=str(target))
         return {"path": path}
 
-    def look(self, session_id: str, full_page: bool = False) -> dict:
+    def look(self, full_page: bool = False, *, session_id: str | None = None) -> dict:
         """Take a screenshot and hand it to the model as an image it can actually
         *see* — for reading a chart, a rendered PDF, a layout, or a CAPTCHA the
         page shows, or confirming a visual state that text can't capture. Unlike
@@ -706,19 +746,32 @@ class BrowserCapability:
         self.media.attach(media_type="image/jpeg", data=data)
         return self._state(session, attached=True, bytes=len(data))
 
-    def has_injected_secrets(self, session_id: str) -> bool:
-        """Whether this session has typed a vault secret into the page. The default
-        policy reads this to gate `look` — a screenshot would carry that secret's
-        pixels into the model's context, where text redaction can't reach."""
-        session = self._sessions.get(session_id)
-        return bool(session and session.sink.has_injected)
+    def has_injected_secrets(self, session_id: str | None = None) -> bool:
+        """Whether a session has typed a vault secret into the page. The default
+        policy reads this to gate `look`/`screenshot` — a screenshot would carry
+        that secret's pixels into the model's context, where text redaction can't
+        reach.
 
-    def close_browser(self, session_id: str) -> str:
-        session = self._sessions.pop(session_id, None)
-        if session is not None:
-            self._refresh_profile(session)
-            session.close()
-        return f"closed browser session {session_id}"
+        `session_id=None` (the call omitted it, so it targets whichever browser is
+        open) answers for *any* open session. That is deliberately the stricter
+        reading: this is a security gate, and an id it cannot resolve must never
+        be the reason a credential-bearing screenshot goes unapproved."""
+        sessions = (
+            self._sessions.values()
+            if session_id is None
+            else [s for s in (self._sessions.get(session_id),) if s is not None]
+        )
+        return any(session.sink.has_injected for session in sessions)
+
+    def close_browser(self, session_id: str | None = None) -> str:
+        # Resolve first so an omitted id closes the one open browser rather than
+        # silently popping nothing (the sole-session default, see `_session`).
+        session = self._session(session_id)
+        resolved = next(sid for sid, s in self._sessions.items() if s is session)
+        del self._sessions[resolved]
+        self._refresh_profile(session)
+        session.close()
+        return f"closed browser session {resolved}"
 
     def close_all(self) -> None:
         """Tear down every open session and the Playwright driver; called from

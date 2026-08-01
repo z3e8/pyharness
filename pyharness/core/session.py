@@ -250,11 +250,15 @@ class Session:
             carry the credential where text redaction can't reach. `look` puts the
             image in the model's context; `screenshot` writes a PNG the agent can
             then read back (via files.read or raw open()), so both are covered.
-            Reads self.browser at call time (set below)."""
+            Reads self.browser at call time (set below).
+
+            `session_id` is a keyword on every browser action and is usually
+            omitted (it defaults to the one open browser), so an absent id is the
+            normal case, not a missing argument — `has_injected_secrets` answers
+            for any open session when it isn't given."""
             if action not in ("browser.look", "browser.screenshot"):
                 return False
-            sid = args[0] if args else kwargs.get("session_id")
-            return sid is not None and self.browser.has_injected_secrets(sid)
+            return self.browser.has_injected_secrets(kwargs.get("session_id"))
 
         self.policy = policy or Policy(
             require_approval={
@@ -468,7 +472,7 @@ class Session:
             ),
             (
                 self.browser,
-                "Drive a headless browser. open_browser() returns a session_id every other function takes as its first argument: goto (navigate to a url), snapshot the page (element refs), click/fill/select_option/press by ref or selector, upload, look (a screenshot the model sees), read_text. Login without seeing credentials: fill_secret(session_id, ref=..., secret=NAME) types the vault secret named NAME, fill_totp the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile). describe_tool('browser') for exact signatures.",
+                "Drive a headless browser. open_browser() opens one; every other function then acts on it — goto(url) (navigate), snapshot() the page (element refs), click/fill/select_option/press by ref or selector, upload, look (a screenshot the model sees), read_text. Only pass session_id= (a keyword, always last) when you have more than one browser open. Login without seeing credentials: fill_secret(ref=..., secret=NAME) types the vault secret named NAME, fill_totp the current 2FA code from a vault TOTP seed. Named login profiles persist across sessions (open_browser(profile=...) / save_profile). describe_tool('browser') for exact signatures.",
                 "web",
                 (
                     "browser",

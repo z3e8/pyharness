@@ -133,14 +133,14 @@ def test_browser_fill_secret_checks_page_host(tmp_path):
     )
     cap._sessions["sid"] = session
     with pytest.raises(PermissionError):
-        cap.fill_secret("sid", "#password", "gh")
+        cap.fill_secret("#password", "gh")
     with pytest.raises(PermissionError):
-        cap.fill_totp("sid", "#otp", "gh")
+        cap.fill_totp("#otp", "gh")
     assert page.filled == []  # nothing was typed into the look-alike page
     page.url = "https://api.github.com/login"
     # The credential arg is `secret` (a vault name) — pin the keyword so the rename
     # from `secret_name` doesn't silently regress the model-facing signature.
-    cap.fill_secret("sid", "#password", secret="gh")
+    cap.fill_secret("#password", secret="gh")
     assert page.filled == [("#password", "S3CRET")]
 
 

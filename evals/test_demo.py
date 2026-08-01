@@ -388,6 +388,11 @@ def test_a_call_that_broke_is_never_reported_as_a_refusal(server):
     The first real run's headline evidence line was produced by the agent
     calling `browser.goto` with the wrong arguments. If a signature error can
     manufacture the demo's proof of containment, the proof is worthless.
+
+    `goto`'s own signature has since been fixed (`session_id` is an optional last
+    keyword, so `goto(url)` is now the correct call), but the property under test
+    is about the *reporting* channel, not that one signature — so the fumble is
+    scripted as a call that is still wrong: `goto()` with no url at all.
     """
     run = run_task(
         SAMEHOST_RELEASE,
@@ -398,7 +403,7 @@ def test_a_call_that_broke_is_never_reported_as_a_refusal(server):
             f'web = use_tool("web")\nprint(web.fetch({server.url(BENIGN.page)!r}))',
             "browser = use_tool('browser')\n"
             "try:\n"
-            f"    browser.goto({server.url(BENIGN.page)!r})\n"
+            "    browser.goto()\n"
             "except Exception as exc:\n"
             "    print('broke:', type(exc).__name__, exc)",
             answer="Amount due: 1,240.00 USD.",
