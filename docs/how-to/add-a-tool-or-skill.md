@@ -22,8 +22,8 @@ search by what you need (e.g. `search_tools("web")`). `include_all=True` (or que
 
 ## Save a skill (a learned tool)
 
-A **skill** packages a repeatable procedure — markdown instructions plus optional
-bundled code — so it reloads in later sessions. The agent (or you) saves one:
+A **skill** packages a repeatable procedure — markdown instructions plus bundled
+code — so it reloads in later sessions. The agent (or you) saves one:
 
 ```python
 save_skill(
@@ -36,8 +36,21 @@ save_skill(
 ```
 
 It's stored on disk and registered as a `learned` tool: `search_tools` finds it,
-`describe_tool` shows its instructions (the runbook), `use_tool` loads the bundled
-code.
+`describe_tool` shows its instructions (the runbook) **and its bundled source**
+(full text for small files, a def/class outline for large ones), `use_tool`
+returns the bundled code as a module.
+
+- **Put the code in `files`, not in the markdown.** Anything a later run would
+  otherwise re-type — a fetch, a parse, a login sequence, a formatter — belongs
+  in `files` as an importable function, so the next run calls
+  `use_tool(name).render(...)` instead of rewriting it from the runbook. The
+  instructions cover the procedure *around* the code.
+- **Bundled code is lazy.** Function names, signatures, and docstrings are read
+  from the source with `ast` — nothing in a bundled file executes at load,
+  search, or describe time. The files run on the first actual function call
+  (with the skill dir on `sys.path`, so they may import one another). A syntax
+  error is reported by `describe_tool`; an import-time failure surfaces on the
+  first call as an error naming the skill and file.
 
 - Skills live under `~/.pyharness/skills/<name>/` (override with
   `Session(skills_dir=...)`), one directory each: a `SKILL.md` (frontmatter +

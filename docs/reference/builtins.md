@@ -191,7 +191,7 @@ Find a tool, inspect it, then load and call it.
 | Signature | Returns |
 |-----------|---------|
 | `search_tools(query="", include_all=False) -> str` | ranked **headers** (name, summary, source/category); search by what you need (e.g. `"web"`), `include_all=True` or `"*"` lists the whole catalog |
-| `describe_tool(name) -> str` | that tool's functions (signatures + docstrings); for a learned skill, also its instructions |
+| `describe_tool(name) -> str` | that tool's functions (signatures + docstrings); for a learned skill, also its instructions and bundled source |
 | `use_tool(name) -> module` | load it, then call its functions on the returned module |
 | `add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, summary=None, keywords=(), category=None, timeout=30.0, save=False) -> str` | mount an MCP server (local `command` or remote `url`) as a tool named `name`; **requires approval**. Credentials go as `"secret:NAME"` vault refs. `summary`/`keywords`/`category` feed `search_tools` ranking; `timeout` (seconds) bounds each request. `save=True` persists it to the session's MCP config for later sessions (refuses cleartext env/header values) |
 
@@ -211,8 +211,18 @@ record_skill_use(name, outcome, note="") -> str
 ```
 
 `instructions` is the markdown how-to; `files` is `{"helper.py": source, ...}` of
-optional bundled modules. Persists to disk and registers as a learned tool. See
+bundled modules. Persists to disk and registers as a learned tool. See
 [Add a tool or save a skill](../how-to/add-a-tool-or-skill.md).
+
+**Code goes in `files`, not in the markdown.** Anything a later run would
+otherwise re-type — a fetch, a parse, a login sequence, a formatter — belongs in
+`files` as an importable function; `instructions` covers the procedure *around*
+the code (when to use it, what to check). Bundled files are **lazy**: their
+function names, signatures, and docstrings are read from the source without
+executing it, and nothing runs until a function is actually called on the
+`use_tool(name)` module. `describe_tool` renders the bundled source alongside
+the instructions (full text for small files, a def/class outline for large
+ones), so a run can see what is callable instead of re-deriving it.
 
 > Saving or editing a skill requires human approval by default (it writes
 > content that auto-loads in later sessions) — see
