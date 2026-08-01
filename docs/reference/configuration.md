@@ -17,6 +17,7 @@ itself on startup.
 |----------|---------|--------|
 | `PYHARNESS_WORKSPACE` | a fresh `.sessions/cli-<timestamp>` | A stable session root reused across runs, so files dropped into `<root>/workspace/` (and files the agent creates there) survive between sessions. `~` expands; relative paths resolve from the repo. A path passed on the CLI (`uv run pyharness repl <path>`) overrides it; one-shot `pyharness run` ignores it (fresh dir per probe, `--dir` opts into reuse). |
 | `PYHARNESS_KEEP_OUTPUTS` | `8` | How many recent cells keep their full output in the agent's context; older tool outputs are elided to a short stub (the kernel still holds every variable, and the full text stays in `trace.jsonl`). `0` or negative disables elision. |
+| `PYHARNESS_KEEP_IMAGES` | `2` | How many recent image-carrying cells keep their screenshots in the agent's context; older image blocks are replaced in place with a short note naming the page. Deliberately much shorter than `PYHARNESS_KEEP_OUTPUTS`: a screenshot is ~1,500 tokens, consumed the turn it arrives, and — unlike elided text — not recoverable (`look()` captures the page as it is *now*). `0` or negative disables eviction; the API's 20-image-per-request bound still applies. |
 
 ## Live viewer
 

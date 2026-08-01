@@ -358,6 +358,7 @@ def test_agent_caps_the_images_a_request_carries():
         Budget(),
         media=outbox,
         keep_outputs=0,  # elision off, so nothing else prunes the history
+        keep_images=0,  # eviction off too — this test exercises the backstop
         on_event=lambda k, t, **kw: events.append((k, t)),
     )
 
@@ -507,14 +508,14 @@ def test_cache_anchor_tracks_the_elision_frontier():
         }
 
     msgs = [{"role": "user", "content": "task"}]
-    assert _cache_anchor(msgs, 2) is None  # no tool results yet
+    assert _cache_anchor(msgs, 2, 0) is None  # no tool results yet
     for i in range(4):
         msgs.extend([{"role": "assistant", "content": []}, tool_msg(i)])
     # tool msgs sit at indices 2, 4, 6, 8; with keep_recent=2 the frontier is
     # the newest elided one — the 3rd from the end.
-    assert _cache_anchor(msgs, 2) == 4
-    assert _cache_anchor(msgs, 4) is None  # nothing elided yet
-    assert _cache_anchor(msgs, 0) is None  # elision disabled
+    assert _cache_anchor(msgs, 2, 0) == 4
+    assert _cache_anchor(msgs, 4, 0) is None  # nothing elided yet
+    assert _cache_anchor(msgs, 0, 0) is None  # elision disabled
 
 
 def test_agent_passes_elision_frontier_as_cache_anchor():
@@ -533,6 +534,37 @@ def test_agent_passes_elision_frontier_as_cache_anchor():
     # Calls 1-2: elision hasn't started, full-history caching (None).
     # Calls 3-4: the frontier advances one tool message per step.
     assert llm.anchors == [None, None, 2, 4]
+
+
+def test_agent_evicts_old_screenshots_and_anchors_the_eviction_frontier():
+    """With elision off, image eviction is the only mutation pass — the cache
+    anchor must track its frontier, or every slide of the image window would
+    invalidate the whole prompt cache (the cost eviction exists to save)."""
+    from pyharness.core.media import MediaOutbox, count_image_blocks
+
+    outbox = MediaOutbox()
+    llm = ScriptedLLM([_tool_completion("look()")] * 4 + [_text_completion("done")])
+    agent = Agent(
+        llm,
+        _LookKernel(outbox),
+        Budget(),
+        media=outbox,
+        keep_outputs=0,  # elision off: the image pass mutates alone
+        keep_images=2,
+    )
+
+    agent.run("browse", [])
+
+    # Only the 2 most recent look() cells still carry their screenshots.
+    assert count_image_blocks(llm.calls[-1]) == 2
+    # The first cell's image (msg idx 2) is a note now, in the same position.
+    first_cell = llm.calls[-1][2]["content"][0]["content"]
+    assert first_cell[0]["type"] == "text"  # the cell's text output survives
+    assert first_cell[1]["type"] == "text"
+    assert first_cell[1]["text"].startswith("[screenshot dropped:")
+    # Calls 1-3: at most 2 image cells, nothing evicted, full-history caching.
+    # Calls 4-5: the anchor sits on the newest evicted cell (msg idx 2, then 4).
+    assert llm.anchors == [None, None, None, 2, 4]
 
 
 class AttemptScriptedLLM(ScriptedLLM):

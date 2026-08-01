@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import platform
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -267,7 +268,9 @@ Guidance:
   `[context: N tokens · step i/max · spent $…]` status — use it to pace
   yourself. Outputs of older cells are elided from your view
   (`[output elided: …]`); the kernel still holds every variable, so re-print
-  what you need instead of relying on scrollback.
+  what you need instead of relying on scrollback. Screenshots age out sooner:
+  only your most recent look()s stay in view, and a dropped one is gone for
+  good — look() again to see the page as it is now.
 - You run under a bounded step count and a spend budget. Be economical; for long
   work, checkpoint state to the workspace as you go so it survives a stop.
 - Fail fast and honestly. When a surface structurally resists — the same call
@@ -338,6 +341,7 @@ class Agent:
         media_dir: str | Path | None = None,
         preamble_extra: str = "",
         keep_outputs: int = 8,
+        keep_images: int = 2,
     ):
         self.llm = llm
         self.kernel = kernel
@@ -347,6 +351,12 @@ class Agent:
         # How many recent cells keep their full output in context; older ones are
         # elided (see _elide_old_outputs). <= 0 disables elision entirely.
         self.keep_outputs = keep_outputs
+        # How many recent image-carrying cells keep their screenshots in context;
+        # older image blocks are evicted to a short note (see _evict_old_images).
+        # Much shorter than keep_outputs on purpose: elided text is one print()
+        # away, while a screenshot is ~1,500 tokens, consumed the turn it
+        # arrives, and not recoverable. <= 0 disables eviction.
+        self.keep_images = keep_images
         self.workspace_root = workspace_root
         # Session-computed ambient context (recent sessions, skill trust) appended
         # after render_context — world-state, so it belongs in the preamble.
@@ -400,16 +410,16 @@ class Agent:
         for step in range(1, self.max_steps + 1):
             self.budget.check()
             _elide_old_outputs(messages, self.keep_outputs)
+            _evict_old_images(messages, self.keep_images)
             # Bound the images the *request* carries, not just the cell's.
-            # Ordered after elision deliberately: eliding an old tool_result
-            # already takes its images with it, so this only has to drop what
-            # normal compaction left behind — which with the default
-            # `keep_outputs` is nothing, since 8 cells x 2 images is under the
-            # 20-image threshold. It bites when elision is disabled or widened,
-            # and running it here means the bound holds for every call rather
-            # than only the ones that just attached something. Cache cost is
-            # nil: images can only survive in the un-elided tail, which is
-            # already past the cache anchor.
+            # Ordered after the two retention passes deliberately: eliding an
+            # old tool_result takes its images with it, and eviction leaves at
+            # most `keep_images` image-carrying cells, so with either enabled
+            # this backstop is a no-op — 2 cells x 2 images is far under the
+            # 20-image threshold. It bites only when both are disabled or
+            # widened, and running it here means the bound holds for every call
+            # rather than only the ones that just attached something. Cache
+            # cost is nil: images can only survive past the cache anchor.
             dropped = enforce_image_budget(messages)
             if dropped:
                 self.on_event(
@@ -466,10 +476,13 @@ class Agent:
                 on_token=_on_token,
                 on_thinking=_on_thinking,
                 on_attempt=_on_attempt,
-                # The elision frontier: everything at or before it is
+                # The mutation frontier: everything at or before it is
                 # byte-stable across steps, so the prompt cache breakpoint
-                # belongs there once elision starts mutating mid-history.
-                cache_anchor=_cache_anchor(messages, self.keep_outputs),
+                # belongs there once elision or image eviction starts
+                # mutating mid-history.
+                cache_anchor=_cache_anchor(
+                    messages, self.keep_outputs, self.keep_images
+                ),
             )
             try:
                 completion = self.llm.complete(**call)
@@ -670,6 +683,84 @@ def _elide_old_outputs(messages: list[dict], keep_recent: int) -> None:
                 block["content"] = _elided(block.get("content"))
 
 
+# The eviction note starts with a fixed marker so _cache_anchor can find
+# already-evicted cells again (an evicted cell no longer carries image blocks),
+# and names the page when the cell's own output shows one — look() returns
+# {'url': ..., 'title': ...} and the kernel echoes it, already secret-redacted
+# by the session's sink upstream of the history.
+_EVICTED_IMAGE_MARKER = "[screenshot dropped:"
+_URL_IN_OUTPUT = re.compile(r"['\"]url['\"]:\s*['\"]([^'\"]+)['\"]")
+
+
+def _evict_old_images(messages: list[dict], keep_recent: int) -> None:
+    """Replace the image blocks of cells older than the `keep_recent` most
+    recent image-carrying cells with a short note, in place — a separate, much
+    shorter retention than text elision, because the costs differ: elided text
+    is one `print()` away (the kernel persists), while a screenshot is ~1,500
+    tokens, almost always consumed the turn it arrives, and *not* recoverable —
+    after any click or navigation `look()` captures a different page. The note
+    says exactly that, so the model re-looks instead of trusting a stale view.
+    `keep_recent <= 0` disables eviction (the 20-image API bound still holds).
+
+    Stateless and idempotent: an evicted cell no longer carries image blocks,
+    so it drops out of the selection and the window slides over the cells that
+    still do."""
+    if keep_recent <= 0:
+        return
+    img_msgs = [m for m in messages if _carries_images(m)]
+    for msg in img_msgs[:-keep_recent]:
+        note = _evicted_image_note(msg, keep_recent)
+        for block in msg["content"]:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and isinstance(block.get("content"), list)
+            ):
+                inner = block["content"]
+                for i, b in enumerate(inner):
+                    if isinstance(b, dict) and b.get("type") == "image":
+                        inner[i] = {"type": "text", "text": note}
+
+
+def _carries_images(msg) -> bool:
+    """Whether `msg` is a tool_result message still holding an image block."""
+    return (
+        isinstance(msg, dict)
+        and msg.get("role") == "user"
+        and isinstance(msg.get("content"), list)
+        and any(
+            isinstance(b, dict)
+            and b.get("type") == "tool_result"
+            and isinstance(b.get("content"), list)
+            and any(
+                isinstance(x, dict) and x.get("type") == "image" for x in b["content"]
+            )
+            for b in msg["content"]
+        )
+    )
+
+
+def _evicted_image_note(msg: dict, keep_recent: int) -> str:
+    """The in-place replacement for one cell's evicted images. Wording matters:
+    unlike elided text this is a real loss — never say "re-read it". The page
+    url, when the cell's output shows one, tells the model which view it lost."""
+    texts = " ".join(
+        x.get("text", "")
+        for b in msg["content"]
+        if isinstance(b, dict)
+        and b.get("type") == "tool_result"
+        and isinstance(b.get("content"), list)
+        for x in b["content"]
+        if isinstance(x, dict) and x.get("type") == "text"
+    )
+    urls = _URL_IN_OUTPUT.findall(texts)
+    was = f" was {urls[-1]};" if urls else ""
+    return (
+        f"{_EVICTED_IMAGE_MARKER}{was} only the {keep_recent} most recent views "
+        "stay in context — not recoverable, look() captures the page as it is now]"
+    )
+
+
 def _drop_rejected_images(exc: Exception, messages: list[dict]) -> int:
     """Strip images from `messages` when `exc` is the API refusing one, and
     return how many went. Zero means the failure was something else and the
@@ -685,28 +776,68 @@ def _drop_rejected_images(exc: Exception, messages: list[dict]) -> int:
     return strip_image_blocks(messages)
 
 
-def _cache_anchor(messages: list[dict], keep_recent: int) -> int | None:
-    """Where the prompt-cache breakpoint belongs once elision is active: the
-    index of the newest *elided* tool_result message. Everything at or before
-    it is byte-stable from now on (elision is idempotent and only ever advances),
-    so each step's cache entry there extends the previous step's. Before elision
-    starts (or with it disabled) returns None — the client then marks the last
-    message and the whole history caches incrementally. Must mirror the
-    `tool_msgs[:-keep_recent]` selection in `_elide_old_outputs`."""
-    if keep_recent <= 0:
-        return None
-    tool_idxs = [
-        i
-        for i, m in enumerate(messages)
-        if m.get("role") == "user"
-        and isinstance(m.get("content"), list)
-        and any(
-            isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"]
-        )
-    ]
-    if len(tool_idxs) <= keep_recent:
-        return None
-    return tool_idxs[-(keep_recent + 1)]
+def _cache_anchor(
+    messages: list[dict], keep_recent: int, keep_images: int
+) -> int | None:
+    """Where the prompt-cache breakpoint belongs once history mutation is
+    active: the index of the newest message already in its *final* form.
+
+    Two passes mutate history, so there are two frontiers. Text elision's is
+    the newest *elided* tool_result — it must mirror the
+    `tool_msgs[:-keep_recent]` selection in `_elide_old_outputs`. It wins
+    whenever it exists: everything at or before it is a stub that neither pass
+    touches again (elision is idempotent and only ever advances, and a stub
+    carries no image blocks for eviction to find), while image churn above it
+    lands past the breakpoint, where tokens are re-sent uncached anyway.
+
+    Before elision starts (or with it disabled), image eviction's frontier
+    takes over: the newest cell whose screenshots were already evicted, found
+    by the `_EVICTED_IMAGE_MARKER` note `_evict_old_images` leaves — the cell
+    itself no longer carries image blocks, so the note is the durable trace of
+    the mutation. Without it the client would mark the *last* message, and
+    every step that slides the eviction window would silently invalidate the
+    whole cache — the exact cost eviction exists to save. An evicted cell is
+    byte-stable until elision reaches it, at which point the text frontier
+    exists and has taken over.
+
+    With neither frontier present returns None — the client then marks the
+    last message and the whole history caches incrementally."""
+    if keep_recent > 0:
+        tool_idxs = [
+            i
+            for i, m in enumerate(messages)
+            if m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in m["content"]
+            )
+        ]
+        if len(tool_idxs) > keep_recent:
+            return tool_idxs[-(keep_recent + 1)]
+    if keep_images > 0:
+        evicted = [
+            i
+            for i, m in enumerate(messages)
+            if isinstance(m, dict)
+            and m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                isinstance(b, dict)
+                and b.get("type") == "tool_result"
+                and isinstance(b.get("content"), list)
+                and any(
+                    isinstance(x, dict)
+                    and x.get("type") == "text"
+                    and x.get("text", "").startswith(_EVICTED_IMAGE_MARKER)
+                    for x in b["content"]
+                )
+                for b in m["content"]
+            )
+        ]
+        if evicted:
+            return evicted[-1]
+    return None
 
 
 def _elided(content):

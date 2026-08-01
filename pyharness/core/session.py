@@ -140,6 +140,7 @@ class Session:
         skills_dir: str | Path | None = None,
         index_db: str | Path | None = None,
         keep_outputs: int = 8,
+        keep_images: int = 2,
         max_steps: int = 30,
         tier: str = "mid",
         # Host scope: confines this session's web/http/browser reach to these
@@ -573,6 +574,7 @@ class Session:
             if preamble is not None
             else self._render_history_preamble(),
             keep_outputs=keep_outputs,
+            keep_images=keep_images,
         )
         self.messages: list[dict] = []
         # close() must run exactly once even when called concurrently — the

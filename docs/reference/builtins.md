@@ -21,7 +21,11 @@ than the most recent few (`PYHARNESS_KEEP_OUTPUTS`, default 8; see
 [Configuration](configuration.md)) are elided to a short
 `[output elided: …]` stub. Elision is safe here in a way it isn't in most
 harnesses: the kernel is persistent, so any elided output is one `print()`
-away, and the full text remains in `trace.jsonl`.
+away, and the full text remains in `trace.jsonl`. Screenshots get their own,
+much shorter retention (`PYHARNESS_KEEP_IMAGES`, default 2 image-carrying
+cells): a screenshot is ~1,500 tokens and, unlike elided text, a dropped one is
+not recoverable — the note left in its place names the page and says to `look()`
+again for the current view.
 
 ## Files & shell
 
@@ -102,7 +106,10 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
   once — past that the API applies a much stricter per-image size limit, so the
   oldest screenshots are replaced with a short note and `look` again if you still
   need one. An image whose dimensions can't be read from its header is not
-  attached at all.
+  attached at all. Retention is shorter than the caps in practice: only the most
+  recent image-carrying cells keep their screenshots (`PYHARNESS_KEEP_IMAGES`,
+  default 2) — older ones are replaced in place with a note naming the page,
+  and a dropped view is not recoverable (`look` captures the page as it is now).
 - **See the page before acting on it — `browser.snapshot` then act by `ref`.**
   The snapshot is an accessibility tree where every element has a stable
   `[ref=eN]` handle; `click`/`fill`/`fill_secret` take that `ref=` (or a CSS/text
