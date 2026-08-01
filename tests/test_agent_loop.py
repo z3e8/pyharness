@@ -317,6 +317,64 @@ def test_agent_persists_images_and_emits_media_events(tmp_path):
     assert media_events[0]["src"] == f"/media/sess-1/{files[0].name}"
 
 
+class _DoubleLookKernel:
+    """A cell that fills the per-cell image quota, as two `look()`s would."""
+
+    def __init__(self, outbox):
+        self.outbox = outbox
+        self.attached = 0
+
+    def run(self, code):
+        for _ in range(2):
+            self.outbox.attach(media_type="image/jpeg", data=_FAKE_SHOT)
+            self.attached += 1
+        return "looked twice"
+
+
+def test_agent_caps_the_images_a_request_carries():
+    """The per-cell cap bounds one cell; the session needs bounding too.
+
+    Past 20 image blocks the API drops to a much stricter per-image dimension
+    limit, so the 21st screenshot retroactively invalidates every earlier one —
+    all of which were inside the unconditional 8000px ceiling. Eleven cells that
+    each look() twice is enough to get there, so the loop drops the oldest
+    images rather than letting the request cross the line."""
+    from pyharness.core.media import (
+        MAX_IMAGES_IN_HISTORY,
+        MediaOutbox,
+        count_image_blocks,
+    )
+
+    outbox = MediaOutbox()
+    cells = 11  # x2 images per cell = 22, past the 20-image threshold
+    llm = ScriptedLLM(
+        [_tool_completion("look(); look()")] * cells + [_text_completion("done")]
+    )
+    kernel = _DoubleLookKernel(outbox)
+    events = []
+    agent = Agent(
+        llm,
+        kernel,
+        Budget(),
+        media=outbox,
+        keep_outputs=0,  # elision off, so nothing else prunes the history
+        on_event=lambda k, t, **kw: events.append((k, t)),
+    )
+
+    agent.run("look repeatedly", [])
+
+    # More images were taken than a request may carry...
+    assert kernel.attached == 22 > MAX_IMAGES_IN_HISTORY
+    # ...but the history the last call was sent stays inside the limit.
+    assert count_image_blocks(llm.calls[-1]) == MAX_IMAGES_IN_HISTORY
+    # The oldest went, not the newest: the first cell's images are notes now.
+    # [0] is the task, [1] the assistant turn, [2] the first cell's tool_result.
+    first_cell = llm.calls[-1][2]["content"][0]["content"]
+    assert [b["type"] for b in first_cell[1:]] == ["text", "text"]
+    assert "image dropped" in first_cell[1]["text"]
+    assert any(k == "note" and "image" in t for k, t in events)
+
+
 def test_agent_tool_result_is_plain_string_without_images():
     # No outbox, no images -> content stays a bare string exactly as before.
     llm = ScriptedLLM([_tool_completion("print('hi')"), _text_completion("done")])

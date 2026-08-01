@@ -96,6 +96,13 @@ docs don't duplicate them. The non-inferable semantics that survive the move:
   the model actually sees (for a chart, a rendered PDF, a layout, a CAPTCHA the
   page shows). It stays in history and costs context on every later turn, so
   prefer `snapshot` for structure and reach for `look` only when you need pixels.
+  Three caps bound it, all from the API's own limits: at most 2 images per cell;
+  no image past 8000px on an edge (a `full_page=True` shot of a longer document
+  is clipped, and says so in `clipped`); and at most 20 images in the context at
+  once — past that the API applies a much stricter per-image size limit, so the
+  oldest screenshots are replaced with a short note and `look` again if you still
+  need one. An image whose dimensions can't be read from its header is not
+  attached at all.
 - **See the page before acting on it — `browser.snapshot` then act by `ref`.**
   The snapshot is an accessibility tree where every element has a stable
   `[ref=eN]` handle; `click`/`fill`/`fill_secret` take that `ref=` (or a CSS/text

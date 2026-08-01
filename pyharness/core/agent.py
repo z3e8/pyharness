@@ -11,7 +11,7 @@ from ..budget import Budget
 from ..llm.client import TIERS
 from ..obs import telemetry
 from .kernel import Kernel
-from .media import strip_image_blocks
+from .media import MAX_IMAGES_IN_HISTORY, enforce_image_budget, strip_image_blocks
 
 SYSTEM_PROMPT = """\
 You are the orchestrator of pyharness. You act by writing Python.
@@ -400,6 +400,23 @@ class Agent:
         for step in range(1, self.max_steps + 1):
             self.budget.check()
             _elide_old_outputs(messages, self.keep_outputs)
+            # Bound the images the *request* carries, not just the cell's.
+            # Ordered after elision deliberately: eliding an old tool_result
+            # already takes its images with it, so this only has to drop what
+            # normal compaction left behind — which with the default
+            # `keep_outputs` is nothing, since 8 cells x 2 images is under the
+            # 20-image threshold. It bites when elision is disabled or widened,
+            # and running it here means the bound holds for every call rather
+            # than only the ones that just attached something. Cache cost is
+            # nil: images can only survive in the un-elided tail, which is
+            # already past the cache anchor.
+            dropped = enforce_image_budget(messages)
+            if dropped:
+                self.on_event(
+                    "note",
+                    f"dropped the {dropped} oldest image(s) to keep the request "
+                    f"at the {MAX_IMAGES_IN_HISTORY}-image limit",
+                )
 
             t0 = time.time()
             cost_before = self.budget.spent_usd

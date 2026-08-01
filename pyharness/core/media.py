@@ -16,6 +16,18 @@ MAX_IMAGES_PER_CELL = 2
 # whatever produced the bytes.
 MAX_IMAGE_EDGE_PX = 8000
 
+# The *conditional* limit the 8000px ceiling does not cover. Once a single
+# request carries more than 20 image blocks, the API drops to a far stricter
+# per-image dimension limit (~2000px) and refuses anything past it with an
+# `invalid_request_error` naming "many-image requests". Every screenshot already
+# in history — all well inside 8000px, all previously fine — would become
+# oversized the moment the 21st arrived. Rather than clip every image to 2000px
+# (below the model's own 2576px high-resolution long edge, so it would degrade
+# what the model can read on every screenshot to defend a case most sessions
+# never reach), the session's image *count* is bounded and the oldest images are
+# dropped. See `enforce_image_budget`.
+MAX_IMAGES_IN_HISTORY = 20
+
 # JPEG start-of-frame markers, whose payload carries the frame dimensions. The
 # gaps (0xC4, 0xC8, 0xCC) are not frame headers: they are the Huffman-table,
 # JPEG-extension and arithmetic-coding-conditioning segments.
@@ -132,6 +144,17 @@ def _webp_size(data: bytes) -> tuple[int, int] | None:
     return None
 
 
+_REFUSED_NOTE = (
+    "(image dropped: the API refused it, and leaving it in the "
+    "history would fail every later call)"
+)
+_BUDGET_NOTE = (
+    f"(image dropped: a request carrying more than {MAX_IMAGES_IN_HISTORY} images "
+    "falls to a much stricter per-image size limit, so the oldest views make way "
+    "for the newest — look() again if you still need this one)"
+)
+
+
 def strip_image_blocks(messages: list[dict]) -> int:
     """Replace every image block in `messages` with a text note, in place, and
     return how many were replaced.
@@ -141,29 +164,67 @@ def strip_image_blocks(messages: list[dict]) -> int:
     re-sends it and fails identically, and the session cannot recover. Dropping
     the images downgrades that to a *degraded* session — the model loses what it
     saw, not the conversation."""
-    return _strip_blocks(messages)
+    return _replace_images(messages, _REFUSED_NOTE, None)
 
 
-def _strip_blocks(blocks: list) -> int:
-    """Replace image blocks in a content list, recursing into nested content
-    (a tool_result carries its own block list, which is where `look` images
-    land)."""
-    removed = 0
-    for index, block in enumerate(blocks):
+def count_image_blocks(messages: list[dict]) -> int:
+    """How many image blocks `messages` currently carries — counting the ones
+    nested inside a tool_result, which is where `look`'s images live."""
+    total = 0
+    for block in messages:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "image":
-            blocks[index] = {
-                "type": "text",
-                "text": (
-                    "(image dropped: the API refused it, and leaving it in the "
-                    "history would fail every later call)"
-                ),
-            }
-            removed += 1
+            total += 1
         elif isinstance(block.get("content"), list):
-            removed += _strip_blocks(block["content"])
-    return removed
+            total += count_image_blocks(block["content"])
+    return total
+
+
+def enforce_image_budget(
+    messages: list[dict], limit: int = MAX_IMAGES_IN_HISTORY
+) -> int:
+    """Drop the *oldest* image blocks until at most `limit` remain, in place, and
+    return how many went.
+
+    The per-cell cap bounds one cell; this bounds the session. `MAX_IMAGES_PER_CELL`
+    is 2, so eleven cells that each `look()` twice cross the threshold — and
+    crossing it retroactively invalidates every screenshot already in history,
+    all of which were inside the unconditional 8000px ceiling and previously
+    fine. Dropping the oldest keeps the request under the threshold so the rest
+    stay valid, which costs the model its earliest views rather than all of them
+    (what the API-400 escape in `strip_image_blocks` would cost instead).
+
+    Kept out of :class:`MediaOutbox`, which stages one cell and deliberately
+    knows nothing about history. This is a history-shaping pass like
+    ``strip_image_blocks``, and it belongs beside it — the agent loop runs it
+    before each call, so the bound holds for every request regardless of how the
+    images got there."""
+    excess = count_image_blocks(messages) - limit
+    if excess <= 0:
+        return 0
+    return _replace_images(messages, _BUDGET_NOTE, excess)
+
+
+def _replace_images(blocks: list, note: str, budget: int | None) -> int:
+    """Replace image blocks in a content list with `note`, recursing into nested
+    content (a tool_result carries its own block list, which is where `look`
+    images land). `budget` caps how many are replaced — None means all of them.
+
+    Walks in document order, so a budget replaces the oldest images first."""
+    replaced = 0
+    for index, block in enumerate(blocks):
+        if budget is not None and replaced >= budget:
+            break
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "image":
+            blocks[index] = {"type": "text", "text": note}
+            replaced += 1
+        elif isinstance(block.get("content"), list):
+            remaining = None if budget is None else budget - replaced
+            replaced += _replace_images(block["content"], note, remaining)
+    return replaced
 
 
 class MediaOutbox:

@@ -1972,6 +1972,60 @@ def test_strip_image_blocks_clears_a_poisoned_history():
     assert replaced["type"] == "text" and "dropped" in replaced["text"]
 
 
+def _history_with_images(count: int) -> list[dict]:
+    """`count` cells, each a tool_result carrying one numbered image — the shape
+    a session accumulates one `look()` at a time."""
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "content": [
+                        {"type": "text", "text": f"cell {i}"},
+                        {"type": "image", "source": {"type": "base64", "data": str(i)}},
+                    ],
+                }
+            ],
+        }
+        for i in range(count)
+    ]
+
+
+def test_enforce_image_budget_drops_the_oldest_images_first():
+    """Past 20 images the API applies a much stricter per-image size limit, and
+    every screenshot already in history — all inside the 8000px ceiling — becomes
+    oversized at once. Bounding the count keeps the newest views usable instead
+    of losing all of them to the API-400 escape."""
+    from pyharness.core.media import (
+        MAX_IMAGES_IN_HISTORY,
+        count_image_blocks,
+        enforce_image_budget,
+    )
+
+    messages = _history_with_images(MAX_IMAGES_IN_HISTORY + 3)
+    assert count_image_blocks(messages) == MAX_IMAGES_IN_HISTORY + 3
+
+    assert enforce_image_budget(messages) == 3
+    assert count_image_blocks(messages) == MAX_IMAGES_IN_HISTORY
+    assert enforce_image_budget(messages) == 0  # idempotent once inside the cap
+
+    # The three oldest went and carry a note saying why; the newest survive.
+    for i in range(3):
+        replaced = messages[i]["content"][0]["content"][1]
+        assert replaced["type"] == "text" and "image dropped" in replaced["text"]
+    kept = messages[3]["content"][0]["content"][1]
+    assert kept["type"] == "image" and kept["source"]["data"] == "3"
+
+
+def test_enforce_image_budget_leaves_a_short_history_alone():
+    from pyharness.core.media import enforce_image_budget
+
+    messages = _history_with_images(4)
+    assert enforce_image_budget(messages) == 0
+    assert "'type': 'image'" in repr(messages)  # untouched
+
+
 def test_look_clips_a_page_too_tall_for_the_api(tmp_path):
     """`look(full_page=True)` on a long document must not build an image the API
     will refuse — the failure is unrecoverable once the block is in history."""
