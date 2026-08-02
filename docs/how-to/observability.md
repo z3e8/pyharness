@@ -26,6 +26,13 @@ real-time by construction.
 than a red failure — it is the harness working, and the view should not report
 it as a crash.
 
+**What it shows, and what it doesn't.** The header carries the session's cost,
+its duration, and whether it is live — three numbers, not a dashboard. Per-turn
+cost, latency, token splits and character counts are in `trace.jsonl` and stayed
+there: on screen they were noise between the reader and what the agent actually
+did. An action's elapsed time appears only when it is over half a second, since
+`0.001s` on every local call says nothing.
+
 **Reading it.** Model prose, the task, the final answer, and tool output that is
 genuinely document-shaped (a table or a code fence, or two other markdown
 signals agreeing) render as markdown; anything else stays verbatim monospace,
@@ -34,8 +41,8 @@ never touches `innerHTML` — everything on this page is untrusted text, includi
 whatever page the agent just fetched.
 
 **Switching sessions.** The left rail lists every root session under the watched
-directory with its outcome, steps and cost; clicking one re-points the stream at
-it without a reload. **Follow** (on by default) moves the view to a session that
+directory with how it ended; clicking one re-points the stream at it without a
+reload. **Follow** (on by default) moves the view to a session that
 starts while you are watching; picking one by hand turns it off, so a new run
 cannot drag you away from what you were reading. There is a light/dark toggle
 next to the wordmark.
