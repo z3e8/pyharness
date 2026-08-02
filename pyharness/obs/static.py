@@ -249,9 +249,13 @@ def build_index(
         )
     total = sum(d["cost_usd"] for d in digests)
     denials = sum(d["denials"] for d in digests)
+    # `title` is written as a headline, so the brand is appended for the tab
+    # rather than carried in the <h1> — a bookmark or a shared link has no rail
+    # to read the wordmark off, and a headline alone would not say whose it is.
+    #
     # No switcher in the rail here: this page *is* the list of sessions, and
     # printing it a second time down the side is duplication, not navigation.
-    return f"""{head(escape(title))}
+    return f"""{head(escape(f"{title} · pyharness"))}
 <div class="shell">
 {rail(nav=nav, current="index.html", aside_label=None)}
 <div class="main">

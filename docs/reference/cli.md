@@ -180,7 +180,7 @@ pyharness-watch <session-dir>       # pin one session (a dir containing trace.js
 pyharness-watch --port 7000         # default 6061
 
 pyharness-watch <dir> --static OUT  # bake to self-contained HTML instead of serving
-  --title TEXT                      # index page title
+  --title TEXT                      # index headline (the tab gets "· pyharness" appended)
   --lede TEXT                       # index page subtitle
   --doc "LABEL=PATH"                # also render a markdown file as a page (repeatable)
 ```
