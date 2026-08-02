@@ -19,7 +19,7 @@ from pyharness.obs.static import (
     discover_sessions,
     session_events,
 )
-from pyharness.obs.watch import PAGE, render_page
+from pyharness.obs.watch import LIVE_FEED, PAGE, render_page
 
 
 def _write(path, *entries):
@@ -65,7 +65,7 @@ def test_static_page_is_the_live_page_with_a_different_feed(tmp_path):
 
     # Everything from the first line of the page down to the feed is shared
     # verbatim: the CSS, the DOM, and every render function including handle().
-    shared = PAGE[: PAGE.index("const source = new EventSource")]
+    shared = PAGE[: PAGE.index(LIVE_FEED)]
     assert html.startswith(shared[: shared.index("<title>")])
     assert shared[shared.index("function handle(") :] in html
 
@@ -204,6 +204,72 @@ def test_discover_sessions_skips_spawn_children(tmp_path):
 def test_discover_sessions_accepts_a_single_session_dir(tmp_path):
     d = _session(tmp_path)
     assert discover_sessions(d) == [d]
+
+
+def test_every_session_page_carries_the_switcher(tmp_path):
+    """A baked page has no server to ask for the session list, so the list
+    travels with it — otherwise the archive is N pages with no way between
+    them but the back button."""
+    a = _session(tmp_path, "alpha")
+    _session(tmp_path, "beta")
+    out = tmp_path / "site"
+    build_site([a, tmp_path / "beta"], out)
+
+    page = (out / "alpha.html").read_text()
+    m = re.search(r"window\.SESSIONS = JSON\.parse\((\".*?\")\);", page)
+    assert m, "the baked page carries no session list"
+    listed = json.loads(json.loads(m.group(1)))
+    assert [s["name"] for s in listed] == ["alpha", "beta"]
+    assert [s["href"] for s in listed] == ["alpha.html", "beta.html"]
+    assert 'currentSession = "alpha"' in page
+    # Summary fields only — the same rule the index follows.
+    assert str(tmp_path) not in page
+
+
+def test_live_only_controls_are_removed_from_a_record(tmp_path):
+    """ "Follow" has no stream to follow and "jump to latest" has no latest."""
+    page = build_page(_session(tmp_path))
+    feed = page[page.index("const EVENTS") :]
+    assert ".rail-label .follow, #jump" in feed
+
+
+def test_build_site_renders_the_eval_boards_as_pages(tmp_path):
+    board = tmp_path / "SCOREBOARD.md"
+    board.write_text("# Board\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+    out = tmp_path / "site"
+    written = build_site(
+        [_session(tmp_path, "alpha")], out, docs=[("Adversarial suite", board)]
+    )
+
+    assert (out / "adversarial-suite.html") in written
+    doc = (out / "adversarial-suite.html").read_text()
+    index = (out / "index.html").read_text()
+    # The board is linked from the nav on every page in the site, not stranded.
+    assert 'href="adversarial-suite.html"' in index
+    assert 'href="index.html"' in doc
+    # The markdown is data the shared renderer parses, never markup pasted in.
+    assert "<h1>Board</h1>" not in doc
+    assert "renderMarkdown(" in doc
+
+
+def test_a_board_is_never_injected_as_markup(tmp_path):
+    """A doc page embeds its source as a JSON string for the DOM-building
+    renderer. Markdown that contains HTML must stay inert text, and a
+    `</script>` in it must not end the block early."""
+    board = tmp_path / "b.md"
+    source = "# T\n\n<script>alert(1)</script>\n\n<img onerror=x>\n"
+    board.write_text(source)
+    out = tmp_path / "site"
+    build_site([_session(tmp_path, "alpha")], out, docs=[("B", board)])
+    doc = (out / "b.html").read_text()
+
+    m = re.search(r"renderMarkdown\((\".*?\")\)", doc, re.S)
+    assert m, "the doc page carries no markdown payload"
+    # Not one `<` from the source survives as a character the HTML parser sees,
+    # so nothing in a board can close the script block or become an element…
+    assert "<" not in m.group(1)
+    # …and it is still exactly the document, byte for byte, to `JSON.parse`.
+    assert json.loads(m.group(1)) == source
 
 
 def test_a_spawn_child_is_baked_into_its_parents_page(tmp_path):

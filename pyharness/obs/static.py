@@ -27,10 +27,13 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 
+from .page import NavItem, head, rail, render_doc_page, scripts
 from .transcript import session_digest
 from .watch import Tail, render_page
 
@@ -103,11 +106,22 @@ def _span(events: list[dict]) -> tuple[float, float]:
     return (min(stamps), max(stamps)) if stamps else (0.0, 0.0)
 
 
-def _static_feed(events: list[dict], started: float, ended: float) -> str:
+def _static_feed(
+    events: list[dict],
+    started: float,
+    ended: float,
+    *,
+    siblings: list[dict] | None = None,
+    current: str = "",
+) -> str:
     """The baked feed: replay, then freeze. Everything after the loop exists
     because this page is a record, not a live view — the ticking clock, the
     spinner on an in-flight action, and the "connecting…" status are all
-    statements about *now* that would be false on an archived page."""
+    statements about *now* that would be false on an archived page.
+
+    `siblings` is the switcher's list, baked in as links. The live viewer polls
+    a server for the same thing; a page opened from a file has no server, so the
+    list travels with it and the sidebar works identically either way."""
     payload = json.dumps(events, default=str, separators=(",", ":"))
     # `</script>` inside trace text would end the block early; `<` is the
     # same string to JSON.parse and inert to the HTML parser.
@@ -118,7 +132,12 @@ def _static_feed(events: list[dict], started: float, ended: float) -> str:
         else "unknown"
     )
     duration = max(0.0, ended - started)
+    nav = json.dumps(siblings or [], default=str).replace("<", "\\u003c")
     return f"""
+window.SESSIONS = JSON.parse({json.dumps(nav)});
+currentSession = {json.dumps(current)};
+renderSessionList();
+
 const EVENTS = JSON.parse({json.dumps(payload)});
 for (const e of EVENTS) {{
   try {{ handle(e); }} catch (err) {{ console.error('replay', err, e); }}
@@ -132,20 +151,31 @@ for (const item of [...nowEl.children, ...bannerEl.children]) {{
   item.querySelector('.elapsed').textContent = 'unfinished at end of record';
 }}
 const secs = {duration:.1f};
-document.getElementById('clock').textContent =
+document.getElementById('stat-clock').textContent =
   Math.floor(secs / 60) + 'm' + String(Math.floor(secs % 60)).padStart(2, '0') + 's';
-document.getElementById('status').textContent = 'archived · {when}';
+setStatus('archived · {when}', '');
+// Live-only controls. "Follow" has no stream to follow and "jump to latest" has
+// no latest — on a record they are buttons that promise something untrue.
+document.querySelectorAll('.rail-label .follow, #jump').forEach((n) => n.remove());
+// A live session follows the tail; a record opens at the top, where the task is.
 scrollTo(0, 0);
 """
 
 
-def build_page(session_dir: str | Path, *, title: str | None = None) -> str:
+def build_page(
+    session_dir: str | Path,
+    *,
+    title: str | None = None,
+    siblings: list[dict] | None = None,
+) -> str:
     """One finished session as a single self-contained HTML page."""
     session_dir = Path(session_dir)
     events = session_events(session_dir)
     started, ended = _span(events)
     return render_page(
-        _static_feed(events, started, ended),
+        _static_feed(
+            events, started, ended, siblings=siblings, current=session_dir.name
+        ),
         title=title or f"pyharness — {session_dir.name}",
     )
 
@@ -154,99 +184,149 @@ def _fmt_usd(x: float) -> str:
     return f"${x:.4f}" if 0 < x < 0.01 else f"${x:.2f}"
 
 
-def build_index(digests: list[dict], *, title: str) -> str:
-    """The landing page: one row per session, linking its baked page.
+def _sidebar(digests: list[dict]) -> list[dict]:
+    """The switcher entries baked into every page.
+
+    Summary fields only, and never the digest's absolute `session`/`trace`/
+    `audit`/`workspace` paths — this list is copied into all of them."""
+    return [
+        {
+            "name": d["name"],
+            "href": f"{d['name']}.html",
+            "outcome": d["outcome"],
+            "steps": d["steps"],
+            "cost_usd": d["cost_usd"],
+        }
+        for d in digests
+    ]
+
+
+def build_index(
+    digests: list[dict],
+    *,
+    title: str,
+    lede: str = "",
+    nav: list[NavItem] | None = None,
+) -> str:
+    """The landing page: one card per session, linking its baked page, over a
+    row of the numbers the suite is actually claiming.
 
     Deliberately built from `session_digest`'s *summary* fields only. The digest
     also carries absolute `session`/`trace`/`audit`/`workspace` paths, which are
     useful locally and must never reach a published page."""
-    rows = []
+    cards = []
     for d in digests:
         outcome = d["outcome"]
         cls = "ok" if outcome == "answered" else "warn"
-        rows.append(
-            "<tr>"
-            f'<td><a href="{escape(d["name"])}.html">{escape(d["name"])}</a></td>'
-            f'<td><span class="pill {cls}">{escape(outcome)}</span></td>'
-            f'<td class="num">{d["steps"]}</td>'
-            f'<td class="num">{d["actions"]}</td>'
-            f'<td class="num">{d["denials"]}</td>'
-            f'<td class="num">{_fmt_usd(d["cost_usd"])}</td>'
-            f'<td class="task">{escape((d.get("task") or "")[:180])}</td>'
-            "</tr>"
+        refused = (
+            f'<span><b>{d["denials"]}</b><span class="k">refused</span></span>'
+            if d["denials"]
+            else ""
+        )
+        cards.append(
+            f'<a class="card" href="{escape(d["name"])}.html">'
+            f'<span class="name">{escape(d["name"])} '
+            f'<span class="pill {cls}">{escape(outcome)}</span></span>'
+            f'<span class="blurb">{escape((d.get("task") or "")[:220])}</span>'
+            f'<span class="nums">{refused}'
+            f'<span><b>{d["steps"]}</b><span class="k">steps</span></span>'
+            f'<span><b>{d["actions"]}</b><span class="k">actions</span></span>'
+            f'<span><b>{_fmt_usd(d["cost_usd"])}</b><span class="k">cost</span></span>'
+            "</span></a>"
         )
     total = sum(d["cost_usd"] for d in digests)
     denials = sum(d["denials"] for d in digests)
-    return f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(title)}</title>
-<style>
-  :root {{ color-scheme: dark; }}
-  body {{ background: #0f1115; color: #d8dee9; margin: 0;
-         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }}
-  main {{ max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }}
-  h1 {{ font-size: 20px; margin: 0 0 4px; }}
-  .sub {{ color: #8b93a7; margin: 0 0 24px; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #242833;
-           vertical-align: top; }}
-  th {{ color: #8b93a7; font-weight: normal; font-size: 12px;
-       text-transform: uppercase; letter-spacing: .06em; }}
-  td.num {{ text-align: right; white-space: nowrap; }}
-  td.task {{ color: #8b93a7; }}
-  a {{ color: #7fb3ff; }}
-  .pill {{ border-radius: 3px; padding: 1px 6px; font-size: 12px; }}
-  .pill.ok {{ background: #16301f; color: #7ee2a8; }}
-  .pill.warn {{ background: #3a2a16; color: #f0c274; }}
-  footer {{ color: #8b93a7; margin-top: 28px; font-size: 12px; }}
-</style>
-</head>
-<body>
-<main>
-<h1>{escape(title)}</h1>
-<p class="sub">{len(digests)} sessions · {denials} actions refused by policy ·
-{_fmt_usd(total)} total. Each page is the live viewer's own renderer replaying
-that session's recorded trace — the same view the operator saw, frozen.</p>
-<table>
-<thead><tr><th>session</th><th>outcome</th><th>steps</th><th>actions</th>
-<th>refused</th><th>cost</th><th>task</th></tr></thead>
-<tbody>
-{chr(10).join(rows)}
-</tbody>
-</table>
-<footer>Generated by <code>pyharness-watch --static</code>.</footer>
-</main>
-</body>
-</html>
+    answered = sum(d["outcome"] == "answered" for d in digests)
+    return f"""{head(escape(title))}
+<div class="shell">
+{rail(nav=nav, current="index.html", aside_label="Sessions", aside_id="sessions")}
+<div class="main">
+  <div class="page">
+    <div class="page-head">
+      <h1>{escape(title)}</h1>
+      <p class="lede">{
+        escape(lede)
+        or '''Each page below is the live viewer's own
+      renderer replaying that session's recorded trace — the same view the
+      operator saw, frozen.'''
+    }</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="v">{
+        len(digests)
+    }</div><div class="k">sessions</div></div>
+      <div class="stat good"><div class="v">{
+        answered
+    }</div><div class="k">answered</div></div>
+      <div class="stat flag"><div class="v">{
+        denials
+    }</div><div class="k">refused by policy</div></div>
+      <div class="stat"><div class="v">{
+        _fmt_usd(total)
+    }</div><div class="k">total cost</div></div>
+    </div>
+    <div class="cards">
+{chr(10).join(cards)}
+    </div>
+    <footer class="site">Generated by <code>pyharness-watch --static</code>.</footer>
+  </div>
+</div>
+</div>
+{scripts(f"window.SESSIONS = {json.dumps(_sidebar(digests))}; renderSessionList();")}
 """
 
 
 def build_site(
-    sessions: list[str | Path],
+    sessions: Sequence[str | Path],
     out_dir: str | Path,
     *,
     title: str = "pyharness sessions",
+    lede: str = "",
+    docs: Sequence[tuple[str, str | Path]] | None = None,
 ) -> list[Path]:
-    """Write one page per session plus an `index.html`, and return what was
-    written. Sessions keep their directory names, so the index can link them
-    without a manifest."""
+    """Write one page per session, any markdown `docs` as pages beside them, and
+    an `index.html`, and return what was written. Sessions keep their directory
+    names, so the index can link them without a manifest.
+
+    `docs` is a list of `(label, path)` — the eval boards. They are part of the
+    site rather than links out to a repo because the claim and the evidence for
+    it should be one artifact you can open offline."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    digests = []
+
+    doc_pages = [(label, Path(p), _slug(label) + ".html") for label, p in docs or []]
+    nav: list[NavItem] = [("Overview", "index.html", "◆")]
+    nav += [(label, name, "▤") for label, _, name in doc_pages]
+
+    digests = [session_digest(Path(s)) for s in sessions]
+    sidebar = _sidebar(digests)
     for session in sessions:
         session = Path(session)
         page = out_dir / f"{session.name}.html"
-        page.write_text(build_page(session), encoding="utf-8")
+        page.write_text(build_page(session, siblings=sidebar), encoding="utf-8")
         written.append(page)
-        digests.append(session_digest(session))
+
+    for label, src, name in doc_pages:
+        page = out_dir / name
+        page.write_text(
+            render_doc_page(
+                src.read_text(encoding="utf-8"), title=label, nav=nav, current=name
+            ),
+            encoding="utf-8",
+        )
+        written.append(page)
+
     index = out_dir / "index.html"
-    index.write_text(build_index(digests, title=title), encoding="utf-8")
+    index.write_text(
+        build_index(digests, title=title, lede=lede, nav=nav), encoding="utf-8"
+    )
     written.append(index)
     return written
+
+
+def _slug(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "doc"
 
 
 def discover_sessions(target: str | Path) -> list[Path]:

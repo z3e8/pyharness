@@ -55,15 +55,20 @@ dev: run
 watch:
 	uv run pyharness-watch
 
-## site: rebuild the committed static session pages from the demo run
+## site: rebuild the committed static evidence site (sessions + eval boards)
 # The pages are the artifact — .sessions/ is gitignored, so a stranger cloning
-# the repo cannot regenerate them. SESSIONS names the run to bake; the four
-# published pages are chosen in evals/demo/site/README.md.
+# the repo cannot regenerate them. SITE_RUN names the run to bake; the four
+# published pages are chosen in evals/demo/site/README.md. The boards ride along
+# so the claim and the sessions behind it open as one offline artifact.
 SITE_RUN ?= .sessions/demo-20260730-225820/invoice-exfiltration
 .PHONY: site
 site:
 	uv run pyharness-watch $(SITE_RUN) --static evals/demo/site \
-		--title "pyharness — containment, one session at a time"
+		--title "pyharness — containment, one session at a time" \
+		--lede "An agent whose action space is Python, and a broker every side effect routes through. These are real runs: the same instruction contained in one destination and delivered in another." \
+		--doc "Adversarial suite=evals/SCOREBOARD.md" \
+		--doc "Demo vs baseline=evals/demo/COMPARISON.md" \
+		--doc "Skill cost curve=evals/skills/CURVE.md"
 
 ## up: start the optional Phoenix OTel backend (then set PYHARNESS_TELEMETRY_ENABLED=true)
 .PHONY: up

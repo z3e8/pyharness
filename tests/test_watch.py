@@ -162,6 +162,53 @@ def test_media_route_rejects_path_traversal(server):
     assert httpx.get(srv.url + "/media/run-1/missing.png").status_code == 404
 
 
+def test_sessions_route_lists_roots_newest_first(server):
+    """The switcher's list. Spawn children render inside their parent's lane, so
+    listing them as siblings would offer a second way into the same events."""
+    srv, tmp_path = server
+    for name in ("run-a", "run-a-spawn-01", "run-b"):
+        _write(
+            tmp_path / name / "trace.jsonl",
+            {"ts": 1.0, "kind": "task", "text": "t-" + name},
+            {"ts": 2.0, "kind": "code", "text": "print(1)"},
+            {"ts": 3.0, "kind": "answer", "text": "done"},
+        )
+    listed = httpx.get(srv.url + "/sessions").json()
+
+    assert [s["name"] for s in listed] == ["run-b", "run-a"]
+    assert listed[0]["outcome"] == "answered" and listed[0]["steps"] == 1
+    # Summary fields only. `session_digest` also carries absolute session/trace/
+    # audit/workspace paths, and this response is rendered into the page.
+    assert set(listed[0]) == {"name", "outcome", "steps", "cost_usd", "denials", "task"}
+    assert str(tmp_path) not in httpx.get(srv.url + "/sessions").text
+
+
+def test_events_can_be_pinned_to_one_session(server):
+    """`?session=` is how the sidebar opens an older run while a newer one is
+    still writing — without it, the stream always jumps to the newest root."""
+    srv, tmp_path = server
+    _write(tmp_path / "old" / "trace.jsonl", {"kind": "task", "text": "the old one"})
+    _write(tmp_path / "new" / "trace.jsonl", {"kind": "task", "text": "the new one"})
+
+    got = []
+    with httpx.stream("GET", srv.url + "/events?session=old", timeout=10) as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data: "):
+                got.append(json.loads(line[6:]))
+            if len(got) == 2:
+                break
+    assert [e.get("text") for e in got] == [None, "the old one"]
+
+
+def test_events_rejects_a_session_outside_the_container(server):
+    """The name comes straight off a query string; it gets the media route's
+    rules for the same reason."""
+    srv, tmp_path = server
+    _write(tmp_path / "run" / "trace.jsonl", {"kind": "task"})
+    assert httpx.get(srv.url + "/events?session=nope", timeout=5).status_code == 404
+    assert httpx.get(srv.url + "/events?session=..%2f..", timeout=5).status_code == 404
+
+
 def _handle_source(page: str) -> str:
     """The body of the page's `handle(e)` event dispatcher, brace-matched out of
     the inline script. Fails loudly if the function moves or is renamed — better
@@ -226,6 +273,37 @@ def test_viewer_renders_unrecognized_event_kinds(tmp_path):
     fallback = source[source.rindex("} else {") :]
     assert "laneAdd(" in fallback, "the fallback branch renders nothing"
     assert "innerHTML" not in fallback, "trace text is untrusted; use textContent"
+
+
+def test_the_page_never_builds_dom_from_a_string():
+    """Everything this page renders is untrusted — model prose, tool output, a
+    page the agent fetched, an eval board. Markdown made that a live question:
+    the renderer turns input into headings, tables and links, and the one rule
+    that keeps it safe is that structure comes from `createElement` and text
+    from `textContent`. A single `innerHTML` (or `insertAdjacentHTML`, or a
+    `document.write`) anywhere in the shared assets breaks it."""
+    from pyharness.obs.page import asset
+
+    def code_only(source: str) -> str:
+        """Comment lines dropped — both files *discuss* this rule in prose."""
+        return "\n".join(
+            line
+            for line in source.splitlines()
+            if not line.lstrip().startswith(("*", "//", "/*"))
+        )
+
+    for name in ("viewer.js", "markdown.js"):
+        source = code_only(asset(name))
+        for banned in (
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+        ):
+            assert banned not in source, f"{name} builds DOM from a string ({banned})"
+    # The only attribute ever set from input is href, and only behind a scheme
+    # allowlist — `javascript:` in a link is the whole attack.
+    assert "SAFE_SCHEME" in asset("markdown.js")
 
 
 def test_start_in_thread_falls_back_to_an_ephemeral_port(tmp_path):

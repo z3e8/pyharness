@@ -7,13 +7,19 @@ running or stuck), pending approvals, errors, and running spend. The durable
 JSONL record is written synchronously by the session, so this view is
 real-time by construction — no collector, no container, no refresh.
 
-Stdlib only. The server binds 127.0.0.1 and serves two routes: `/` (the page)
-and `/events` (Server-Sent Events: each trace entry as one JSON `data:` line,
-tagged with the session it came from). Watch one session (a dir containing
-`trace.jsonl`) or a container of sessions (e.g. `.sessions/`). It follows a whole
-session *tree* — the root session plus any sub-agents it spawns
-(`{root}-spawn-*`) — and switches the top-level view only when a genuinely new
-*root* session starts, so a running sub-agent never steals the view.
+Stdlib only. The server binds 127.0.0.1 and serves four routes: `/` (the page),
+`/events` (Server-Sent Events: each trace entry as one JSON `data:` line, tagged
+with the session it came from), `/sessions` (the switcher's list), and `/media/`.
+Watch one session (a dir containing `trace.jsonl`) or a container of sessions
+(e.g. `.sessions/`). It follows a whole session *tree* — the root session plus
+any sub-agents it spawns (`{root}-spawn-*`) — and switches the top-level view
+only when a genuinely new *root* session starts, so a running sub-agent never
+steals the view.
+
+`/events?session=NAME` pins the stream to one session instead of following the
+newest. That is what the sidebar switcher uses: past runs stay one click away
+while a new one is going, and the "follow" toggle decides whether a freshly
+started session takes the view.
 
 Two entry points: `main()` (the `pyharness-watch` console script) and
 `start_in_thread()` (the CLI embeds the viewer in the agent process — fail-open,
@@ -32,6 +38,9 @@ import time
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from .page import FEED_SLOT, TITLE_SLOT, session_template
 
 log = logging.getLogger("pyharness.watch")
 
@@ -142,6 +151,73 @@ class Tail:
         return events
 
 
+def _resolve_session(container: Path, name: str) -> Path | None:
+    """The session dir called `name` under `container`, or None.
+
+    Name-only, resolved, and checked back against the container: `/events` takes
+    this straight from a query string, and the media route's traversal rules
+    apply here for the same reason."""
+    if not name or "/" in name or "\\" in name or name in ("..", "."):
+        return None
+    if (container / "trace.jsonl").exists():
+        container = container.parent
+    path = (container / name).resolve()
+    if (
+        not path.is_relative_to(container.resolve())
+        or not (path / "trace.jsonl").is_file()
+    ):
+        return None
+    return path
+
+
+# Digesting a session means reading its whole trace, and the sidebar polls. Keyed
+# on the trace's (size, mtime) so a finished session is read once and a running
+# one is re-read only when it actually grew.
+_DIGEST_CACHE: dict[tuple[str, int, float], dict] = {}
+_LIST_LIMIT = 40  # newest N; a long-lived .sessions/ should not stall the poll
+
+
+def list_sessions(target: Path) -> list[dict]:
+    """The switcher's list: root sessions under `target`, newest first, each
+    with the summary fields the sidebar shows. Spawn children are omitted —
+    they render inside their parent, not as siblings."""
+    target = Path(target)
+    if (target / "trace.jsonl").exists():
+        dirs = [target]
+    else:
+        dirs = [
+            p.parent
+            for p in target.glob("*/trace.jsonl")
+            if p.is_file() and not _SPAWN_RE.search(p.parent.name)
+        ]
+    dirs.sort(key=lambda d: (d / "trace.jsonl").stat().st_mtime, reverse=True)
+
+    from .transcript import session_digest
+
+    out = []
+    for d in dirs[:_LIST_LIMIT]:
+        stat = (d / "trace.jsonl").stat()
+        key = (str(d), stat.st_size, stat.st_mtime)
+        digest = _DIGEST_CACHE.get(key)
+        if digest is None:
+            full = session_digest(d)
+            # Summary fields only: the digest also carries absolute paths, and
+            # this response is what the page renders.
+            digest = {
+                "name": full["name"],
+                "outcome": full["outcome"],
+                "steps": full["steps"],
+                "cost_usd": full["cost_usd"],
+                "denials": full["denials"],
+                "task": (full.get("task") or "")[:200],
+            }
+            if len(_DIGEST_CACHE) > 200:
+                _DIGEST_CACHE.clear()
+            _DIGEST_CACHE[key] = digest
+        out.append(digest)
+    return out
+
+
 class _Handler(BaseHTTPRequestHandler):
     server: WatchServer
 
@@ -149,19 +225,26 @@ class _Handler(BaseHTTPRequestHandler):
         pass  # request logging is noise for a local single-user viewer
 
     def do_GET(self):  # noqa: N802 — stdlib naming
-        if self.path == "/":
-            body = PAGE.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        elif self.path == "/events":
-            self._serve_events()
-        elif self.path.startswith("/media/"):
-            self._serve_media(self.path[len("/media/") :])
+        route = urlparse(self.path)
+        if route.path == "/":
+            self._send(PAGE.encode(), "text/html; charset=utf-8")
+        elif route.path == "/events":
+            wanted = parse_qs(route.query).get("session", [None])[0]
+            self._serve_events(wanted)
+        elif route.path == "/sessions":
+            body = json.dumps(list_sessions(self.server.target)).encode()
+            self._send(body, "application/json")
+        elif route.path.startswith("/media/"):
+            self._serve_media(route.path[len("/media/") :])
         else:
             self.send_error(404)
+
+    def _send(self, body: bytes, content_type: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_media(self, rel: str) -> None:
         """Serve `<session>/media/<file>` from the followed container. Names are
@@ -179,21 +262,28 @@ class _Handler(BaseHTTPRequestHandler):
         if not path.is_relative_to(container.resolve()) or not path.is_file():
             self.send_error(404)
             return
-        body = path.read_bytes()
-        self.send_response(200)
-        self.send_header(
-            "Content-Type", mimetypes.guess_type(name)[0] or "application/octet-stream"
+        self._send(
+            path.read_bytes(),
+            mimetypes.guess_type(name)[0] or "application/octet-stream",
         )
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
-    def _serve_events(self):
+    def _serve_events(self, session: str | None = None):
+        """Stream one session tree. With no `session`, follow whichever root is
+        newest (the default view); with one, pin to it — a request for a name
+        that isn't a session directory under the target is a 404, never a path
+        the client got to choose."""
+        target = self.server.target
+        if session is not None:
+            root = _resolve_session(target, session)
+            if root is None:
+                self.send_error(404)
+                return
+            target = root
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        tail = Tail(self.server.target)
+        tail = Tail(target)
         idle = 0
         try:
             while True:
@@ -265,6 +355,15 @@ def main() -> None:
     parser.add_argument(
         "--title", default="pyharness sessions", help="index page title with --static"
     )
+    parser.add_argument("--lede", default="", help="index page subtitle with --static")
+    parser.add_argument(
+        "--doc",
+        action="append",
+        default=[],
+        metavar="LABEL=PATH",
+        help="with --static: also render a markdown file (an eval board) as a "
+        "page in the site, linked from the nav. Repeatable.",
+    )
     args = parser.parse_args()
     target = Path(args.target).expanduser()
     if args.static:
@@ -273,7 +372,15 @@ def main() -> None:
         sessions = discover_sessions(target)
         if not sessions:
             raise SystemExit(f"no sessions with a trace.jsonl under {target}")
-        written = build_site(sessions, args.static, title=args.title)
+        docs = []
+        for spec in args.doc:
+            label, sep, path = spec.partition("=")
+            if not sep or not Path(path).is_file():
+                raise SystemExit(f"--doc wants LABEL=PATH with a readable file: {spec}")
+            docs.append((label, Path(path)))
+        written = build_site(
+            sessions, args.static, title=args.title, lede=args.lede, docs=docs
+        )
         print(f"wrote {len(written)} files to {args.static}")
         return
     server = WatchServer(target, port=args.port)
@@ -284,488 +391,54 @@ def main() -> None:
         pass
 
 
-# The page template. Self-contained (no external assets); renders an event feed
-# into a turn-by-turn view. Each event is tagged with the session it came from: root
-# events land in the main log, a spawned sub-agent's events land in a nested,
-# collapsible panel opened at its spawn point. Sticky top region holds the
-# session/spend header, the filter+search toolbar, a pending-approval banner, and
-# the "now" bar for in-flight work. All trace text lands via textContent, never
-# innerHTML — trace content is untrusted.
-_PAGE_TEMPLATE = r"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>@@TITLE@@</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #101216; color: #d6dae2;
-         font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
-  #top { position: sticky; top: 0; z-index: 3; background: #101216;
-         border-bottom: 1px solid #262c37; }
-  header { padding: 10px 18px 8px; display: flex; gap: 16px;
-           align-items: baseline; flex-wrap: wrap; }
-  header .name { font-weight: 600; color: #fff; }
-  header .spend { color: #8fd18f; font-variant-numeric: tabular-nums; }
-  #toolbar { padding: 0 18px 8px; display: flex; gap: 14px; align-items: center;
-             flex-wrap: wrap; font-size: 12px; color: #9aa3b2; }
-  #toolbar label { cursor: pointer; user-select: none; }
-  #toolbar input[type=search] { background: #171b22; border: 1px solid #2c3548;
-             color: #d6dae2; border-radius: 5px; padding: 3px 8px; width: 200px;
-             font: inherit; }
-  #toolbar button { background: #1d2330; border: 1px solid #2c3548; color: #b9c1cf;
-             border-radius: 5px; padding: 2px 9px; cursor: pointer; font: inherit; }
-  #toolbar button:hover { background: #262d3d; }
-  #banner:empty, #now:empty { display: none; }
-  #banner { padding: 4px 18px 8px; }
-  #banner .approval { background: #3a2d10; border: 1px solid #8a6d1a; color: #ffd977;
-             border-radius: 6px; padding: 8px 12px; display: flex; gap: 10px;
-             align-items: baseline; }
-  #banner .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; }
-  #now { padding: 0 18px 6px; }
-  #now .item { background: #1d2330; border: 1px solid #2c3548; border-radius: 6px;
-               padding: 6px 12px; margin: 4px 0; display: flex; gap: 10px;
-               align-items: baseline; }
-  #now .elapsed { margin-left: auto; color: #7d8697; font-variant-numeric: tabular-nums; }
-  #now .spinner { color: #6fa8ff; }
-  main { max-width: 980px; margin: 0 auto; padding: 12px 18px 80px; }
-  .task { margin: 22px 0 10px; padding: 10px 14px; background: #1a2130;
-          border-left: 3px solid #6fa8ff; border-radius: 4px; color: #eef2f8;
-          white-space: pre-wrap; }
-  .agent { margin: 10px 0; white-space: pre-wrap; }
-  .meta { color: #7d8697; font-size: 12px; margin-left: 8px; }
-  details.cell, details.prompt { margin: 8px 0; }
-  details.cell > summary, details.prompt > summary { cursor: pointer; color: #7d8697;
-          font: 12px ui-monospace, monospace; padding: 2px 0; list-style: none;
-          display: flex; gap: 8px; align-items: center; }
-  details.cell > summary::-webkit-details-marker,
-  details.prompt > summary::-webkit-details-marker { display: none; }
-  summary .tag { color: #5f6b7e; }
-  summary .copy { margin-left: auto; border: 1px solid #2c3548; background: #171b22;
-          color: #9aa3b2; border-radius: 4px; padding: 0 6px; cursor: pointer; font: inherit; }
-  pre { background: #171b22; border: 1px solid #232a35; border-radius: 6px;
-        padding: 10px 12px; overflow-x: auto; margin: 4px 0;
-        font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
-  pre.code { border-left: 3px solid #3f679f; }
-  pre.output { color: #9aa3b2; max-height: 340px; overflow-y: auto; }
-  .prompt pre { max-height: 260px; overflow-y: auto; }
-  .prompt .role { color: #6fa8ff; font: 11px ui-monospace, monospace; margin: 8px 0 2px; }
-  .prompt .sys { color: #c8a6ff; }
-  .action { font: 12px ui-monospace, monospace; color: #7d8697; margin: 2px 0 2px 12px; }
-  .action.err { color: #ff8484; }
-  .row.error { color: #ff8484; white-space: pre-wrap; margin: 8px 0; }
-  .row.notify { color: #ffd977; margin: 8px 0; }
-  .row.small { color: #7d8697; font-size: 12px; margin: 6px 0; }
-  .answer { margin: 14px 0; padding: 10px 14px; background: #16241a;
-            border-left: 3px solid #58b368; border-radius: 4px; white-space: pre-wrap; }
-  img.shot { max-width: 100%; border: 1px solid #232a35; border-radius: 6px; margin: 4px 0; }
-  .subagent { margin: 12px 0; border: 1px solid #34405a; border-radius: 8px;
-              background: #12161f; overflow: hidden; }
-  .subagent > summary { cursor: pointer; padding: 8px 12px; list-style: none;
-              display: flex; gap: 10px; align-items: baseline; background: #172033;
-              border-left: 3px solid #8a6dff; }
-  .subagent > summary::-webkit-details-marker { display: none; }
-  .subagent .sub-name { color: #c3b6ff; font-weight: 600; }
-  .subagent .sub-task { color: #9aa3b2; overflow: hidden; text-overflow: ellipsis;
-              white-space: nowrap; max-width: 40ch; }
-  .subagent .sub-stat { margin-left: auto; color: #7d8697; font-variant-numeric: tabular-nums; }
-  .subagent .dot { width: 8px; height: 8px; border-radius: 50%; background: #6fa8ff; }
-  .subagent .dot.done { background: #58b368; }
-  .subagent .dot.err { background: #ff8484; }
-  .subagent .sub-body { padding: 4px 14px 10px; }
-  details.think > summary { color: #8a7fb0; }
-  .think pre { color: #9a92b8; font-style: italic; border-left: 3px solid #4a3f6e;
-               max-height: 260px; overflow-y: auto; }
-  body.hide-code .k-code, body.hide-output .k-output,
-  body.hide-action .k-action, body.hide-prompt .k-prompt,
-  body.hide-think .k-think { display: none; }
-  .search-hide { display: none !important; }
-</style>
-</head>
-<body>
-<div id="top">
-  <header>
-    <span class="name" id="session">waiting for a session…</span>
-    <span class="spend" id="spend"></span>
-    <span class="meta" id="steps"></span>
-    <span class="meta" id="clock"></span>
-    <span class="meta" id="status">connecting…</span>
-  </header>
-  <div id="toolbar">
-    <label><input type="checkbox" data-f="code" checked> code</label>
-    <label><input type="checkbox" data-f="output" checked> output</label>
-    <label><input type="checkbox" data-f="action" checked> actions</label>
-    <label><input type="checkbox" data-f="prompt" checked> prompts</label>
-    <label><input type="checkbox" data-f="think" checked> thinking</label>
-    <input type="search" id="search" placeholder="filter text…">
-    <span id="searchcount"></span>
-    <button id="jump-err">next error</button>
-    <button id="jump-top">top</button>
-    <button id="jump-bot">bottom</button>
-  </div>
-  <div id="banner"></div>
-  <div id="now"></div>
-</div>
-<main id="log"></main>
-<script>
-const rootLog = document.getElementById('log');
-const nowEl = document.getElementById('now');
-const bannerEl = document.getElementById('banner');
-const active = new Map();     // laneKey -> {label, kind, t0, lane}
-const approvals = new Map();  // key -> {label, t0}
-const lanes = new Map();      // session name -> lane
-let rootName = null;
-let followTail = true;
-let sessionStartMs = 0;
-
-addEventListener('scroll', () => {
-  followTail = (innerHeight + scrollY) >= document.body.scrollHeight - 60;
-});
-function scrollTail() { if (followTail) scrollTo(0, document.body.scrollHeight); }
-
-function el(tag, cls, text) {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-function fmtUsd(x) { return '$' + Number(x).toFixed(2); }
-
-// ---- lanes: the root session's log plus one nested panel per sub-agent -------
-function makeLane(name, logEl, isRoot, head) {
-  const lane = { name, logEl, isRoot, head, spend: 0 };
-  lanes.set(name, lane);
-  return lane;
-}
-function laneFor(name) {
-  if (!name || name === rootName) return lanes.get(rootName);
-  return lanes.get(name) || openSubLane(name, null, lanes.get(rootName));
-}
-function openSubLane(name, spawn, parent) {
-  if (lanes.get(name)) return lanes.get(name);
-  const panel = el('details', 'subagent');
-  const sum = el('summary');
-  const dot = el('span', 'dot');
-  sum.appendChild(dot);
-  sum.appendChild(el('span', 'sub-name', name.replace(/^.*-spawn-/, 'spawn-')));
-  if (spawn) {
-    if (spawn.tier) sum.appendChild(el('span', 'tag', spawn.tier));
-    sum.appendChild(el('span', 'sub-task', spawn.text || ''));
-  }
-  const stat = el('span', 'sub-stat', 'running…');
-  sum.appendChild(stat);
-  panel.appendChild(sum);
-  const body = el('div', 'sub-body');
-  panel.appendChild(body);
-  (parent ? parent.logEl : rootLog).appendChild(panel);
-  scrollTail();
-  const lane = makeLane(name, body, false, { dot, stat, budget: spawn && spawn.budget_usd });
-  return lane;
-}
-function laneAdd(lane, node, kindClass) {
-  node.classList.add('item-row');
-  if (kindClass) node.classList.add(kindClass);
-  lane.logEl.appendChild(node);
-  applyRowVisibility(node);
-  scrollTail();
-}
-
-// ---- spend rollup across every lane ------------------------------------------
-function updateSpend() {
-  let total = 0;
-  for (const l of lanes.values()) total += l.spend;
-  document.getElementById('spend').textContent = fmtUsd(total);
-  let steps = 0;
-  for (const r of rootLog.querySelectorAll('.k-code')) steps++;
-  document.getElementById('steps').textContent = steps + ' steps';
-}
-function laneSpent(lane, usd, cumulative) {
-  if (usd == null) return;
-  lane.spend = cumulative ? Math.max(lane.spend, usd) : lane.spend + usd;
-  if (lane.head) lane.head.stat.textContent = fmtUsd(lane.spend)
-      + (lane.head.budget ? ' / ' + fmtUsd(lane.head.budget) : '');
-  updateSpend();
-}
-function laneDone(lane, cls, label) {
-  if (!lane.head) return;
-  lane.head.dot.className = 'dot ' + cls;
-  const base = lane.head.stat.textContent.split(' — ')[0];
-  lane.head.stat.textContent = base + ' — ' + label;
-}
-
-// ---- in-flight "now" bar + approval banner -----------------------------------
-function renderNow() {
-  nowEl.replaceChildren();
-  for (const [, a] of active) {
-    const item = el('div', 'item');
-    item.appendChild(el('span', 'spinner', '●'));
-    const lbl = (a.lane && !a.lane.isRoot ? '[' + a.lane.name.replace(/^.*-spawn-/, 'spawn-') + '] ' : '') + a.label;
-    item.appendChild(el('span', '', lbl));
-    item.appendChild(el('span', 'elapsed', ''));
-    item.dataset.t0 = a.t0;
-    nowEl.appendChild(item);
-  }
-}
-function renderBanner() {
-  bannerEl.replaceChildren();
-  for (const [, a] of approvals) {
-    const item = el('div', 'approval');
-    item.appendChild(el('span', '', '⚠'));
-    item.appendChild(el('span', '', a.label));
-    item.appendChild(el('span', 'elapsed', ''));
-    item.dataset.t0 = a.t0;
-    bannerEl.appendChild(item);
-  }
-}
-const ticker = setInterval(() => {
-  for (const item of [...nowEl.children, ...bannerEl.children]) {
-    const s = (Date.now() - Number(item.dataset.t0)) / 1000;
-    item.querySelector('.elapsed').textContent = s.toFixed(0) + 's';
-  }
-  if (sessionStartMs) {
-    const s = (Date.now() - sessionStartMs) / 1000;
-    const m = Math.floor(s / 60);
-    document.getElementById('clock').textContent = m + 'm' + String(Math.floor(s % 60)).padStart(2, '0') + 's';
-  }
-}, 500);
-function startActive(lane, sub, label) {
-  active.set(lane.name + '\x00' + sub, { label, t0: Date.now(), lane });
-  renderNow();
-}
-function endActive(lane, sub) { active.delete(lane.name + '\x00' + sub); renderNow(); }
-
-// ---- collapsible code/output cell with a copy button -------------------------
-function cell(kind, text) {
-  const d = el('details', 'cell k-' + kind); d.open = true;
-  const sum = el('summary');
-  sum.appendChild(el('span', 'tag', kind));
-  const first = (text || '').split('\n', 1)[0].slice(0, 80);
-  sum.appendChild(el('span', '', first));
-  const chars = (text || '').length;
-  sum.appendChild(el('span', 'tag', chars + ' chars'));
-  const copy = el('button', 'copy', 'copy');
-  copy.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation();
-    navigator.clipboard && navigator.clipboard.writeText(text || ''); };
-  sum.appendChild(copy);
-  d.appendChild(sum);
-  d.appendChild(el('pre', kind, text));
-  return d;
-}
-
-// ---- the collapsed "full prompt" view (system + every message this pass) -----
-function promptView(e) {
-  const d = el('details', 'prompt k-prompt');
-  const sum = el('summary');
-  const n = (e.messages || []).length;
-  sum.appendChild(el('span', 'tag', 'prompt'));
-  sum.appendChild(el('span', '', n + ' msgs'
-    + (e.input_tokens ? ' · ' + e.input_tokens + ' tok in' : '')
-    + (e.model ? ' · ' + e.model : '')));
-  d.appendChild(sum);
-  let built = false;
-  d.addEventListener('toggle', () => {  // build lazily on first expand
-    if (!d.open || built) return;
-    built = true;
-    if (e.system) {
-      d.appendChild(el('div', 'role sys', 'system'));
-      d.appendChild(el('pre', '', e.system));
-    }
-    for (const m of e.messages || []) {
-      d.appendChild(el('div', 'role', m.role));
-      if (typeof m.text === 'string') { d.appendChild(el('pre', '', m.text)); continue; }
-      for (const b of m.content || []) {
-        if (b.type === 'text') d.appendChild(el('pre', '', b.text || ''));
-        else if (b.type === 'tool_use') d.appendChild(el('pre', '', '→ ' + (b.name || '')
-             + '\n' + ((b.input && b.input.code) || JSON.stringify(b.input || {}))));
-        else if (b.type === 'tool_result') d.appendChild(el('pre', '', '⟵ result\n'
-             + (typeof b.content === 'string' ? b.content : JSON.stringify(b.content))));
-        else if (b.type === 'image') d.appendChild(el('pre', '', '[image]'));
-        else d.appendChild(el('pre', '', JSON.stringify(b)));
-      }
-    }
-  });
-  return d;
-}
-
-// ---- filters, search, jump ---------------------------------------------------
-let searchTerm = '';
-function applyRowVisibility(node) {
-  if (searchTerm && !node.textContent.toLowerCase().includes(searchTerm))
-    node.classList.add('search-hide');
-  else node.classList.remove('search-hide');
-}
-for (const cb of document.querySelectorAll('#toolbar input[data-f]')) {
-  cb.onchange = () => document.body.classList.toggle('hide-' + cb.dataset.f, !cb.checked);
-}
-document.getElementById('search').oninput = (ev) => {
-  searchTerm = ev.target.value.toLowerCase();
-  let hits = 0;
-  for (const r of rootLog.querySelectorAll('.item-row')) {
-    applyRowVisibility(r);
-    if (searchTerm && !r.classList.contains('search-hide')) hits++;
-  }
-  document.getElementById('searchcount').textContent = searchTerm ? hits + ' match' : '';
-};
-let errIdx = -1;
-document.getElementById('jump-err').onclick = () => {
-  const errs = [...rootLog.querySelectorAll('.row.error, .action.err')];
-  if (!errs.length) return;
-  errIdx = (errIdx + 1) % errs.length;
-  errs[errIdx].scrollIntoView({ block: 'center' });
-};
-document.getElementById('jump-top').onclick = () => { followTail = false; scrollTo(0, 0); };
-document.getElementById('jump-bot').onclick = () => { followTail = true; scrollTail(); };
-
-// ---- event dispatch ----------------------------------------------------------
-function resetAll(name) {
-  rootLog.replaceChildren(); nowEl.replaceChildren(); bannerEl.replaceChildren();
-  active.clear(); approvals.clear(); lanes.clear();
-  rootName = name; sessionStartMs = 0;
-  makeLane(name, rootLog, true, null);
-  document.getElementById('session').textContent = name;
-  updateSpend();
-}
-
-function handle(e) {
-  const k = e.kind;
-  if (k === 'watch_session') { resetAll(e.session); return; }
-  if (rootName === null) resetAll(e.session || 'session');
-  if (!sessionStartMs) sessionStartMs = Date.now();
-  const lane = laneFor(e.session);
-
-  if (k === 'spawn') {
-    openSubLane(e.child, e, lane);
-  } else if (k === 'spawned_by') {
-    // child->parent link; the panel already carries the relationship
-  } else if (k === 'session_start') {
-    laneAdd(lane, el('div', 'row small', 'session started — ' + (e.root || '')));
-  } else if (k === 'task') {
-    laneAdd(lane, el('div', 'task', e.text));
-  } else if (k === 'llm_start') {
-    startActive(lane, 'llm', 'thinking (' + (e.tier || '?') + ')…');
-  } else if (k === 'llm_thinking') {
-    // Summarized thinking, streamed. Collapsed by default; the summary row is
-    // the expand button. One block per completion — llm_call closes it.
-    if (!lane.think) {
-      const d = el('details', 'cell think');
-      const sum = el('summary');
-      sum.appendChild(el('span', 'tag', 'thinking'));
-      const meta = el('span', 'tag', '');
-      sum.appendChild(meta);
-      d.appendChild(sum);
-      const pre = el('pre', '', '');
-      d.appendChild(pre);
-      lane.think = { pre, meta, chars: 0 };
-      laneAdd(lane, d, 'k-think');
-    }
-    lane.think.pre.textContent += e.text || '';
-    lane.think.chars += (e.text || '').length;
-    lane.think.meta.textContent = lane.think.chars + ' chars';
-  } else if (k === 'llm_call') {
-    endActive(lane, 'llm');
-    lane.think = null;
-    if (e.text) {
-      const n = el('div', 'agent', e.text);
-      const bits = [];
-      if (e.cost_usd) bits.push(fmtUsd(e.cost_usd));
-      if (e.latency_s) bits.push(e.latency_s + 's');
-      if (e.input_tokens) bits.push(e.input_tokens + ' in / ' + (e.output_tokens || 0) + ' out');
-      if (bits.length) n.appendChild(el('span', 'meta', ' · ' + bits.join(' · ')));
-      laneAdd(lane, n);
-    }
-    laneAdd(lane, promptView(e), 'k-prompt');
-    laneSpent(lane, e.cost_usd, false);
-  } else if (k === 'code') {
-    laneAdd(lane, cell('code', e.text), 'k-code'); updateSpend();
-  } else if (k === 'output') {
-    laneAdd(lane, cell('output', e.text), 'k-output');
-  } else if (k === 'media') {
-    const img = el('img', 'shot'); img.src = e.src || ''; img.alt = e.text || 'image';
-    laneAdd(lane, img, 'k-output');
-  } else if (k === 'action_start') {
-    startActive(lane, 'a:' + e.text, e.text + (e.args ? '(' + e.args + ')' : ''));
-  } else if (k === 'action_end') {
-    endActive(lane, 'a:' + e.text);
-    const ok = e.ok !== false;
-    const label = (ok ? '✓ ' : '✗ ') + e.text + ' ' + (e.elapsed_s || 0) + 's'
-                  + (e.error ? ' — ' + e.error : '') + (e.decision === 'deny' ? ' — denied by policy' : '');
-    laneAdd(lane, el('div', 'action' + (ok ? '' : ' err'), label), 'k-action');
-  } else if (k === 'approval_pending') {
-    const who = lane.isRoot ? '' : '[' + lane.name.replace(/^.*-spawn-/, 'spawn-') + '] ';
-    approvals.set(e.text, { label: who + '[' + (e.category || '') + '] ' + e.text
-      + ' — ' + (e.summary || '') + ' (answer in the terminal)', t0: Date.now() });
-    renderBanner();
-  } else if (k === 'approval_resolved') {
-    approvals.delete(e.text); renderBanner();
-    laneAdd(lane, el('div', 'row small', 'approval ' + e.outcome + ': ' + e.text));
-  } else if (k === 'notify') {
-    laneAdd(lane, el('div', 'row notify', '[agent note] ' + e.text));
-  } else if (k === 'error') {
-    endActive(lane, 'llm');
-    lane.think = null;
-    laneAdd(lane, el('div', 'row error', e.text));
-    if (!lane.isRoot) laneDone(lane, 'err', 'error');
-  } else if (k === 'answer') {
-    laneAdd(lane, el('div', 'answer', e.text));
-    if (!lane.isRoot) laneDone(lane, 'done', 'answered');
-  } else if (k === 'budget') {
-    laneSpent(lane, e.spent_usd, true);
-  } else if (k === 'session_end') {
-    endActive(lane, 'llm');
-    laneSpent(lane, e.spent_usd, true);
-    laneAdd(lane, el('div', 'row small', 'session ended — spent ' + fmtUsd(e.spent_usd || 0)
-           + ' over ' + (e.calls || 0) + ' calls'));
-    if (!lane.isRoot && lane.head && lane.head.dot.className === 'dot')
-      laneDone(lane, 'done', 'done');
-  } else if (k === 'skill_use') {
-    laneAdd(lane, el('div', 'row small', 'skill ' + (e.skill || '') + ': ' + (e.outcome || '') + ' ' + (e.note || '')));
-  } else if (k === 'reflection') {
-    laneAdd(lane, el('div', 'row small', 'reflection: ' + (e.text || '')));
-  } else if (k === 'worker') {
-    // llm()/map_llm progress heartbeat — the broker's action spinner shows the
-    // call is live, this shows fan-out progress within it.
-    laneAdd(lane, el('div', 'row small', e.text || ''));
-  } else if (k === 'llm_attempt') {
-    // Orchestrator-call retry record: a stalling-and-retrying completion
-    // reads as attempts, not as a silent gap.
-    laneAdd(lane, el('div', 'row small', 'llm ' + (e.text || '')));
-  } else if (k === 'note') {
-    // preamble text duplicated by the llm_call event — skip
-  } else {
-    // Unknown kind. A viewer that silently drops what it does not recognize is
-    // worse than one that renders it plainly: a new trace kind (or an old
-    // session replayed by a newer viewer) would simply not exist on screen,
-    // with nothing to notice. Render the kind, its text, and whatever other
-    // fields it carried, so the event is visible and legible without the
-    // viewer having to know what it means.
-    const rest = Object.keys(e)
-      .filter((f) => !['kind', 'ts', 'text', 'session'].includes(f))
-      .map((f) => f + '=' + (typeof e[f] === 'object' ? JSON.stringify(e[f]) : e[f]));
-    laneAdd(lane, el('div', 'row small', k
-      + (e.text ? ': ' + e.text : '')
-      + (rest.length ? ' · ' + rest.join(' ') : '')));
-  }
-}
-
-/* @@FEED@@ */
-</script>
-</body>
-</html>
-"""
+# The page shell, the stylesheet, and the renderer all live in `obs/page.py` and
+# `obs/assets/` — shared verbatim with the baked pages and the site. This module
+# only fills the two slots.
+_PAGE_TEMPLATE = session_template()
 
 # The live feed: events arrive over SSE as the session writes them. The static
 # builder (obs/static.py) substitutes its own feed here — a baked array replayed
 # through the same `handle()` — so both views are the *same page* rendering the
 # same events, and a change to the renderer cannot drift between them.
 LIVE_FEED = r"""
-const source = new EventSource('/events');
-source.onopen = () => { document.getElementById('status').textContent = 'live'; };
-source.onerror = () => { document.getElementById('status').textContent = 'reconnecting…'; };
-source.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch (err) {} };
+let source = new EventSource('/events');
+function bind(s) {
+  s.onopen = () => setStatus('live', 'live');
+  s.onerror = () => setStatus('reconnecting…', 'warn');
+  s.onmessage = (m) => {
+    try { handle(JSON.parse(m.data)); } catch (err) { /* torn line; the next wins */ }
+  };
+}
+bind(source);
+
+// Switch the stream without reloading: drop the current subscription, clear the
+// log, and re-open pinned to the chosen session.
+window.switchTo = (name) => {
+  if (name === currentSession) return;
+  source.close();
+  resetAll(name);
+  source = new EventSource('/events?session=' + encodeURIComponent(name));
+  bind(source);
+  renderSessionList();
+};
+
+// The sidebar list, polled. `follow` decides whether a session that starts
+// while you are reading an old one takes the view.
+const pollSessions = () => {
+  fetch('/sessions').then((r) => r.json()).then((list) => {
+    const follow = document.getElementById('follow');
+    if (follow && follow.checked && list.length && list[0].name !== currentSession) {
+      window.switchTo(list[0].name);
+    }
+    renderSessionList(list);
+  }).catch(() => { /* the viewer is never the thing that breaks a session */ });
+};
+pollSessions();
+setInterval(pollSessions, 4000);
 """
 
-_FEED_SLOT = "/* @@FEED@@ */"
-_TITLE_SLOT = "@@TITLE@@"
+_FEED_SLOT = FEED_SLOT
+_TITLE_SLOT = TITLE_SLOT
 
 
 def render_page(feed_js: str, *, title: str = "pyharness — live") -> str:
