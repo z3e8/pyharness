@@ -178,7 +178,16 @@ The [live session viewer](../how-to/observability.md#the-live-view-pyharness-wat
 pyharness-watch                     # tails .sessions/, follows the newest session
 pyharness-watch <session-dir>       # pin one session (a dir containing trace.jsonl)
 pyharness-watch --port 7000         # default 6061
+
+pyharness-watch <dir> --static OUT  # bake to self-contained HTML instead of serving
+  --title TEXT                      # index page title
+  --lede TEXT                       # index page subtitle
+  --doc "LABEL=PATH"                # also render a markdown file as a page (repeatable)
 ```
+
+Routes, when serving: `/` (the page), `/events[?session=NAME]` (SSE; the name
+pins the stream instead of following the newest root), `/sessions` (the
+switcher's list) and `/media/<session>/<file>`.
 
 The CLI embeds the same viewer automatically (`PYHARNESS_WATCH`, default on),
 so this standalone form is for watching a session started elsewhere or

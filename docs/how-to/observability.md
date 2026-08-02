@@ -7,17 +7,38 @@ second half).*
 ## The live view: `pyharness-watch`
 
 The primary human view. A small local page (stdlib, no container) that tails
-the session's `trace.jsonl` and renders it **as it happens**: the current turn,
-each code cell and its output (collapsible, with copy), in-flight actions with
+the session's `trace.jsonl` and renders it **as it happens**, as a transcript:
+the operator's task, then one turn per model completion — its prose, then a
+**step card** holding the code that turn ran, the actions that code triggered
+as inline chips, and the output that came back. Plus in-flight actions with
 elapsed time, a sticky banner for the pending approval the session is waiting
 on, errors, and running spend. Each `llm_call` also carries a collapsed
 **full-prompt view** (system prompt + every message that pass) so you can see
 exactly what the model saw, and each completion's summarized adaptive thinking
 streams into a collapsed, expandable **thinking** block (one per turn) so quiet
-spans are visibly the model reasoning. A filter/search toolbar hides kinds
-(including thinking) and finds text.
+spans are visibly the model reasoning. A search box and a **View** menu (which
+hides whole kinds, thinking included) sit in the header.
 Because the JSONL record is written synchronously by the session, the view is
 real-time by construction.
+
+**A refusal is not an error.** An action the broker denied, or one that raised
+`PermissionDenied` behind the gate, renders as an amber *refused* chip rather
+than a red failure — it is the harness working, and the view should not report
+it as a crash.
+
+**Reading it.** Model prose, the task, the final answer, and tool output that is
+genuinely document-shaped (a table or a code fence, or two other markdown
+signals agreeing) render as markdown; anything else stays verbatim monospace,
+and a rendered cell keeps a `raw` toggle. The renderer builds DOM nodes and
+never touches `innerHTML` — everything on this page is untrusted text, including
+whatever page the agent just fetched.
+
+**Switching sessions.** The left rail lists every root session under the watched
+directory with its outcome, steps and cost; clicking one re-points the stream at
+it without a reload. **Follow** (on by default) moves the view to a session that
+starts while you are watching; picking one by hand turns it off, so a new run
+cannot drag you away from what you were reading. There is a light/dark toggle
+next to the wordmark.
 
 **Sub-agents.** When the session `spawn`s a child, the viewer follows the whole
 session *tree* — the child's own turns stream into a nested, collapsible panel
@@ -45,16 +66,28 @@ page per session plus an `index.html`, no server, no assets, no network.
 ```bash
 pyharness-watch .sessions/cli-... --static out/     # one session
 pyharness-watch .sessions --static out/             # every session under a dir
+
+# …and any markdown alongside them, as pages in the same site
+pyharness-watch .sessions --static out/ \
+  --title "…" --lede "…" \
+  --doc "Adversarial suite=evals/SCOREBOARD.md"     # repeatable
 ```
 
-It is the *same page* as the live view — `watch.py` owns the renderer and the
-export only swaps the feed (a baked event array for the SSE stream), so the two
-cannot drift. Three things differ, all because a record is not a live view:
-screenshots are inlined as `data:` URIs (there is no server to fetch
-`/media/...`), absolute paths are redacted (a trace records the session root and
-the preamble names the workspace — both carry your home directory), and the
-clock is frozen at the session's real duration instead of ticking from whenever
-the page was opened.
+`--doc LABEL=PATH` renders a markdown file through the viewer's own renderer and
+links it from the nav on every page. That is how the eval boards ship *inside*
+the site: a claim and the sessions behind it should open as one artifact, not as
+a page that links back to a repo.
+
+It is the *same page* as the live view — `obs/page.py` and `obs/assets/` own the
+shell, the stylesheet and the renderer; the export only swaps the feed (a baked
+event array for the SSE stream), so the two cannot drift. Four things differ,
+all because a record is not a live view: screenshots are inlined as `data:` URIs
+(there is no server to fetch `/media/...`), absolute paths are redacted (a trace
+records the session root and the preamble names the workspace — both carry your
+home directory), the clock is frozen at the session's real duration instead of
+ticking from whenever the page was opened, and the live-only controls (*follow*,
+*jump to latest*) are removed rather than left promising something untrue. The
+session switcher survives: the list is baked into every page as links.
 
 Spawn children are not given their own pages — they are baked into the parent's,
 where the viewer already renders them as nested panels.
