@@ -82,14 +82,25 @@ def rail(
     *,
     nav: list[NavItem] | None = None,
     current: str | None = None,
-    aside_label: str = "Sessions",
+    aside_label: str | None = "Sessions",
     aside_id: str = "sessions",
     follow_toggle: bool = False,
 ) -> str:
     """The left rail: wordmark, theme toggle, site nav, and a switcher list.
 
     `aside_id` is `sessions` on the pages that switch between sessions and
-    `toc` on a board, so one rail serves both without a second layout."""
+    `toc` on a board, so one rail serves both without a second layout. Passing
+    `aside_label=None` drops the slot entirely — the index *is* the list of
+    sessions, and printing it twice on one screen is not navigation."""
+    if aside_label is None:
+        return f"""<aside id="rail">
+  <div class="rail-head">
+    {asset("logo.svg")}
+    <span class="wordmark">py<b>h</b>arness</span>
+    <button class="theme" id="theme" aria-label="Toggle theme"></button>
+  </div>
+  {_nav(nav or [], current)}
+</aside>"""
     follow = (
         '<label class="follow" title="jump to a newly started session">'
         '<input type="checkbox" id="follow" checked> follow</label>'
@@ -147,15 +158,9 @@ def session_template() -> str:
         <span id="stat-clock">0m00s</span>
         <span class="dotstat" id="status">connecting…</span>
       </span>
-    </div>
-    <div class="tb-tools">
-      <label class="search">
-        <span>⌕</span>
-        <input type="search" id="search" placeholder="Filter this session…  ( / )">
-        <span class="count" id="searchcount"></span>
-      </label>
+      <button class="icon" id="searchbtn" aria-label="Filter this session" title="Filter ( / )">⌕</button>
       <div class="menu">
-        <button class="btn" id="viewmenu">View ▾</button>
+        <button class="icon" id="viewmenu" aria-label="What to show" title="What to show">☰</button>
         <div class="menu-pop" id="viewpop" hidden>
           <label><input type="checkbox" data-f="code" checked> Code</label>
           <label><input type="checkbox" data-f="output" checked> Output</label>
@@ -164,6 +169,11 @@ def session_template() -> str:
           <label><input type="checkbox" data-f="think" checked> Thinking</label>
         </div>
       </div>
+    </div>
+    <div class="tb-search" id="searchbar" hidden>
+      <input type="search" id="search" placeholder="Filter this session…">
+      <span class="count" id="searchcount"></span>
+      <button class="icon" id="searchclose" aria-label="Close filter">✕</button>
     </div>
     <div id="banner"></div>
     <div id="now"></div>
@@ -235,6 +245,7 @@ def render_doc_page(
 <div class="main">
   <div class="page">
     <div class="page-head">
+      <div class="eyebrow">Eval board</div>
       <h1>{escape(title)}</h1>
       {f'<p class="lede">{escape(lede)}</p>' if lede else ""}
     </div>

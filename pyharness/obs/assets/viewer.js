@@ -352,20 +352,37 @@ function wireChrome() {
     pop.onclick = function (ev) { ev.stopPropagation(); };
     addEventListener("click", function () { pop.hidden = true; });
   }
-  var search = byId("search");
-  if (search) {
-    search.oninput = function (ev) {
-      searchTerm = ev.target.value.toLowerCase();
+  // Filtering is occasional, so the input is folded away behind an icon rather
+  // than holding a permanent row of the topbar. Closing it also clears the
+  // term — a hidden filter still hiding half the transcript is a trap.
+  var search = byId("search"), bar = byId("searchbar");
+  if (search && bar) {
+    function applyTerm(term) {
+      searchTerm = term.toLowerCase();
       var hits = 0;
       rootLog.querySelectorAll(".item-row").forEach(function (r) {
         applyRowVisibility(r);
         if (searchTerm && !r.classList.contains("search-hide")) hits++;
       });
       byId("searchcount").textContent = searchTerm ? hits + " match" : "";
-    };
+    }
+    function openSearch() {
+      bar.hidden = false;
+      byId("searchbtn").classList.add("on");
+      search.focus();
+    }
+    function closeSearch() {
+      bar.hidden = true;
+      byId("searchbtn").classList.remove("on");
+      search.value = "";
+      applyTerm("");
+    }
+    search.oninput = function (ev) { applyTerm(ev.target.value); };
+    byId("searchbtn").onclick = function () { bar.hidden ? openSearch() : closeSearch(); };
+    byId("searchclose").onclick = closeSearch;
     addEventListener("keydown", function (ev) {
-      if (ev.key === "/" && document.activeElement !== search) { ev.preventDefault(); search.focus(); }
-      if (ev.key === "Escape" && document.activeElement === search) { search.blur(); }
+      if (ev.key === "/" && document.activeElement !== search) { ev.preventDefault(); openSearch(); }
+      if (ev.key === "Escape" && document.activeElement === search) closeSearch();
     });
   }
   var jump = byId("jump");

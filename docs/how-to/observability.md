@@ -16,8 +16,10 @@ on, errors, and running spend. Each `llm_call` also carries a collapsed
 **full-prompt view** (system prompt + every message that pass) so you can see
 exactly what the model saw, and each completion's summarized adaptive thinking
 streams into a collapsed, expandable **thinking** block (one per turn) so quiet
-spans are visibly the model reasoning. A search box and a **View** menu (which
-hides whole kinds, thinking included) sit in the header.
+spans are visibly the model reasoning. The header carries two icon controls: a
+filter (⌕, or press `/`) that folds open a search field and folds away again
+when you close it, and a **View** menu (☰) that hides whole kinds, thinking
+included.
 Because the JSONL record is written synchronously by the session, the view is
 real-time by construction.
 
@@ -94,7 +96,8 @@ records the session root and the preamble names the workspace — both carry you
 home directory), the clock is frozen at the session's real duration instead of
 ticking from whenever the page was opened, and the live-only controls (*follow*,
 *jump to latest*) are removed rather than left promising something untrue. The
-session switcher survives: the list is baked into every page as links.
+session switcher survives: the list is baked into every session page as links.
+The index drops it, because that page *is* the list of sessions.
 
 Spawn children are not given their own pages — they are baked into the parent's,
 where the viewer already renders them as nested panels.

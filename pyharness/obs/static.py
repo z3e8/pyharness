@@ -229,31 +229,35 @@ def build_index(
     for d in digests:
         outcome = d["outcome"]
         cls = "ok" if outcome == "answered" else "warn"
-        # Two numbers, and one of them only when it is non-zero. A step count
-        # and an action count told a reader nothing they were choosing on.
+        # The outcome word rides in the second row, quiet, because nine rows
+        # saying "answered" is not information — the dot carries the state at a
+        # glance and the exception is the only one that needs to shout. A
+        # refusal count does, so it keeps its own pill whenever it is non-zero.
         refused = (
-            f'<span class="refused"><b>{d["denials"]}</b>'
-            f'<span class="k">refused</span></span>'
+            f'<span class="pill warn">{d["denials"]} refused</span>'
             if d["denials"]
             else ""
         )
         cards.append(
             f'<a class="card" href="{escape(d["name"])}.html">'
-            f'<span class="name">{escape(d["name"])} '
-            f'<span class="pill {cls}">{escape(outcome)}</span></span>'
+            f'<span class="name"><i class="dot {cls}"></i>{escape(d["name"])}</span>'
+            f'<span class="nums">{_fmt_usd(d["cost_usd"])}</span>'
             f'<span class="blurb">{escape((d.get("task") or "")[:220])}</span>'
-            f'<span class="nums">{refused}'
-            f'<span><b>{_fmt_usd(d["cost_usd"])}</b><span class="k">cost</span></span>'
-            "</span></a>"
+            f'<span class="tail">{refused}'
+            f'<span class="pill {cls}">{escape(outcome)}</span></span>'
+            "</a>"
         )
     total = sum(d["cost_usd"] for d in digests)
     denials = sum(d["denials"] for d in digests)
+    # No switcher in the rail here: this page *is* the list of sessions, and
+    # printing it a second time down the side is duplication, not navigation.
     return f"""{head(escape(title))}
 <div class="shell">
-{rail(nav=nav, current="index.html", aside_label="Sessions", aside_id="sessions")}
+{rail(nav=nav, current="index.html", aside_label=None)}
 <div class="main">
   <div class="page">
-    <div class="page-head">
+    <header class="hero">
+      <div class="eyebrow">Session archive</div>
       <h1>{escape(title)}</h1>
       <p class="lede">{
         escape(lede)
@@ -261,7 +265,7 @@ def build_index(
       renderer replaying that session's recorded trace — the same view the
       operator saw, frozen.'''
     }</p>
-    </div>
+    </header>
     <div class="stats">
       <div class="stat"><div class="v">{
         len(digests)
@@ -280,7 +284,7 @@ def build_index(
   </div>
 </div>
 </div>
-{scripts(f"window.SESSIONS = {json.dumps(_sidebar(digests))}; renderSessionList();")}
+{scripts("")}
 """
 
 
