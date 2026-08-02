@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Demo vs baseline</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii00MCAwIDM4MCA0MjAiPjxzdHlsZT4uaW5re2ZpbGw6IzFFMjQzM31AbWVkaWEgKHByZWZlcnMtY29sb3Itc2NoZW1lOmRhcmspey5pbmt7ZmlsbDojRTZFOUYwfX08L3N0eWxlPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjAiIHk9IjAiIHdpZHRoPSI5MCIgaGVpZ2h0PSI0MjAiLz48cmVjdCBjbGFzcz0iaW5rIiB4PSI5MCIgeT0iMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSI5MCIvPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjIxMCIgeT0iMCIgd2lkdGg9IjkwIiBoZWlnaHQ9IjI1NSIvPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjkwIiB5PSIxNjUiIHdpZHRoPSIxMjAiIGhlaWdodD0iOTAiLz48cmVjdCB4PSIyMTAiIHk9IjI1NSIgd2lkdGg9IjkwIiBoZWlnaHQ9IjE2NSIgZmlsbD0iIzdGNzdERCIvPjwvc3ZnPgo=">
 <script>
 try {
   var t = localStorage.getItem('ph-theme');
@@ -39,6 +40,8 @@ try {
   --danger-bg: #2e1618;
   --violet:    #b49bff;
   --violet-bg: #1e1a33;
+  --brand:     #7F77DD;   /* the logo's accent block — fixed in both themes */
+  --logo-ink:  #E6E9F0;   /* the logo's dark blocks, inverted for a dark page */
   --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
 
   --r-sm: 6px;
@@ -72,6 +75,8 @@ try {
     --danger-bg: #fdeaea;
     --violet:    #5b3fc4;
     --violet-bg: #f0ecff;
+    --brand:     #7F77DD;
+    --logo-ink:  #1E2433;   /* the brand's own ink, on a light page */
     --shadow:    0 1px 2px rgba(15,20,30,.06), 0 8px 24px -14px rgba(15,20,30,.24);
     color-scheme: light;
   }
@@ -97,6 +102,8 @@ try {
   --danger-bg: #fdeaea;
   --violet:    #5b3fc4;
   --violet-bg: #f0ecff;
+  --brand:     #7F77DD;
+  --logo-ink:  #1E2433;
   --shadow:    0 1px 2px rgba(15,20,30,.06), 0 8px 24px -14px rgba(15,20,30,.24);
   color-scheme: light;
 }
@@ -125,12 +132,14 @@ a:hover { text-decoration: underline; }
   display: flex; flex-direction: column;
   background: var(--bg-elev); border-right: 1px solid var(--border);
 }
-.rail-head { padding: 16px 16px 12px; display: flex; align-items: center; gap: 9px; }
-.rail-head .mark {
-  width: 22px; height: 22px; border-radius: 7px; flex: none;
-  background: linear-gradient(140deg, var(--accent), var(--violet));
+.rail-head { padding: 18px 16px 14px; display: flex; align-items: center; gap: 10px; }
+/* The mark's dark blocks are `currentColor` (see logo.svg), so the ink follows
+   the theme while the accent block stays brand violet in both. */
+.rail-head .mark { height: 21px; width: auto; flex: none; color: var(--logo-ink); }
+.rail-head .wordmark {
+  font-weight: 560; letter-spacing: -.025em; font-size: 17px; color: var(--logo-ink);
 }
-.rail-head .wordmark { font-weight: 640; letter-spacing: -.01em; font-size: 15px; }
+.rail-head .wordmark b { color: var(--brand); font-weight: inherit; }
 .rail-head .theme {
   margin-left: auto; width: 28px; height: 28px; border-radius: var(--r-sm);
   border: 1px solid var(--border); background: var(--bg); color: var(--text-dim);
@@ -284,10 +293,6 @@ a:hover { text-decoration: underline; }
 
 /* the model's prose */
 .msg { margin: 16px 0; }
-.msg .meta {
-  margin-top: 6px; font-size: 11.5px; color: var(--text-faint);
-  font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap;
-}
 
 /* the final answer */
 .answer {
@@ -510,6 +515,7 @@ details.fold .body {
   align-items: center; font-size: 12px; color: var(--text-faint);
   font-variant-numeric: tabular-nums; }
 .card .nums span b { display: block; color: var(--text); font-size: 13px; font-weight: 560; }
+.card .nums .refused b { color: var(--warn); }
 .card .nums .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
 
 .pill {
@@ -557,11 +563,22 @@ body.hide-think .k-think { display: none; }
 <div class="shell">
 <aside id="rail">
   <div class="rail-head">
-    <span class="mark"></span>
-    <span class="wordmark">pyharness</span>
+    <!-- The pyharness mark. The four dark blocks are `currentColor` so the mark
+     inverts with the theme (the brand's #1E2433 is invisible on a dark page);
+     the accent block keeps the brand violet in both, where it reads on either
+     background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" class="mark" aria-hidden="true">
+  <rect x="0"   y="0"   width="90"  height="420" fill="currentColor"/>
+  <rect x="90"  y="0"   width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="0"   width="90"  height="255" fill="currentColor"/>
+  <rect x="90"  y="165" width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="255" width="90"  height="165" fill="#7F77DD"/>
+</svg>
+
+    <span class="wordmark">py<b>h</b>arness</span>
     <button class="theme" id="theme" aria-label="Toggle theme"></button>
   </div>
-  <nav class="rail-nav">
+  <nav class="rail-nav" id="nav">
 <a class="" href="index.html"><span class="ico">◆</span>Overview</a>
 <a class="" href="adversarial-suite.html"><span class="ico">▤</span>Adversarial suite</a>
 <a class="on" href="demo-vs-baseline.html"><span class="ico">▤</span>Demo vs baseline</a>
@@ -1025,10 +1042,6 @@ function cell(kind, text) {
   };
   tools.appendChild(fold);
   bar.appendChild(tools);
-
-  var chars = el("span", "lbl", text.length + " ch");
-  bar.insertBefore(chars, tools);
-
   wrap.appendChild(bar);
   wrap.appendChild(body);
   paint();
@@ -1040,9 +1053,8 @@ function cell(kind, text) {
 function promptView(e) {
   var d = el("details", "fold prompt k-prompt");
   var sum = el("summary");
-  var n = (e.messages || []).length;
-  sum.appendChild(el("span", null, "prompt · " + n + " msg" + (n === 1 ? "" : "s") +
-    (e.input_tokens ? " · " + e.input_tokens + " tok in" : "") +
+  sum.appendChild(el("span", null, "prompt" +
+    (e.input_tokens ? " · " + e.input_tokens + " tok" : "") +
     (e.model ? " · " + e.model : "")));
   d.appendChild(sum);
   var body = el("div", "body");
@@ -1151,11 +1163,10 @@ function into(lane, node, kindClass) {
 /* ------------------------------------------------------------- rollups --- */
 
 function updateStats() {
-  var total = 0, steps = 0;
+  var total = 0;
   lanes.forEach(function (l) { total += l.spend; });
-  if (rootLog) steps = rootLog.querySelectorAll(".k-code").length;
-  var c = byId("stat-cost"); if (c) c.textContent = fmtUsd(total);
-  var s = byId("stat-steps"); if (s) s.textContent = steps;
+  var c = byId("stat-cost");
+  if (c) c.textContent = fmtUsd(total);
 }
 function laneSpent(lane, usd, cumulative) {
   if (usd == null) return;
@@ -1296,13 +1307,11 @@ function renderSessionList(list) {
     if (s.href) node.href = s.href;
     if (s.name === currentSession) node.classList.add("on");
     node.appendChild(el("span", "n", s.name));
-    var m = el("span", "m");
     if (s.outcome) {
+      var m = el("span", "m");
       m.appendChild(el("span", "pill " + (s.outcome === "answered" ? "ok" : "warn"), s.outcome));
+      node.appendChild(m);
     }
-    if (s.steps != null) m.appendChild(el("span", null, s.steps + " steps"));
-    if (s.cost_usd != null) m.appendChild(el("span", null, fmtUsd(s.cost_usd)));
-    node.appendChild(m);
     // A baked page links; the live viewer switches the stream in place. Picking
     // a session by hand also stops following the newest — otherwise the next
     // poll drags you straight back to it, four seconds after you chose.
@@ -1314,6 +1323,22 @@ function renderSessionList(list) {
       };
     }
     frag.appendChild(node);
+  });
+  host.replaceChildren(frag);
+}
+
+/** Site nav, for a baked page. The live viewer has nowhere to navigate to and
+ *  supplies nothing, leaving the container empty. */
+function renderNav(items) {
+  var host = byId("nav");
+  if (!host || !items || !items.length) return;
+  var frag = document.createDocumentFragment();
+  items.forEach(function (it) {
+    var a = el("a");
+    a.href = it.href;
+    a.appendChild(el("span", "ico", it.icon || "\u25c6"));
+    a.appendChild(document.createTextNode(it.label));
+    frag.appendChild(a);
   });
   host.replaceChildren(frag);
 }
@@ -1378,12 +1403,11 @@ function handle(e) {
       var pre = el("pre", "out", "");
       body.appendChild(pre);
       d.appendChild(body);
-      lane.think = { pre: pre, meta: meta, chars: 0 };
+      lane.think = { pre: pre, meta: meta };
       laneAdd(lane, d);
     }
     lane.think.pre.textContent += e.text || "";
-    lane.think.chars += (e.text || "").length;
-    lane.think.meta.textContent = "thinking · " + lane.think.chars + " chars";
+    lane.think.meta.textContent = "thinking";
   } else if (k === "llm_call") {
     endActive(lane, "llm");
     lane.think = null;
@@ -1391,11 +1415,6 @@ function handle(e) {
     if (e.text) {
       var msg = el("div", "msg");
       msg.appendChild(renderMarkdown(e.text));
-      var bits = [];
-      if (e.cost_usd) bits.push(fmtUsd(e.cost_usd));
-      if (e.latency_s) bits.push(e.latency_s + "s");
-      if (e.input_tokens) bits.push(e.input_tokens + " in / " + (e.output_tokens || 0) + " out");
-      if (bits.length) msg.appendChild(el("div", "meta", bits.join(" · ")));
       laneAdd(lane, msg);
     }
     laneAdd(lane, promptView(e));
@@ -1433,7 +1452,9 @@ function handle(e) {
     var ok = e.ok !== false && !denied;
     var chip = el("span", "chip " + (denied ? "deny" : ok ? "ok" : "err"));
     chip.appendChild(el("span", null, e.text));
-    if (e.elapsed_s) chip.appendChild(el("span", "t", e.elapsed_s + "s"));
+    // Only when it is long enough to be worth knowing — every action carrying
+    // "0.001s" is four characters of nothing on every row.
+    if (e.elapsed_s >= 0.5) chip.appendChild(el("span", "t", e.elapsed_s + "s"));
     if (e.decision === "deny") chip.appendChild(el("span", "t", "refused by policy"));
     else if (e.error) chip.appendChild(el("span", "t", e.error));
     if (lane.step) {
@@ -1485,8 +1506,7 @@ function handle(e) {
     endActive(lane, "llm");
     closeStep(lane);
     laneSpent(lane, e.spent_usd, true);
-    laneAdd(lane, el("div", "note", "session ended — spent " + fmtUsd(e.spent_usd || 0) +
-      " over " + (e.calls || 0) + " calls"));
+    laneAdd(lane, el("div", "note", "session ended"));
     if (!lane.isRoot && lane.head && lane.head.dot.className === "dot") {
       laneDone(lane, "done", "done");
     }
