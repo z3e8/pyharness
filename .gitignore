@@ -26,3 +26,9 @@ personal-old/
 
 # Old docs/notes — kept locally, not tracked (superseded by new docs/ system)
 docs-legacy/
+
+# Agent working space: plans, the open-issues log, and per-agent decision
+# records. Kept locally so work survives across sessions, not tracked — it is
+# scaffolding for building the project, not part of it. The design rationale
+# that is worth publishing lives in docs/explanation/design-decisions.md.
+agents/

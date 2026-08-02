@@ -87,13 +87,20 @@ load-bearing seams are.
 
 ## The agents/ folder
 
-`agents/` is version-tracked working space for agents (Claude Code included) to
-plan work that outlasts one session. If a task is too big to finish in one go,
-drop the plan and running progress here as a living TODO so the next agent
-resumes from it, and keep it current with what actually shipped. Keep it tidy:
-prune stale notes, and move finished or superseded files into `agents/old/`.
-It is committed (so plans survive across machines and sessions), but nothing in
-it is load-bearing for the running code.
+`agents/` is local working space for agents (Claude Code included) to plan work
+that outlasts one session. If a task is too big to finish in one go, drop the
+plan and running progress here as a living TODO so the next agent resumes from
+it, and keep it current with what actually shipped. Keep it tidy: prune stale
+notes, and move finished or superseded files into `agents/old/`.
+
+**It is gitignored and its history was removed from the repo** (2026-08-01). It
+is scaffolding for building the project, not part of it, and it does not travel
+between machines — back it up yourself if that matters. Nothing in it is
+load-bearing for the running code. Design rationale that *is* worth publishing
+goes to `docs/explanation/design-decisions.md` instead, written in the
+maintainer's voice; do not treat `agents/decisions.md` as its source, since one
+is a log of what agents chose autonomously and the other is a curated account of
+what the maintainer decided.
 
 Keep it **minimal by design** — a few active files, no scratch buildup. Three
 standing docs anchor it: `README.md` (the index/map — keep current), `issues.md`
