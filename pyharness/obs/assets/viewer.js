@@ -144,10 +144,6 @@ function cell(kind, text) {
   };
   tools.appendChild(fold);
   bar.appendChild(tools);
-
-  var chars = el("span", "lbl", text.length + " ch");
-  bar.insertBefore(chars, tools);
-
   wrap.appendChild(bar);
   wrap.appendChild(body);
   paint();
@@ -159,9 +155,8 @@ function cell(kind, text) {
 function promptView(e) {
   var d = el("details", "fold prompt k-prompt");
   var sum = el("summary");
-  var n = (e.messages || []).length;
-  sum.appendChild(el("span", null, "prompt · " + n + " msg" + (n === 1 ? "" : "s") +
-    (e.input_tokens ? " · " + e.input_tokens + " tok in" : "") +
+  sum.appendChild(el("span", null, "prompt" +
+    (e.input_tokens ? " · " + e.input_tokens + " tok" : "") +
     (e.model ? " · " + e.model : "")));
   d.appendChild(sum);
   var body = el("div", "body");
@@ -270,11 +265,10 @@ function into(lane, node, kindClass) {
 /* ------------------------------------------------------------- rollups --- */
 
 function updateStats() {
-  var total = 0, steps = 0;
+  var total = 0;
   lanes.forEach(function (l) { total += l.spend; });
-  if (rootLog) steps = rootLog.querySelectorAll(".k-code").length;
-  var c = byId("stat-cost"); if (c) c.textContent = fmtUsd(total);
-  var s = byId("stat-steps"); if (s) s.textContent = steps;
+  var c = byId("stat-cost");
+  if (c) c.textContent = fmtUsd(total);
 }
 function laneSpent(lane, usd, cumulative) {
   if (usd == null) return;
@@ -415,13 +409,11 @@ function renderSessionList(list) {
     if (s.href) node.href = s.href;
     if (s.name === currentSession) node.classList.add("on");
     node.appendChild(el("span", "n", s.name));
-    var m = el("span", "m");
     if (s.outcome) {
+      var m = el("span", "m");
       m.appendChild(el("span", "pill " + (s.outcome === "answered" ? "ok" : "warn"), s.outcome));
+      node.appendChild(m);
     }
-    if (s.steps != null) m.appendChild(el("span", null, s.steps + " steps"));
-    if (s.cost_usd != null) m.appendChild(el("span", null, fmtUsd(s.cost_usd)));
-    node.appendChild(m);
     // A baked page links; the live viewer switches the stream in place. Picking
     // a session by hand also stops following the newest — otherwise the next
     // poll drags you straight back to it, four seconds after you chose.
@@ -433,6 +425,22 @@ function renderSessionList(list) {
       };
     }
     frag.appendChild(node);
+  });
+  host.replaceChildren(frag);
+}
+
+/** Site nav, for a baked page. The live viewer has nowhere to navigate to and
+ *  supplies nothing, leaving the container empty. */
+function renderNav(items) {
+  var host = byId("nav");
+  if (!host || !items || !items.length) return;
+  var frag = document.createDocumentFragment();
+  items.forEach(function (it) {
+    var a = el("a");
+    a.href = it.href;
+    a.appendChild(el("span", "ico", it.icon || "\u25c6"));
+    a.appendChild(document.createTextNode(it.label));
+    frag.appendChild(a);
   });
   host.replaceChildren(frag);
 }
@@ -497,12 +505,11 @@ function handle(e) {
       var pre = el("pre", "out", "");
       body.appendChild(pre);
       d.appendChild(body);
-      lane.think = { pre: pre, meta: meta, chars: 0 };
+      lane.think = { pre: pre, meta: meta };
       laneAdd(lane, d);
     }
     lane.think.pre.textContent += e.text || "";
-    lane.think.chars += (e.text || "").length;
-    lane.think.meta.textContent = "thinking · " + lane.think.chars + " chars";
+    lane.think.meta.textContent = "thinking";
   } else if (k === "llm_call") {
     endActive(lane, "llm");
     lane.think = null;
@@ -510,11 +517,6 @@ function handle(e) {
     if (e.text) {
       var msg = el("div", "msg");
       msg.appendChild(renderMarkdown(e.text));
-      var bits = [];
-      if (e.cost_usd) bits.push(fmtUsd(e.cost_usd));
-      if (e.latency_s) bits.push(e.latency_s + "s");
-      if (e.input_tokens) bits.push(e.input_tokens + " in / " + (e.output_tokens || 0) + " out");
-      if (bits.length) msg.appendChild(el("div", "meta", bits.join(" · ")));
       laneAdd(lane, msg);
     }
     laneAdd(lane, promptView(e));
@@ -552,7 +554,9 @@ function handle(e) {
     var ok = e.ok !== false && !denied;
     var chip = el("span", "chip " + (denied ? "deny" : ok ? "ok" : "err"));
     chip.appendChild(el("span", null, e.text));
-    if (e.elapsed_s) chip.appendChild(el("span", "t", e.elapsed_s + "s"));
+    // Only when it is long enough to be worth knowing — every action carrying
+    // "0.001s" is four characters of nothing on every row.
+    if (e.elapsed_s >= 0.5) chip.appendChild(el("span", "t", e.elapsed_s + "s"));
     if (e.decision === "deny") chip.appendChild(el("span", "t", "refused by policy"));
     else if (e.error) chip.appendChild(el("span", "t", e.error));
     if (lane.step) {
@@ -604,8 +608,7 @@ function handle(e) {
     endActive(lane, "llm");
     closeStep(lane);
     laneSpent(lane, e.spent_usd, true);
-    laneAdd(lane, el("div", "note", "session ended — spent " + fmtUsd(e.spent_usd || 0) +
-      " over " + (e.calls || 0) + " calls"));
+    laneAdd(lane, el("div", "note", "session ended"));
     if (!lane.isRoot && lane.head && lane.head.dot.className === "dot") {
       laneDone(lane, "done", "done");
     }

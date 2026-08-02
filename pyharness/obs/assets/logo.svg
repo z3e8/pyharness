@@ -1,0 +1,11 @@
+<!-- The pyharness mark. The four dark blocks are `currentColor` so the mark
+     inverts with the theme (the brand's #1E2433 is invisible on a dark page);
+     the accent block keeps the brand violet in both, where it reads on either
+     background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" class="mark" aria-hidden="true">
+  <rect x="0"   y="0"   width="90"  height="420" fill="currentColor"/>
+  <rect x="90"  y="0"   width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="0"   width="90"  height="255" fill="currentColor"/>
+  <rect x="90"  y="165" width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="255" width="90"  height="165" fill="#7F77DD"/>
+</svg>

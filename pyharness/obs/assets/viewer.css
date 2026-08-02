@@ -26,6 +26,8 @@
   --danger-bg: #2e1618;
   --violet:    #b49bff;
   --violet-bg: #1e1a33;
+  --brand:     #7F77DD;   /* the logo's accent block — fixed in both themes */
+  --logo-ink:  #E6E9F0;   /* the logo's dark blocks, inverted for a dark page */
   --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
 
   --r-sm: 6px;
@@ -59,6 +61,8 @@
     --danger-bg: #fdeaea;
     --violet:    #5b3fc4;
     --violet-bg: #f0ecff;
+    --brand:     #7F77DD;
+    --logo-ink:  #1E2433;   /* the brand's own ink, on a light page */
     --shadow:    0 1px 2px rgba(15,20,30,.06), 0 8px 24px -14px rgba(15,20,30,.24);
     color-scheme: light;
   }
@@ -84,6 +88,8 @@
   --danger-bg: #fdeaea;
   --violet:    #5b3fc4;
   --violet-bg: #f0ecff;
+  --brand:     #7F77DD;
+  --logo-ink:  #1E2433;
   --shadow:    0 1px 2px rgba(15,20,30,.06), 0 8px 24px -14px rgba(15,20,30,.24);
   color-scheme: light;
 }
@@ -112,12 +118,14 @@ a:hover { text-decoration: underline; }
   display: flex; flex-direction: column;
   background: var(--bg-elev); border-right: 1px solid var(--border);
 }
-.rail-head { padding: 16px 16px 12px; display: flex; align-items: center; gap: 9px; }
-.rail-head .mark {
-  width: 22px; height: 22px; border-radius: 7px; flex: none;
-  background: linear-gradient(140deg, var(--accent), var(--violet));
+.rail-head { padding: 18px 16px 14px; display: flex; align-items: center; gap: 10px; }
+/* The mark's dark blocks are `currentColor` (see logo.svg), so the ink follows
+   the theme while the accent block stays brand violet in both. */
+.rail-head .mark { height: 21px; width: auto; flex: none; color: var(--logo-ink); }
+.rail-head .wordmark {
+  font-weight: 560; letter-spacing: -.025em; font-size: 17px; color: var(--logo-ink);
 }
-.rail-head .wordmark { font-weight: 640; letter-spacing: -.01em; font-size: 15px; }
+.rail-head .wordmark b { color: var(--brand); font-weight: inherit; }
 .rail-head .theme {
   margin-left: auto; width: 28px; height: 28px; border-radius: var(--r-sm);
   border: 1px solid var(--border); background: var(--bg); color: var(--text-dim);
@@ -271,10 +279,6 @@ a:hover { text-decoration: underline; }
 
 /* the model's prose */
 .msg { margin: 16px 0; }
-.msg .meta {
-  margin-top: 6px; font-size: 11.5px; color: var(--text-faint);
-  font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap;
-}
 
 /* the final answer */
 .answer {
@@ -497,6 +501,7 @@ details.fold .body {
   align-items: center; font-size: 12px; color: var(--text-faint);
   font-variant-numeric: tabular-nums; }
 .card .nums span b { display: block; color: var(--text); font-size: 13px; font-weight: 560; }
+.card .nums .refused b { color: var(--warn); }
 .card .nums .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
 
 .pill {

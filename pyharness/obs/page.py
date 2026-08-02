@@ -13,6 +13,7 @@ work from `file://` with no server and no network.
 
 from __future__ import annotations
 
+import base64
 import json
 from functools import lru_cache
 from html import escape
@@ -42,6 +43,13 @@ try {
 """
 
 
+def _favicon() -> str:
+    """The mark as a data: URI. Base64 rather than a link to a file, because a
+    baked page has to carry everything it needs — including its own icon."""
+    data = base64.b64encode(asset("favicon.svg").encode()).decode()
+    return f'<link rel="icon" href="data:image/svg+xml;base64,{data}">'
+
+
 def head(title: str) -> str:
     return f"""<!doctype html>
 <html lang="en">
@@ -49,6 +57,7 @@ def head(title: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+{_favicon()}
 <script>{_THEME_BOOT}</script>
 <style>
 {asset("viewer.css")}
@@ -58,14 +67,15 @@ def head(title: str) -> str:
 
 
 def _nav(items: list[NavItem], current: str | None) -> str:
-    if not items:
-        return ""
+    """The site nav. Always emitted, even empty: the live viewer has no site to
+    navigate, but a *baked* session page does, and it gets its links from the
+    feed (`renderNav`) rather than from a second page template."""
     links = "\n".join(
         f'<a class="{"on" if href == current else ""}" href="{escape(href)}">'
         f'<span class="ico">{escape(icon)}</span>{escape(label)}</a>'
         for label, href, icon in items
     )
-    return f'<nav class="rail-nav">\n{links}\n</nav>'
+    return f'<nav class="rail-nav" id="nav">\n{links}\n</nav>'
 
 
 def rail(
@@ -86,10 +96,13 @@ def rail(
         if follow_toggle
         else ""
     )
+    # The wordmark is HTML, not the lockup SVG: real text renders crisply at
+    # 15px, picks up the page's font, and keeps the violet `h` a token rather
+    # than a baked hex — so it inverts with the theme like the mark does.
     return f"""<aside id="rail">
   <div class="rail-head">
-    <span class="mark"></span>
-    <span class="wordmark">pyharness</span>
+    {asset("logo.svg")}
+    <span class="wordmark">py<b>h</b>arness</span>
     <button class="theme" id="theme" aria-label="Toggle theme"></button>
   </div>
   {_nav(nav or [], current)}
@@ -130,7 +143,6 @@ def session_template() -> str:
     <div class="tb-row">
       <span class="tb-title" id="session-title">waiting for a session…</span>
       <span class="tb-stats">
-        <span><b id="stat-steps">0</b> steps</span>
         <span class="spend"><b id="stat-cost">$0.00</b></span>
         <span id="stat-clock">0m00s</span>
         <span class="dotstat" id="status">connecting…</span>

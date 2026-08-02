@@ -112,6 +112,7 @@ def _static_feed(
     ended: float,
     *,
     siblings: list[dict] | None = None,
+    nav: list[NavItem] | None = None,
     current: str = "",
 ) -> str:
     """The baked feed: replay, then freeze. Everything after the loop exists
@@ -132,11 +133,15 @@ def _static_feed(
         else "unknown"
     )
     duration = max(0.0, ended - started)
-    nav = json.dumps(siblings or [], default=str).replace("<", "\\u003c")
+    listing = json.dumps(siblings or [], default=str).replace("<", "\\u003c")
+    navitems = json.dumps(
+        [{"label": lbl, "href": href, "icon": icon} for lbl, href, icon in nav or []]
+    ).replace("<", "\\u003c")
     return f"""
-window.SESSIONS = JSON.parse({json.dumps(nav)});
+window.SESSIONS = JSON.parse({json.dumps(listing)});
 currentSession = {json.dumps(current)};
 renderSessionList();
+renderNav(JSON.parse({json.dumps(navitems)}));
 
 const EVENTS = JSON.parse({json.dumps(payload)});
 for (const e of EVENTS) {{
@@ -167,6 +172,7 @@ def build_page(
     *,
     title: str | None = None,
     siblings: list[dict] | None = None,
+    nav: list[NavItem] | None = None,
 ) -> str:
     """One finished session as a single self-contained HTML page."""
     session_dir = Path(session_dir)
@@ -174,7 +180,12 @@ def build_page(
     started, ended = _span(events)
     return render_page(
         _static_feed(
-            events, started, ended, siblings=siblings, current=session_dir.name
+            events,
+            started,
+            ended,
+            siblings=siblings,
+            nav=nav,
+            current=session_dir.name,
         ),
         title=title or f"pyharness — {session_dir.name}",
     )
@@ -218,8 +229,11 @@ def build_index(
     for d in digests:
         outcome = d["outcome"]
         cls = "ok" if outcome == "answered" else "warn"
+        # Two numbers, and one of them only when it is non-zero. A step count
+        # and an action count told a reader nothing they were choosing on.
         refused = (
-            f'<span><b>{d["denials"]}</b><span class="k">refused</span></span>'
+            f'<span class="refused"><b>{d["denials"]}</b>'
+            f'<span class="k">refused</span></span>'
             if d["denials"]
             else ""
         )
@@ -229,14 +243,11 @@ def build_index(
             f'<span class="pill {cls}">{escape(outcome)}</span></span>'
             f'<span class="blurb">{escape((d.get("task") or "")[:220])}</span>'
             f'<span class="nums">{refused}'
-            f'<span><b>{d["steps"]}</b><span class="k">steps</span></span>'
-            f'<span><b>{d["actions"]}</b><span class="k">actions</span></span>'
             f'<span><b>{_fmt_usd(d["cost_usd"])}</b><span class="k">cost</span></span>'
             "</span></a>"
         )
     total = sum(d["cost_usd"] for d in digests)
     denials = sum(d["denials"] for d in digests)
-    answered = sum(d["outcome"] == "answered" for d in digests)
     return f"""{head(escape(title))}
 <div class="shell">
 {rail(nav=nav, current="index.html", aside_label="Sessions", aside_id="sessions")}
@@ -255,9 +266,6 @@ def build_index(
       <div class="stat"><div class="v">{
         len(digests)
     }</div><div class="k">sessions</div></div>
-      <div class="stat good"><div class="v">{
-        answered
-    }</div><div class="k">answered</div></div>
       <div class="stat flag"><div class="v">{
         denials
     }</div><div class="k">refused by policy</div></div>
@@ -304,7 +312,9 @@ def build_site(
     for session in sessions:
         session = Path(session)
         page = out_dir / f"{session.name}.html"
-        page.write_text(build_page(session, siblings=sidebar), encoding="utf-8")
+        page.write_text(
+            build_page(session, siblings=sidebar, nav=nav), encoding="utf-8"
+        )
         written.append(page)
 
     for label, src, name in doc_pages:
