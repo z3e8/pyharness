@@ -42,7 +42,7 @@ Three, in the order they drive the design.
 - **The model provider**, and anyone who can substitute the completions.
 - **A resolver you do not control** — see the DNS-rebinding residual below.
 - **A human who approves everything.** Prompt fatigue is treated as a *design
-  constraint* rather than an attacker: four of the ten gaps below exist
+  constraint* rather than an attacker: published gaps 1 and 4 below exist
   precisely because a prompt asked too often stops being a decision. That
   tradeoff is stated at each one rather than hidden.
 
@@ -162,9 +162,8 @@ prose and behavior cannot drift apart.
 
 **32 of 43 adversarial attacks blocked. 11 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
-[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups the
-eleven by the *decision* that produced them, because there are fewer decisions
-than gaps.
+[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
+the *decision* that produced them, because there are fewer decisions than gaps.
 
 ### 1. A grant's unit of trust is coarser than the prompt's
 
@@ -297,7 +296,7 @@ already being outside the box.
 
 `child-scope-wider-than-parent`
 
-The other ten are defended trade-offs. This one is stated as **open, not
+Every other gap here is a defended trade-off. This one is stated as **open, not
 defended**: a child's host scope is normalized and wired in but never intersected
 with the parent's, so a scoped parent can ask for a child with a wider one. The
 natural reading of the feature is that a scope follows delegation down, and here
@@ -362,7 +361,7 @@ floor directly.
 ## Checking any of this yourself
 
 ```bash
-make evals                            # re-run the 40 attacks, rewrite the scoreboard
+make evals                            # re-run the 43 attacks, rewrite the scoreboard
 make test                             # the suite plus the policy enumeration tests
 uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
 make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N

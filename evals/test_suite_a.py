@@ -19,8 +19,30 @@ prose that quotes it.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from evals.attacks import ATTACKS
 from evals.scoreboard import Verdict, regressions, render, run_suite
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+# Prose that quotes the suite, and the only places allowed to. Anything else
+# should link to the scoreboard rather than restate a number.
+_PROSE = [_ROOT / "README.md", *sorted((_ROOT / "docs").rglob("*.md"))]
+
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}  # fmt: skip
+
+# "32 of 43 attacks blocked" — both halves at once.
+_N_OF_M = re.compile(r"(\d+) of (\d+)\s+(?:[a-z]+\s+)?attacks", re.I)
+# The number immediately in front of the noun: "the 43 attacks", "11 known
+# gaps", "four of the ten gaps". This is the shape that actually rotted.
+_BEFORE_NOUN = re.compile(
+    r"(\d+|[a-z]+)\s+(?:known\s+|published\s+)?(attacks|gaps)\b", re.I
+)
 
 
 def test_no_attack_deviates_from_its_documented_expectation():
@@ -62,6 +84,49 @@ def test_the_suite_contains_expected_blocked_attacks():
     assert surfaces == {a.surface for a in ATTACKS}, (
         "some surface is represented only by its gaps — every surface needs at "
         "least one attack the defense stops"
+    )
+
+
+def test_the_prose_quotes_the_suite_s_real_numbers():
+    """The counts in the docs are copied by hand, and one of them rotted: the
+    threat model claimed `30 of 40` and `four of the ten gaps` for three days
+    after the board moved to 32/43 with eleven. `make evals` regenerates
+    `SCOREBOARD.md`; nothing regenerated the prose that quotes it. On a project
+    whose claim is that the number cannot rot silently, a rotted number is the
+    worst thing a sceptical reader can find, so the prose is now checked against
+    the live suite rather than against the last time somebody remembered.
+
+    Only the counts are checked. Prose that argues about the gaps is not
+    something a test can hold, which is why the fix for a failure here is to
+    re-read the section, not to bump a digit.
+    """
+    results = run_suite(ATTACKS)
+    total = len(results)
+    blocked = sum(1 for r in results if r.verdict is Verdict.BLOCKED and r.as_expected)
+    gaps = sum(1 for r in results if r.attack.known_gap and r.as_expected)
+    allowed = {"attacks": total, "gaps": gaps}
+
+    stale: list[str] = []
+    for path in _PROSE:
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            where = f"{path.relative_to(_ROOT)}:{lineno}"
+            for claimed_blocked, claimed_total in _N_OF_M.findall(line):
+                if (int(claimed_blocked), int(claimed_total)) != (blocked, total):
+                    stale.append(
+                        f"{where}: says {claimed_blocked} of {claimed_total} "
+                        f"attacks blocked; the suite reports {blocked} of {total}"
+                    )
+            for token, noun in _BEFORE_NOUN.findall(line):
+                count = (
+                    int(token) if token.isdigit() else _NUMBER_WORDS.get(token.lower())
+                )
+                if count is not None and count != allowed[noun.lower()]:
+                    stale.append(
+                        f"{where}: says {token} {noun}; there are "
+                        f"{allowed[noun.lower()]}"
+                    )
+    assert not stale, "\n".join(
+        ["prose quotes numbers the suite no longer reports:", *stale]
     )
 
 
