@@ -71,8 +71,10 @@ Approver = Callable[["ApprovalRequest"], "ApprovalOutcome | bool"]
 class Broker:
     """The single chokepoint every side effect flows through.
 
-    For each call, in order: policy check -> audit -> budget (for metered
-    actions) -> execute. In V1 execution is a direct in-process function call;
+    For each call, in order: policy check -> validate -> audit -> budget (for
+    metered actions) -> execute. `validate` is the capability's optional
+    "could this call even run" hook, placed before the approval prompt so a
+    human is never asked to bless a call that is already doomed. In V1 execution is a direct in-process function call;
     the same interface later fronts an out-of-process child without the agent or
     any capability changing.
     """
@@ -348,6 +350,28 @@ class Broker:
                     )
                     _end(ok=False, decision="deny")
                 raise PermissionDenied(f"policy denied {action}")
+            # Reject a call that cannot run *before* asking a human to bless it.
+            # Without this the approver is shown a real, correctly-rendered
+            # request for a call that raises the moment it executes — e.g.
+            # `fill_secret(ref=...)` against a stale snapshot — which spends a
+            # credential-release approval on nothing and trains approval fatigue.
+            # Placed after the DENY check so a denied action stays denied and
+            # validation can never be used to probe policy with crafted args.
+            validate = getattr(self._capabilities.get(cap), "validate", None)
+            if validate is not None:
+                try:
+                    validate(op, args, kwargs)
+                except Exception as exc:
+                    if self._settle(token):
+                        error = self.redact(repr(exc))
+                        self.audit.record(
+                            action=action, phase="end", ok=False, error=error
+                        )
+                        telemetry.record_tool(
+                            span, action=action, decision="allow", ok=False, error=error
+                        )
+                        _end(ok=False, error=error)
+                    raise
             if decision is Decision.APPROVE:
                 request = self._approval_request(cap, op, action, args, kwargs)
                 # IRREVERSIBLE actions are never covered by, and never mint, a

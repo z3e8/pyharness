@@ -125,6 +125,15 @@ asks `allow? [y/N]` (or `[y/a/N]` when a grant is on offer — see below).
 > The `ApprovalRequest` is built from the **structured** call, never an
 > agent-supplied display string — so what a human sees is exactly what executes.
 
+A capability may also supply `validate(op, args, kwargs)`, which runs *before*
+the prompt and raises if the call cannot run at all. The browser uses it for
+`ref=`: a ref from a stale snapshot is refused when the op executes anyway, so
+without this hook the human is asked to approve typing a credential into a page
+for a call guaranteed to raise. Approvals only mean something if each one is
+load-bearing, so a doomed call must never spend one. It runs after the policy
+deny check — a denied action stays denied, and validation cannot be used to probe
+policy with crafted arguments.
+
 ### Scoped grants — approve a domain, not every click
 
 A 20-field job application is ~21 separate approvals if every `click`/`fill`/POST

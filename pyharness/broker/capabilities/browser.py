@@ -240,6 +240,23 @@ class BrowserCapability:
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
         return ActionCategory.OUTWARD, " ".join(f"{op} {target}{where}".split())
 
+    def validate(self, op: str, args: tuple, kwargs: dict) -> None:
+        """Reject a page action whose `ref` cannot resolve, before the human is
+        asked to approve it. `_target` refuses a ref that has no current snapshot
+        (or isn't in it) — but that check runs at execution, after the approval
+        prompt, so a stale ref spends a real credential-release sign-off on a call
+        that was always going to raise.
+
+        Only `ref=` is checked: it is the one argument whose validity depends on
+        session state the caller can't see. Everything else fails identically
+        whether it's caught here or in the op."""
+        ref = kwargs.get("ref")
+        if ref is None:
+            return
+        session = self._peek(kwargs)
+        if session is not None:  # no session: the op raises its own clear error
+            self._target(session, None, ref)
+
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
         """The grant key for a gated page action: action-class "browser" plus the
         host of the live page. The host comes from Playwright's own `page.url`

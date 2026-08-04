@@ -1584,6 +1584,33 @@ def test_browser_session_id_defaults_to_the_only_open_browser(tmp_path):
         cap.goto("http://x")
 
 
+def test_unresolvable_ref_fails_before_the_human_is_asked(tmp_path):
+    """A ref with no current snapshot cannot run, so it must never reach the
+    approver: spending a credential-release sign-off on a call that was always
+    going to raise is how approval fatigue gets trained."""
+    from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
+
+    prompted = []
+    cap, _ = _browser_with_fake(Workspace(tmp_path), vault=Vault({"pw": "hunter2"}))
+    broker = _broker(
+        tmp_path,
+        policy=Policy(require_approval=set(MUTATING_ACTIONS)),
+        approver=lambda request: prompted.append(request) or True,
+    )
+    broker.register(cap)
+    ns = broker.namespace()
+    ns["goto"]("http://x")  # navigation clears any snapshot, so no ref is live
+
+    with pytest.raises(ValueError, match="snapshot"):
+        ns["fill_secret"](ref="e94", secret="pw")
+    assert prompted == []  # the point: never asked
+
+    # a ref from the current snapshot still prompts and runs
+    ns["snapshot"]()
+    ns["fill_secret"](ref="e5", secret="pw")
+    assert [r.action for r in prompted] == ["browser.fill_secret"]
+
+
 def test_mutating_browser_requires_approval(tmp_path):
     from pyharness.broker.capabilities.browser import MUTATING_ACTIONS
 

@@ -35,8 +35,12 @@ that bill coming due. See [The `run_python` action space](action-space.md).
 out to be needed, or route every side effect through one function.
 
 **The call.** Everything goes through `broker/dispatch.py`, which does
-policy → audit → budget → execute in that order. A capability that wants to
-touch the world asks the broker.
+policy → validate → audit → budget → execute in that order. A capability that
+wants to touch the world asks the broker. `validate` is an optional per-capability
+hook that rejects a call which cannot run — a `ref=` from a stale browser
+snapshot, say — *before* a human is asked to approve it. It sits after the policy
+deny check, so a denied action stays denied and no one can probe policy with
+crafted arguments.
 
 **Why.** This is the decision the whole project rests on, and it is only
 available at the start. Retrofitting complete mediation onto a codebase that
