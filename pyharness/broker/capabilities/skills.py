@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ...security.policy import ActionCategory
@@ -12,6 +13,23 @@ from ...tools.skills import (
     validate_skill_name,
     write_skill,
 )
+
+_PY_FENCE = re.compile(r"^\s*```\s*(py|python)\s*$", re.M)
+
+
+def _code_in_markdown_warning(instructions: str, files: dict | None) -> str:
+    """Flag the shape that rots: a procedure whose python lives in the markdown
+    with nothing in `files`. The next run has to retype it from the prose, which
+    is how a recorded-and-replayed detail (a snapshot ref, a selector) survives
+    long past the page that produced it. Advisory — `save_skill`'s docstring
+    already asks for this, and nothing else told the author it was ignored."""
+    if files or not _PY_FENCE.search(instructions or ""):
+        return ""
+    return (
+        "\n  note: the instructions carry python but nothing is in `files`. Move "
+        "the code into a bundled module so the next run calls it instead of "
+        "retyping it — retyped steps are how stale details get copied forward."
+    )
 
 
 def _positional_files(args: tuple):
@@ -150,6 +168,7 @@ class SkillsCapability:
         return (
             f"saved skill {name!r} ({n} bundled file{'s' * (n != 1)}) to {skill_dir} — "
             "unverified until you run it and record_skill_use(name, 'worked')."
+            + _code_in_markdown_warning(instructions, files)
         )
 
     def edit_skill(self, name: str, edits: list, reason: str = "") -> str:

@@ -344,6 +344,19 @@ def test_record_use_deviated_clears_verified_and_warns(tmp_path):
     assert "steps-wrong" in reloaded.search("libr")
 
 
+def test_save_skill_flags_python_left_in_the_markdown(tmp_path):
+    """The shape that rots: the procedure retyped from prose every run, which is
+    how a stale snapshot ref gets copied forward long after the page changed."""
+    cap = SkillsCapability(Registry(), tmp_path)
+    prose = "## Steps\n\n```python\nbrowser.click(ref='e94')\n```\n"
+    assert "bundled module" in cap.save_skill("a", "d", prose)
+    # silent once the code is where it belongs, or when there is no code at all
+    assert "bundled module" not in cap.save_skill(
+        "b", "d", prose, files={"m.py": "x=1"}
+    )
+    assert "bundled module" not in cap.save_skill("c", "d", "just prose, no code")
+
+
 def test_record_use_rejects_bad_outcome_and_unknown_skill(tmp_path):
     cap = SkillsCapability(Registry(), tmp_path)
     cap.save_skill("s", "d", "i")
