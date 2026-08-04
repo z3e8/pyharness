@@ -171,11 +171,21 @@ class SkillsCapability:
         )
 
     def record_skill_use(self, name: str, outcome: str, note: str = "") -> str:
-        """Log how a learned skill just behaved: `outcome` is 'worked' or
-        'failed', with an optional `note` (a changed selector, why it broke). The
-        first 'worked' marks the skill verified; the log lets you and later
-        sessions see how it last behaved and catch a breaking change. Do this
-        after actually running the skill — trust is earned by a real run."""
+        """Log how a learned skill just behaved, with an optional `note` (a
+        changed selector, why it broke). Do this after actually running it —
+        trust is earned by a real run. `outcome` is one of:
+
+        - `'worked'` — the steps ran **as written**. Marks the skill verified.
+        - `'deviated'` — the task got done, but only after you corrected the
+          steps: a stale ref, a missing call, a wrong URL. Clears verified,
+          because the procedure on disk is now known-wrong. Follow it with
+          `edit_skill` so the next run doesn't rediscover the same fix.
+        - `'failed'` — the task did not get done.
+
+        Judge the *procedure*, not the task. If you had to work around anything
+        the instructions told you to do, that is `'deviated'` even though you
+        finished — recording it as `'worked'` is how a broken skill accumulates a
+        clean record and hardens."""
         validate_skill_name(name)
         skill_dir = self.skills_dir / name
         if not (skill_dir / "SKILL.md").exists():

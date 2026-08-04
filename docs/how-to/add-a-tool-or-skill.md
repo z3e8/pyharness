@@ -82,9 +82,12 @@ returns the bundled code as a module.
   executes. See [Security & audit](../explanation/security-and-audit.md).
 - **Trust is earned by a real run.** A new or revised skill is `unverified`
   (tagged in `search_tools`, spelled out in `describe_tool`) — treat its steps as
-  a hypothesis. After running it, call `record_skill_use(name, "worked"|"failed",
-  note=...)`; the first `"worked"` marks it `verified`, and the bounded journal
-  lets a later session see how it last behaved and catch a breaking change.
+  a hypothesis. After running it, call
+  `record_skill_use(name, "worked"|"deviated"|"failed", note=...)`; the first
+  `"worked"` marks it `verified`, and the bounded journal lets a later session
+  see how it last behaved and catch a breaking change. Judge the steps, not the
+  task: if you finished only by working around what the instructions said, that
+  is `"deviated"` — it clears `verified` and asks for an `edit_skill`.
 - **Revising a skill: prefer `edit_skill(name, edits, reason="")`.** `edits` is
   a list of `{"old": ..., "new": ...}` deltas — a surgical fix that keeps every
   detail not being corrected, rather than regenerating the whole runbook.

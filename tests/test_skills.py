@@ -322,6 +322,28 @@ def test_record_use_failed_flags_last_failed(tmp_path):
     assert "site blocks headless" in reg.describe("scrape")
 
 
+def test_record_use_deviated_clears_verified_and_warns(tmp_path):
+    """A run that finished only after correcting the steps must not leave the
+    skill looking healthy — that is how a broken procedure hardens."""
+    reg = Registry()
+    cap = SkillsCapability(reg, tmp_path)
+    cap.save_skill("libr", "read a shelf", "1. goto the page\n2. use ref e94")
+    cap.record_skill_use("libr", "worked", note="clean")
+    assert read_journal(tmp_path / "libr")["verified"] is True
+
+    msg = cap.record_skill_use("libr", "deviated", note="e94 was stale; snapshotted")
+    assert "now unverified" in msg
+    assert read_journal(tmp_path / "libr")["verified"] is False
+
+    assert "steps-wrong" in reg.search("libr")
+    details = reg.describe("libr")
+    assert "WARNING" in details and "edit_skill" in details
+    # and it survives to the next session
+    reloaded = Registry()
+    load_skills(reloaded, tmp_path)
+    assert "steps-wrong" in reloaded.search("libr")
+
+
 def test_record_use_rejects_bad_outcome_and_unknown_skill(tmp_path):
     cap = SkillsCapability(Registry(), tmp_path)
     cap.save_skill("s", "d", "i")

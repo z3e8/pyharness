@@ -332,8 +332,11 @@ class Registry:
             tags.append("featured")
         if info.source == "learned" and not info.verified:
             tags.append("unverified")  # never run successfully — a hypothesis, not fact
-        if info.uses and info.uses[-1].get("outcome") == "failed":
+        last = info.uses[-1].get("outcome") if info.uses else None
+        if last == "failed":
             tags.append("last-failed")  # its most recent run broke; read the journal
+        elif last == "deviated":
+            tags.append("steps-wrong")  # last run finished only after correcting them
         status = _status(info)
         if status:
             tags.append(status)
@@ -374,13 +377,19 @@ def _skill_trust_block(info: ToolInfo) -> str:
     ever worked, and its recent outcomes so a breaking change is visible before
     the agent relies on the procedure below."""
     if info.verified:
-        head = "verified: yes — has run successfully before."
+        head = "verified: yes — the steps below have run as written."
     else:
         head = (
             "verified: no — never confirmed against the real surface. Treat the "
             "steps below as a hypothesis: check them before relying on them."
         )
     lines = [head]
+    if info.uses and info.uses[-1].get("outcome") == "deviated":
+        lines.append(
+            "WARNING: the last run finished only after correcting these steps. "
+            "Expect at least one of them to be wrong; fix it with edit_skill "
+            "rather than working around it again."
+        )
     if info.check:
         lines.append(f"check (run this to confirm it worked): {info.check}")
     if info.uses:

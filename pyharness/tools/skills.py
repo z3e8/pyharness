@@ -75,6 +75,8 @@ def validate_skill_name(name: str) -> str:
 _JOURNAL = "journal.json"
 _MAX_USES = 10
 _EMPTY_JOURNAL = {"verified": False, "uses": []}
+# How a run may report on the procedure it followed — see `record_use`.
+_OUTCOMES = ("worked", "deviated", "failed")
 
 
 def read_journal(skill_dir: str | Path) -> dict:
@@ -101,11 +103,22 @@ def record_use(
     skill_dir: str | Path, outcome: str, note: str = "", *, now: str | None = None
 ) -> dict:
     """Append a use outcome to a skill's journal and return the updated state.
-    A 'worked' outcome marks the skill verified (trust is earned by a real run,
-    never asserted); the log is bounded to the most recent `_MAX_USES` entries so
-    a later session can see how it last behaved and catch a breaking change."""
-    if outcome not in ("worked", "failed"):
-        raise ValueError("outcome must be 'worked' or 'failed'")
+
+    Three outcomes, because trust is about the *procedure*, not just the task.
+    'worked' means the written steps ran as written, and marks the skill verified
+    (trust is earned by a real run, never asserted). 'deviated' means the task
+    succeeded but only after correcting the steps — it *clears* verified, since
+    the procedure on disk is now known-wrong. 'failed' means the task did not get
+    done, and leaves verified as it was.
+
+    The middle outcome is the point: with only worked/failed, a run that hit a
+    deterministic error in the steps, recovered, and finished the task is honestly
+    'worked' — so the journal reports health while the bad steps harden.
+
+    The log is bounded to the most recent `_MAX_USES` entries so a later session
+    can see how it last behaved and catch a breaking change."""
+    if outcome not in _OUTCOMES:
+        raise ValueError(f"outcome must be one of {', '.join(map(repr, _OUTCOMES))}")
     skill_dir = Path(skill_dir)
     data = read_journal(skill_dir)
     stamp = now or datetime.now(UTC).isoformat(timespec="seconds")
@@ -115,6 +128,8 @@ def record_use(
     data["uses"] = (data["uses"] + [entry])[-_MAX_USES:]
     if outcome == "worked":
         data["verified"] = True
+    elif outcome == "deviated":
+        data["verified"] = False
     _write_journal(skill_dir, data)
     return data
 

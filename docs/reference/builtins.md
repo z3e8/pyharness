@@ -257,13 +257,27 @@ SKILL.md frontmatter and shown by `describe_tool` above the instructions, so
 
 **Trust is earned, not asserted.** A newly saved or revised skill is
 **unverified** — it has never run successfully, so its steps are a hypothesis.
-`record_skill_use(name, outcome, note="")` logs how a run went (`outcome` is
-`"worked"` or `"failed"`); the first `"worked"` marks the skill `verified`. The
-log is a bounded per-skill journal (`journal.json` beside `SKILL.md`) so a later
-session sees how it last behaved. `search_tools` tags an `unverified` or
-`last-failed` skill; `describe_tool` shows the verification state and recent uses
-above the instructions. Recording a use writes only metadata, so it is *not*
-gated for approval.
+`record_skill_use(name, outcome, note="")` logs how a run went, and the outcome
+judges the **procedure**, not the task:
+
+| `outcome` | Means | Effect on `verified` |
+|---|---|---|
+| `"worked"` | the steps ran as written | sets it |
+| `"deviated"` | the task got done, but only after correcting the steps | **clears** it |
+| `"failed"` | the task did not get done | leaves it |
+
+`"deviated"` is what keeps the journal honest. With only worked/failed, a run
+that hit a deterministic error in the steps, recovered, and finished the task is
+truthfully `"worked"` — so a broken procedure accumulates a clean record and
+hardens. Recording `"deviated"` should be followed by an `edit_skill` that fixes
+what was wrong.
+
+The log is a bounded per-skill journal (`journal.json` beside `SKILL.md`) so a
+later session sees how it last behaved. `search_tools` tags an `unverified`,
+`last-failed`, or `steps-wrong` skill; `describe_tool` shows the verification
+state and recent uses above the instructions, and warns outright when the last
+run deviated. Recording a use writes only metadata, so it is *not* gated for
+approval.
 
 **Revising a skill: prefer `edit_skill`.** `edits` is a list of
 `{"old": <exact text occurring once in the instructions>, "new": <replacement>}`
