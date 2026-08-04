@@ -463,7 +463,7 @@ class BrowserCapability:
     def snapshot(
         self, save: str | None = None, *, session_id: str | None = None
     ) -> dict:
-        """Read the page as an accessibility tree with stable element refs — the
+        """Read the page as an accessibility tree with per-element refs — the
         way to *see* what you can act on before clicking or filling.
 
         Returns YAML where each element carries a `[ref=eN]` handle and links show
@@ -475,9 +475,11 @@ class BrowserCapability:
               - /url: /careers
 
         Pass those refs to `click(ref=...)` / `fill(ref=...)` instead of guessing a
-        CSS selector. Refs stay valid until you navigate (`goto` invalidates them —
-        snapshot again on the new page); re-snapshot after an action that rewrites
-        the page. Any secret this session injected is masked. A normal page rides
+        CSS selector. A ref is a handle into *this* snapshot, not a property of the
+        page: the numbering is not reproducible across runs, and `goto` invalidates
+        every ref (snapshot again on the new page). Re-snapshot after an action that
+        rewrites the page, and never reuse a ref recorded by an earlier session.
+        Any secret this session injected is masked. A normal page rides
         back inline as `text`; an oversized one — or an explicit `save="path"` —
         spills to the workspace as `path`/`bytes`/`preview` with `text=None` (see
         `read_text`)."""
