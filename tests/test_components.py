@@ -589,7 +589,12 @@ def test_encrypted_file_roundtrip_and_wrong_passphrase(tmp_path):
     assert EncryptedFile(path, "correct horse").names() == ["github", "openai"]
     assert (path.stat().st_mode & 0o777) == 0o600
 
-    with pytest.raises(Exception):  # authenticated decryption fails on wrong passphrase
+    # A wrong passphrase must name itself, not surface as a bare InvalidToken:
+    # that exception can reach agent code, where a blank crypto failure gets
+    # narrated to the human as a corrupt or rotated vault.
+    from pyharness.security.vault import VaultPassphraseError
+
+    with pytest.raises(VaultPassphraseError, match="PYHARNESS_VAULT_PASSPHRASE"):
         EncryptedFile(path, "wrong").load()
 
 

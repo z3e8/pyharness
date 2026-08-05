@@ -502,7 +502,10 @@ entry.
 Resolution order, first hit wins: in-memory dict → environment
 (`PYHARNESS_SECRET_<NAME>`) → encrypted file. The file is sealed with a
 passphrase-derived key (scrypt) and Fernet (authenticated AES); a wrong
-passphrase fails to decrypt rather than returning garbage. See
+passphrase fails to decrypt rather than returning garbage, and is reported as a
+`VaultPassphraseError` naming the variable rather than Fernet's bare
+`InvalidToken` — an unexplained crypto failure reaching agent code is one the
+model will invent a cause for when it answers the human. See
 [Use the secrets vault](../how-to/use-the-vault.md).
 
 ## Site profiles — a login the agent can name but never read

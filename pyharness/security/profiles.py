@@ -71,7 +71,7 @@ class ProfileStore:
     def load(self, name: str) -> dict:
         """The saved ``storage_state`` dict for `name`. Raises ``KeyError`` if the
         profile is absent (distinct from the empty dict a missing vault yields);
-        a wrong passphrase surfaces as Fernet's authentication failure."""
+        a wrong passphrase surfaces as ``VaultPassphraseError``."""
         path = self._path(name)
         if not path.exists():
             raise KeyError(f"no profile named {name!r}")

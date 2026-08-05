@@ -21,6 +21,15 @@ DEFAULT_ENV_PREFIX = "PYHARNESS_SECRET_"
 PASSPHRASE_ENV = "PYHARNESS_VAULT_PASSPHRASE"
 
 
+class VaultPassphraseError(RuntimeError):
+    """The sealed file did not authenticate under the passphrase in hand.
+
+    Fernet raises a bare `InvalidToken` with no message; when that crosses into
+    agent code it reads as an unexplained crypto failure, and the model invents
+    a cause for the human (observed: "your vault key changed — re-enter your
+    credentials", for a plain typo at the prompt). Name the cause instead."""
+
+
 def normalize_host(raw: str) -> str:
     """Canonicalize a host binding to the bare lowercase hostname the SecretSink
     compares against — every capability derives its target host as
@@ -59,7 +68,8 @@ class EncryptedFile:
     map is sealed with Fernet (AES-128-CBC + HMAC, from `cryptography`). The file
     is a JSON envelope so it stays portable and the KDF salt/params travel with
     it — only the passphrase is needed to open it elsewhere. A wrong passphrase
-    fails to decrypt rather than returning garbage (Fernet is authenticated)."""
+    fails to decrypt rather than returning garbage (Fernet is authenticated),
+    and surfaces as `VaultPassphraseError`, never a bare `InvalidToken`."""
 
     def __init__(self, path: str | Path, passphrase: str):
         self.path = Path(path)
@@ -79,11 +89,19 @@ class EncryptedFile:
         return Fernet(base64.urlsafe_b64encode(key))
 
     def load(self) -> dict:
+        from cryptography.fernet import InvalidToken
+
         if not self.path.exists():
             return {}
         envelope = json.loads(self.path.read_text())
         salt = base64.b64decode(envelope["salt"])
-        plaintext = self._fernet(salt).decrypt(envelope["ciphertext"].encode())
+        try:
+            plaintext = self._fernet(salt).decrypt(envelope["ciphertext"].encode())
+        except InvalidToken as exc:
+            raise VaultPassphraseError(
+                f"cannot decrypt {self.path} — wrong passphrase "
+                f"({PASSPHRASE_ENV}), or the file was written under another one"
+            ) from exc
         return json.loads(plaintext)
 
     def save(self, secrets: dict) -> None:
