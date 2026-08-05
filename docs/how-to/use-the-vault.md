@@ -31,7 +31,12 @@ pyharness-vault rm github
   a passphrase (`PYHARNESS_VAULT_PASSPHRASE`, else prompted; scrypt + Fernet).
 - Set the **same passphrase** in the environment when you run `pyharness` so the
   session can open the file. If a file exists and no passphrase is set, the CLI
-  prompts once at startup.
+  prompts at startup and checks what you type against the file, re-prompting up
+  to three times — a typo is caught there rather than surfacing mid-task as a
+  decryption failure inside agent code. A passphrase you set in the environment
+  yourself is trusted as configured and not re-checked; if it is wrong, the
+  first secret to be resolved fails with a message naming
+  `PYHARNESS_VAULT_PASSPHRASE`.
 
 ## Bind a secret to its host
 

@@ -505,7 +505,9 @@ passphrase-derived key (scrypt) and Fernet (authenticated AES); a wrong
 passphrase fails to decrypt rather than returning garbage, and is reported as a
 `VaultPassphraseError` naming the variable rather than Fernet's bare
 `InvalidToken` — an unexplained crypto failure reaching agent code is one the
-model will invent a cause for when it answers the human. See
+model will invent a cause for when it answers the human. The interactive CLI
+checks a prompted passphrase against the sealed file before the session starts,
+so the common case (a typo) never gets that far. See
 [Use the secrets vault](../how-to/use-the-vault.md).
 
 ## Site profiles — a login the agent can name but never read

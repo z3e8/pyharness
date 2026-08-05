@@ -25,7 +25,10 @@ pyharness [repl] [SESSION_DIR]
 - Mounts MCP servers from `.mcp.json` (override path with `PYHARNESS_MCP_CONFIG`)
   when the file exists; the path is kept either way so the agent's
   `add_mcp_server(..., save=True)` can create it.
-- If an encrypted vault file exists and no passphrase is set, prompts for it once.
+- If an encrypted vault file (or a saved browser profile) exists and no passphrase
+  is set, prompts for one and opens the file with it before the session starts —
+  re-prompting up to three times, then exiting. A passphrase already in the
+  environment is trusted as configured and not re-checked.
 - Actions that require approval print `⚠ approval required [category]: action`
   and a one-line summary of the effect (method + url + body fields, or a browser
   action with the page it lands on), then ask `allow? [y/N]`. When the action is
@@ -207,8 +210,8 @@ pyharness-profiles login NAME [URL]     # headed browser; log in, press Enter to
 saves the session state. Files live under `~/.pyharness/profiles/` (override
 `PYHARNESS_PROFILES_DIR`), sealed with `PYHARNESS_VAULT_PASSPHRASE` (else prompted)
 — the same passphrase as the vault. `login` needs the browser lane provisioned (`make browser`).
-When profiles exist, `pyharness` prompts for the passphrase at startup so a session
-can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
+When profiles exist, `pyharness` prompts for the passphrase at startup — checking
+it against a profile when there is no vault file — so a session can open them. See [Keep the agent logged in](../how-to/site-profiles.md).
 
 ## Make targets
 

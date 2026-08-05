@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,10 +12,12 @@ from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
 from pyharness.cli.main import (
     _EXIT_BY_OUTCOME,
     _headless_approver,
+    _prompt_vault_passphrase,
     _reflect_enabled,
     _resolve_root,
     _resolve_session,
     _run_once,
+    _sealed_file,
     _trace,
 )
 from pyharness.llm.client import Completion
@@ -103,6 +107,85 @@ def test_reflection_is_opt_in():
     assert not _reflect_enabled({"PYHARNESS_REFLECT": "nonsense"})
     assert _reflect_enabled({"PYHARNESS_REFLECT": "true"})
     assert _reflect_enabled({"PYHARNESS_REFLECT": " 1 "})
+
+
+# --- the vault passphrase prompt -----------------------------------------------
+
+
+def _never_called(_prompt):
+    raise AssertionError("prompted for a passphrase with nothing to unlock")
+
+
+@pytest.fixture
+def sealed_vault(tmp_path, monkeypatch):
+    """A vault file sealed with "right", an empty profiles dir, and no
+    passphrase in the environment. Returns the queue `getpass` answers from."""
+    from pyharness.security.profiles import PROFILES_DIR_ENV
+    from pyharness.security.vault import EncryptedFile
+
+    path = tmp_path / "secrets.enc"
+    EncryptedFile(path, "right").save({"github": "ghp_123"})
+    monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(path))
+    monkeypatch.setenv(PROFILES_DIR_ENV, str(tmp_path / "profiles"))
+    monkeypatch.delenv("PYHARNESS_VAULT_PASSPHRASE", raising=False)
+    typed: list[str] = []
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt: typed.pop(0))
+    return typed
+
+
+def test_prompt_vault_passphrase_reprompts_after_a_typo(sealed_vault, capsys):
+    # The whole point: the typo is caught here, at the prompt, not mid-task in
+    # agent code where a decryption failure has to be guessed at.
+    sealed_vault[:] = ["rihgt", "right"]
+    _prompt_vault_passphrase()
+    assert os.environ["PYHARNESS_VAULT_PASSPHRASE"] == "right"
+    assert sealed_vault == []  # both answers consumed
+    assert "wrong passphrase" in capsys.readouterr().err
+
+
+def test_prompt_vault_passphrase_gives_up_and_leaves_nothing_behind(sealed_vault):
+    sealed_vault[:] = ["a", "b", "c"]
+    with pytest.raises(SystemExit):
+        _prompt_vault_passphrase()
+    # A passphrase that cannot open the vault must never survive the prompt: a
+    # later `store` would seal new secrets under it and orphan them.
+    assert "PYHARNESS_VAULT_PASSPHRASE" not in os.environ
+
+
+def test_prompt_vault_passphrase_trusts_a_preset_one(sealed_vault, monkeypatch):
+    # Deliberately configured (.env / CI): not re-checked, and never prompted for.
+    monkeypatch.setenv("PYHARNESS_VAULT_PASSPHRASE", "preset")
+    _prompt_vault_passphrase()
+    assert os.environ["PYHARNESS_VAULT_PASSPHRASE"] == "preset"
+
+
+def test_no_encrypted_state_means_no_prompt(tmp_path, monkeypatch):
+    from pyharness.security.profiles import PROFILES_DIR_ENV
+
+    monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "absent.enc"))
+    monkeypatch.setenv(PROFILES_DIR_ENV, str(tmp_path / "profiles"))
+    monkeypatch.delenv("PYHARNESS_VAULT_PASSPHRASE", raising=False)
+    monkeypatch.setattr(getpass, "getpass", _never_called)
+    assert _sealed_file() is None
+    _prompt_vault_passphrase()
+    assert "PYHARNESS_VAULT_PASSPHRASE" not in os.environ
+
+
+def test_a_browser_profile_alone_is_enough_to_check_against(tmp_path, monkeypatch):
+    # Profiles are sealed with the same passphrase and the same envelope, so a
+    # machine with profiles but no vault file still gets its typo caught.
+    from pyharness.security.profiles import PROFILES_DIR_ENV, ProfileStore
+
+    ProfileStore(tmp_path / "profiles", "right").save("linkedin", {"cookies": []})
+    monkeypatch.setenv("PYHARNESS_VAULT_FILE", str(tmp_path / "absent.enc"))
+    monkeypatch.setenv(PROFILES_DIR_ENV, str(tmp_path / "profiles"))
+    monkeypatch.delenv("PYHARNESS_VAULT_PASSPHRASE", raising=False)
+    typed = ["wrong", "right"]
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt: typed.pop(0))
+
+    assert _sealed_file() == tmp_path / "profiles" / "linkedin.enc"
+    _prompt_vault_passphrase()
+    assert os.environ["PYHARNESS_VAULT_PASSPHRASE"] == "right"
 
 
 # --- headless one-shot runs ----------------------------------------------------

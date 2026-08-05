@@ -16,7 +16,7 @@ from ..obs.transcript import latest_session, render_transcript, session_digest
 from ..security.policy import ActionCategory
 from ..security.profiles import _DEFAULT_DIR as _PROFILES_DEFAULT_DIR
 from ..security.profiles import PROFILES_DIR_ENV
-from ..security.vault import _DEFAULT_FILE
+from ..security.vault import _DEFAULT_FILE, EncryptedFile, VaultPassphraseError
 
 _COLORS = {"code": "\033[36m", "output": "\033[2m"}
 _RESET = "\033[0m"
@@ -93,18 +93,49 @@ def _trace(kind: str, text: str) -> None:
     print(f"{color}{text}{_RESET}")
 
 
-def _prompt_vault_passphrase() -> None:
-    """If encrypted state exists (a vault file or any browser profile) but no
-    passphrase is set, prompt once and put it in the env so `Vault.from_env()` and
-    `ProfileStore.from_env()` pick it up. No such state → no-op, so the dict/env
-    backends still work without a passphrase."""
-    if os.environ.get("PYHARNESS_VAULT_PASSPHRASE"):
-        return
+def _sealed_file() -> Path | None:
+    """A file the vault passphrase must open — the vault itself, else any saved
+    browser profile (same envelope format). None when no encrypted state exists,
+    which is why a passphrase is not asked for at all in that case."""
     vault_file = Path(os.environ.get("PYHARNESS_VAULT_FILE", _DEFAULT_FILE))
+    if vault_file.exists():
+        return vault_file
     profiles_dir = Path(os.environ.get(PROFILES_DIR_ENV, _PROFILES_DEFAULT_DIR))
-    has_profiles = profiles_dir.exists() and any(profiles_dir.glob("*.enc"))
-    if vault_file.exists() or has_profiles:
+    profiles = sorted(profiles_dir.glob("*.enc")) if profiles_dir.exists() else []
+    return profiles[0] if profiles else None
+
+
+def _prompt_vault_passphrase(*, attempts: int = 3) -> None:
+    """If encrypted state exists (a vault file or any browser profile) but no
+    passphrase is set, prompt and put it in the env so `Vault.from_env()` and
+    `ProfileStore.from_env()` pick it up. No such state → no-op, so the dict/env
+    backends still work without a passphrase.
+
+    Each attempt is checked against the sealed file *here*, before the session
+    starts. Nothing opened the vault at startup before, so a typo stayed
+    invisible until the middle of a task — where it reached agent code as a
+    decryption failure the model then had to guess the cause of. A wrong
+    passphrase is a typo far more often than anything else, so re-prompt; give
+    up after `attempts` rather than loop forever on a piped stdin."""
+    if os.environ.get("PYHARNESS_VAULT_PASSPHRASE"):
+        return  # deliberately set (.env / CI): trust it, and let use report it
+    sealed = _sealed_file()
+    if sealed is None:
+        return
+    for remaining in range(attempts - 1, -1, -1):
         os.environ["PYHARNESS_VAULT_PASSPHRASE"] = getpass.getpass("vault passphrase: ")
+        try:
+            EncryptedFile(sealed, os.environ["PYHARNESS_VAULT_PASSPHRASE"]).load()
+            return
+        except VaultPassphraseError:
+            # Never leave a passphrase that does not work in the env: a later
+            # `store` would seal new secrets under it, orphaning them.
+            del os.environ["PYHARNESS_VAULT_PASSPHRASE"]
+            if not remaining:
+                raise SystemExit(
+                    f"vault passphrase: {attempts} failed attempts against {sealed}"
+                ) from None
+            print(f"wrong passphrase — {remaining} attempt(s) left", file=sys.stderr)
 
 
 def _resolve_root(dir_arg: str | None, env: Mapping[str, str], now: str) -> Path:
