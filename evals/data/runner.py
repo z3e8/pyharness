@@ -40,6 +40,14 @@ class ArmRun:
     broke: str = ""
     notes: list[str] = field(default_factory=list)
 
+    # Every tool call and result, for the control arms only. The brokered arm
+    # already has a far better record — its own `trace.jsonl` and audit chain,
+    # which the session viewer renders. Without this the control arms would be
+    # three numbers on a board with nothing behind them, and the most legible
+    # part of the comparison (watching an arm run out of room 200 lines at a
+    # time) would exist only while the process was alive.
+    transcript: list[dict] = field(default_factory=list)
+
     @property
     def score(self) -> int:
         return self.verdict.score if self.verdict else 0

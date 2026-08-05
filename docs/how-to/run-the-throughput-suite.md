@@ -82,6 +82,34 @@ arm by the suite's own budget — so it is a deliberate target rather than part 
 The offline half runs under `make test` with no key: the corpus generator, the
 scorer, and the isolation property below.
 
+## Look at what happened afterwards
+
+Every arm leaves a record, so the run is inspectable long after it finishes.
+
+| Arm | Record |
+|---|---|
+| `brokered` | a real session — `trace.jsonl` and the audit chain, under `.sessions/data-eval-<stamp>/brokered/` |
+| `files`, `shell` | `arm-<name>/transcript.md` and `transcript.json` — every tool call and result |
+
+The control arms are not sessions, so the loop records itself; without that the
+board's control rows would be numbers with nothing behind them.
+
+Bake all of it into one self-contained page — the run prints this command with
+the paths filled in when it finishes:
+
+```bash
+uv run pyharness-watch .sessions/data-eval-<stamp>/brokered \
+  --static .sessions/data-eval-<stamp>/site \
+  --title "Throughput suite" \
+  --doc "Board=evals/data/BOARD.md" \
+  --doc "Control arm: files=.sessions/data-eval-<stamp>/arm-files/transcript.md" \
+  --doc "Control arm: shell=.sessions/data-eval-<stamp>/arm-shell/transcript.md"
+```
+
+That is the same renderer behind `evals/demo/site/`: no server, no external
+requests, one page per arm. Pass `--keep` to the run itself if you also want the
+corpus left on disk to show.
+
 ## The corpus is not committed
 
 `evals/data/gen.py` regenerates it from a seed, byte-for-byte. Nothing but the

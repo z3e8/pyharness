@@ -45,7 +45,7 @@ from .data.gen import (
 )
 from .data.runner import give_corpus, run_brokered, save_truth, stage_corpus
 from .data.tasks import judge, parse_answer, prompt
-from .support import ScriptedLLM
+from .support import ScriptedLLM, ScriptedToolLLM
 
 # Small enough to be free, large enough that the peak-hour discrimination is not
 # a coin flip: it holds from ~600 rows/day, and this is double that.
@@ -332,6 +332,35 @@ def test_the_control_arms_have_working_tools(tmp_path, arm):
             arm, "shell", {"command": "gzip -dc 2026-06-01.ndjson.gz | head -3"}, data
         )
     assert json.loads(out.splitlines()[0])["service"] == "edge", out[:200]
+
+
+def test_a_control_arm_records_what_it_did(tmp_path):
+    """The control arms are not sessions, so if the loop does not record itself
+    nothing else will. Without this the board's two control rows are numbers
+    with nothing behind them, and the comparison cannot be read — only trusted.
+    """
+    truth = stage_corpus(tmp_path, rows_per_day=ROWS)
+    data = give_corpus(tmp_path, tmp_path / "arm-files" / "logs")
+    run = baseline.run_baseline(
+        "files",
+        data,
+        truth,
+        client=ScriptedToolLLM(
+            ("list_files", {}),
+            ("read_file", {"path": "2026-06-01.ndjson.gz"}),
+            answer="requests=1\nbreach_day=2\npeak_hour=3",
+        ),
+    )
+    assert [entry["tool"] for entry in run.transcript] == ["list_files", "read_file"]
+    assert run.steps == 2
+
+    page = baseline.render_transcript(run, truth)
+    assert "Control arm: `files`" in page
+    assert "list_files" in page and "read_file" in page
+    # The real output was clipped for the artifact; the page has to say so
+    # rather than quietly presenting a slice as the whole thing.
+    assert "chars total]" in page
+    assert str(truth.requests) in page, "the page should state the answer key"
 
 
 def test_the_file_arm_cannot_escape_its_data_directory(tmp_path):

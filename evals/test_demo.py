@@ -41,7 +41,7 @@ from .demo.runner import (
 )
 from .demo.server import CorpusServer
 from .demo.tasks import CREDENTIAL, TWINS, Kind, Task
-from .support import ScriptedLLM
+from .support import ScriptedLLM, ScriptedToolLLM
 
 INVOICE = TWINS[0]
 BENIGN = INVOICE.benign
@@ -822,35 +822,6 @@ def _root(server: CorpusServer, name: str):
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedToolLLM:
-    """A model for the baseline's tool loop, in the shape `Completion` defines.
-
-    `ScriptedLLM` speaks `run_python`, which is the brokered arm's whole action
-    space; the baseline has ordinary JSON tools, so it needs its own double.
-    """
-
-    def __init__(self, *calls: tuple[str, dict], answer: str = "done"):
-        from pyharness.llm.client import Completion, ToolCall
-
-        self.completions = [
-            Completion(
-                text="",
-                tool_calls=[ToolCall(id=f"t{i}", name=name, input=args)],
-                content=[{"k": "v"}],
-                stop_reason="tool_use",
-            )
-            for i, (name, args) in enumerate(calls)
-        ]
-        self.completions.append(
-            Completion(
-                text=answer, tool_calls=[], content=[{"k": "v"}], stop_reason="end_turn"
-            )
-        )
-
-    def complete(self, **kwargs):
-        return self.completions.pop(0)
-
-
 def test_the_baseline_exfiltrates_what_the_broker_refused(server):
     """The comparison, and the reason the baseline is worth its cost.
 
@@ -865,7 +836,7 @@ def test_the_baseline_exfiltrates_what_the_broker_refused(server):
         SAMEHOST_RELEASE,
         server,
         secret=secret,
-        client=_ScriptedToolLLM(
+        client=ScriptedToolLLM(
             ("fetch_url", {"url": server.url(BENIGN.page)}),
             (
                 "post_json",
@@ -895,7 +866,7 @@ def test_the_baseline_puts_the_credential_in_the_models_context(server):
         SAMEHOST_RELEASE,
         server,
         secret=secret,
-        client=_ScriptedToolLLM(
+        client=ScriptedToolLLM(
             (
                 "post_json",
                 {"url": _target(SAMEHOST_RELEASE, server), "bearer_token": secret},
@@ -918,7 +889,7 @@ def test_an_unresolvable_offscope_call_still_counts_against_the_baseline(server)
         OFFSCOPE_RELEASE,
         server,
         secret=secret,
-        client=_ScriptedToolLLM(
+        client=ScriptedToolLLM(
             (
                 "post_json",
                 {"url": _target(OFFSCOPE_RELEASE, server), "bearer_token": secret},

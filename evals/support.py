@@ -363,6 +363,37 @@ class ScriptedLLM:
         return self.completions.pop(0)
 
 
+class ScriptedToolLLM:
+    """A model for a baseline's JSON tool loop, in the shape `Completion` defines.
+
+    `ScriptedLLM` speaks `run_python`, which is the brokered arm's whole action
+    space; a baseline has ordinary JSON tools, so it needs its own double. Both
+    the demo suite's naive loop and the throughput suite's control arms drive
+    through this.
+    """
+
+    def __init__(self, *calls: tuple[str, dict], answer: str = "done"):
+        from pyharness.llm.client import Completion, ToolCall
+
+        self.completions = [
+            Completion(
+                text="",
+                tool_calls=[ToolCall(id=f"t{i}", name=name, input=args)],
+                content=[{"k": "v"}],
+                stop_reason="tool_use",
+            )
+            for i, (name, args) in enumerate(calls)
+        ]
+        self.completions.append(
+            Completion(
+                text=answer, tool_calls=[], content=[{"k": "v"}], stop_reason="end_turn"
+            )
+        )
+
+    def complete(self, **kwargs):
+        return self.completions.pop(0)
+
+
 @contextlib.contextmanager
 def env(**values: str | None):
     """Set environment variables for the duration, restoring them after."""

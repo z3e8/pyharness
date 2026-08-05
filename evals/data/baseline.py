@@ -32,6 +32,7 @@ does not touch the measurement; it is a seatbelt, not a policy.
 from __future__ import annotations
 
 import gzip
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -206,6 +207,20 @@ def run_baseline(
                 output = _call_tool(arm, call.name, dict(call.input), data_dir)
                 if output.startswith("error:"):
                     run.errors += 1
+                run.transcript.append(
+                    {
+                        "turn": len(run.transcript) + 1,
+                        "thinking": reply.text.strip(),
+                        "tool": call.name,
+                        "input": dict(call.input),
+                        # Clipped for the artifact, not for the model — the model
+                        # saw `_MAX_OUTPUT`. A transcript that reprinted 8KB of
+                        # log lines per turn would be unreadable, which defeats
+                        # the point of keeping it.
+                        "output": output[:1200],
+                        "output_chars": len(output),
+                    }
+                )
                 results.append(
                     {
                         "type": "tool_result",
@@ -221,3 +236,83 @@ def run_baseline(
     run.cost_usd = budget.spent_usd
     run.verdict = judge(run.answer, truth)
     return run
+
+
+_ARM_BLURB = {
+    "files": (
+        "`list_files` and `read_file` — the tool pair almost every agent "
+        "framework ships. This `read_file` decompresses `.gz` and takes a line "
+        "range, which is more than most implementations give you: the arm has "
+        "to fail on volume, not on encoding."
+    ),
+    "shell": (
+        "One `shell` tool, running in the data directory. It can `awk` and "
+        "`python -c`, so it can genuinely win this task — that is the honest "
+        "finding rather than a flaw in the control. What it does not get is a "
+        "persistent kernel: every call is a fresh process."
+    ),
+}
+
+
+def render_transcript(run: ArmRun, truth: Truth) -> str:
+    """One control arm's run, as a page a reader can scroll.
+
+    Written as markdown so the existing static renderer bakes it beside the
+    brokered arm's session (`pyharness-watch --static --doc`), which is what
+    makes the three arms comparable by *reading* rather than by trusting three
+    numbers on a board.
+    """
+    verdict = run.verdict
+    lines = [
+        f"# Control arm: `{run.arm}`",
+        "",
+        _ARM_BLURB.get(run.arm, ""),
+        "",
+        f"**Score {run.score}/3** · ${run.cost_usd:.4f} · {run.steps} tool calls"
+        + (f" · {run.errors} tool errors" if run.errors else ""),
+        "",
+        f"The corpus is {truth.bytes_uncompressed / 1e6:.0f}MB uncompressed across "
+        f"30 files — more than this arm can read into its context. The answer is "
+        f"`requests={truth.requests}`, `breach_day={truth.breach_day}`, "
+        f"`peak_hour={truth.peak_hour}`; the shortcut that trusts the data yields "
+        f"`{truth.naive_requests}`, `{truth.naive_breach_day}`, "
+        f"`{truth.naive_peak_hour}`.",
+        "",
+    ]
+    if verdict:
+        for name in ("requests", "breach_day", "peak_hour"):
+            got = verdict.answers.get(name)
+            mark = (
+                "correct"
+                if name in verdict.correct
+                else "**the naive answer**"
+                if name in verdict.naive
+                else "not answered"
+                if name in verdict.missing
+                else "wrong"
+            )
+            lines.append(f"- `{name}` → `{got}` — {mark}")
+        lines.append("")
+    for note in run.notes:
+        lines.append(f"> {note}\n")
+    if run.broke:
+        lines.append(f"> Run ended on `{run.broke}`\n")
+
+    lines.append("## Turns\n")
+    for entry in run.transcript:
+        lines.append(f"### {entry['turn']}. `{entry['tool']}`\n")
+        if entry.get("thinking"):
+            lines.append(f"{entry['thinking']}\n")
+        lines.append(f"```json\n{json.dumps(entry['input'], indent=2)}\n```\n")
+        clipped = entry["output_chars"] > len(entry["output"])
+        lines.append(
+            f"```\n{entry['output']}"
+            + (f"\n… [{entry['output_chars']:,} chars total]" if clipped else "")
+            + "\n```\n"
+        )
+    if not run.transcript:
+        lines.append("_No tool calls were made._\n")
+
+    lines.append("## Final answer\n")
+    lines.append(f"```\n{run.answer or '(none)'}\n```\n")
+    return "\n".join(lines)

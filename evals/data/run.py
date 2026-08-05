@@ -22,12 +22,13 @@ whether a model acts on an injected directive, and for the same reason.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from .baseline import ARMS, run_baseline
+from .baseline import ARMS, render_transcript, run_baseline
 from .gen import DEFECTS, SLO_MS, Truth, verify
 from .runner import ArmRun, give_corpus, run_brokered, save_truth, stage_corpus
 
@@ -165,7 +166,17 @@ def main(argv: list[str] | None = None) -> int:
             runs.append(run_brokered(session_root, truth, tier=args.tier))
         else:
             data_dir = give_corpus(root, root / f"arm-{arm}" / "logs")
-            runs.append(run_baseline(arm, data_dir, truth, tier=args.tier))
+            run = run_baseline(arm, data_dir, truth, tier=args.tier)
+            # The control arms are not sessions, so nothing else would record
+            # them. Written next to the brokered arm's trace so all three are
+            # inspectable after the run rather than only while it is alive.
+            (root / f"arm-{arm}" / "transcript.md").write_text(
+                render_transcript(run, truth)
+            )
+            (root / f"arm-{arm}" / "transcript.json").write_text(
+                json.dumps(run.transcript, indent=2)
+            )
+            runs.append(run)
 
     # Only now. While an arm was running, the key existed nowhere on disk.
     save_truth(root, truth)
@@ -186,6 +197,23 @@ def main(argv: list[str] | None = None) -> int:
                 else root / f"arm-{arm}" / "logs"
             )
             shutil.rmtree(where, ignore_errors=True)
+
+    # Say where the evidence is and how to turn it into one page. A run whose
+    # artifacts the operator has to go and find is a run that gets rerun.
+    docs = " ".join(
+        f'--doc "Control arm: {arm}={root}/arm-{arm}/transcript.md"'
+        for arm in arms
+        if arm != "brokered"
+    )
+    print(f"\nartifacts under {root}/", file=sys.stderr)
+    if "brokered" in arms:
+        print(
+            "bake all arms into one self-contained page:\n"
+            f"  uv run pyharness-watch {root}/brokered --static {root}/site \\\n"
+            f'    --title "Throughput suite" '
+            f'--doc "Board={args.write or "evals/data/BOARD.md"}" {docs}',
+            file=sys.stderr,
+        )
 
     brokered = next((r for r in runs if r.arm == "brokered"), None)
     if brokered and brokered.verdict and len(brokered.verdict.missing) == 3:
