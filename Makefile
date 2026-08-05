@@ -129,6 +129,14 @@ test:
 evals:
 	uv run python -m evals.run --write evals/SCOREBOARD.md
 
+## evals-data: run the throughput suite (3 arms, needs an API key) and write its board
+# Costs a real model call in each of three arms, capped per arm by the suite's
+# own budget, so it is a deliberate target rather than part of `make test` —
+# the offline half of this suite (corpus, scorer, isolation) runs under pytest.
+.PHONY: evals-data
+evals-data:
+	uv run python -m evals.data.run --write evals/data/BOARD.md
+
 # Lint scope is listed explicitly rather than run repo-wide: agents/old/ holds
 # retired scratch scripts that a bare `ruff check .` fails on, and they are not
 # code anyone maintains. deploy/ is in: it carries the container's
