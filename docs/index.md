@@ -19,6 +19,7 @@ design and the details, in three sections — pick by what you're trying to do:
     [Keep the agent logged in](how-to/site-profiles.md) ·
     [Run with observability](how-to/observability.md) ·
     [Run the adversarial suite](how-to/run-the-adversarial-suite.md) ·
+    [Run the throughput suite](how-to/run-the-throughput-suite.md) ·
     [Run in Docker](how-to/run-in-docker.md)
 - **[Reference](reference/)** — precise lookup for the machinery.
   - [Builtins](reference/builtins.md) · [CLI](reference/cli.md) ·

@@ -29,6 +29,14 @@ There are no other tools. When the agent needs a capability, it *writes Python*:
   Writing code is closer to how they were trained than filling bespoke tool
   schemas.
 
+These are claims, and one of them is measured rather than asserted: the
+[throughput suite](../how-to/run-the-throughput-suite.md) runs the same task
+through this harness, through a conventional `read_file`/`list_files` pair, and
+through a shell, over ~50MB of logs that no arm can read into its context. The
+board is [`evals/data/BOARD.md`](../../evals/data/BOARD.md). Read it before
+trusting the bullets above — a shell arm gets much of the same leverage, which
+is the honest shape of the argument.
+
 ## The kernel is persistent
 
 A session is a Python kernel, like Jupyter (`pyharness/core/kernel.py`). Each
