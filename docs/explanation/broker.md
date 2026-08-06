@@ -82,7 +82,9 @@ across every I/O site — means:
   test suite uses it. Gating here buys consistency (the same prompts and audit
   trail as the child), not a hard boundary — in-process agent code could import
   pyharness and reach the raw registry, the host's `os.environ`, and the live
-  vault; real enforcement is the out-of-process mode.
+  vault, and a bare `open()` reaches anything the host process can, since
+  `Workspace` resolves the *file builtins'* paths and does not confine the
+  interpreter. Real enforcement is the out-of-process mode.
 - **Out-of-process** (the default, for the CLI and library alike): agent code runs in
   a restricted **child process** (`pyharness/broker/remote/`). The child holds
   the persistent namespace and proxy stubs; the parent keeps the broker, vault,
