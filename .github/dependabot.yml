@@ -1,4 +1,10 @@
-# Dependabot: keep the uv lockfile and the GitHub Actions we pin current.
+# Dependabot, security updates only.
+#
+# This repo is a reference implementation, not a maintained package, so routine
+# version-bump PRs would accumulate unreviewed and misrepresent the project as
+# neglected rather than finished. Security advisories are the one signal worth
+# an open PR here; `open-pull-requests-limit: 0` disables the scheduled bumps
+# without disabling Dependabot's security updates, which ignore that limit.
 version: 2
 updates:
   # Python dependencies resolved in uv.lock (Dependabot's native uv ecosystem).
@@ -6,11 +12,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
 
   # The action versions pinned in .github/workflows/*.yml.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
