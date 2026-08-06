@@ -12,7 +12,7 @@ It tracks `spent_usd`, `calls`, and a `by_model` breakdown.
 
 ## How the limit is enforced
 
-`Budget(limit_usd=...)` sets a cap (default `None` = unlimited; the CLI uses
+`Budget(limit_usd=...)` sets a ceiling (default `None` = unlimited; the CLI uses
 `$5.00`). Enforcement is **fail-fast**: the [broker](broker.md) calls
 `budget.check()` before every *metered* action (`llm`, `web`, `obs`, `spawn`),
 and the agent loop checks before each step. When `spent_usd` reaches the limit,
@@ -27,6 +27,25 @@ top of the broker's once-per-call gate, each fan-out worker re-checks the
 budget before its own completion, so a batch stops dispatching as soon as the
 limit is hit (workers already in flight can still land, so a slight overshoot
 of up to `max_concurrency` completions remains possible).
+
+## The limit stops spending once exceeded. It does not cap it
+
+**`limit_usd` is not a hard cap, and the overshoot is not always small.** The
+check runs *before* an action, using spend already recorded, so an action that
+is admitted under the limit can carry the total well past it. Nothing estimates
+what the pending call will cost, so nothing can refuse a call for being too
+expensive to start.
+
+The overshoot scales with the size of a single metered action rather than with
+the limit, so it is worst on long turns with large tool results and a growing
+message history. A published run measures this: the `files` control arm of the
+[throughput suite](../../evals/data/BOARD.md) was given `limit_usd=2.00` and
+finished at **$2.6750**, 34% over, on one turn.
+
+Treat `limit_usd` as "stop spending once this is passed", and set it low enough
+that one more full turn on top of it is still acceptable. If you need a true
+cap, bound the work instead — `max_steps`, a smaller `tier`, and the worker and
+spawn count caps below all limit how much can be in flight at once.
 
 This dollar budget is separate from the worker **count** cap
 (`session_cap=256`, `max_per_call=64` in `pyharness/broker/capabilities/llm.py`),
