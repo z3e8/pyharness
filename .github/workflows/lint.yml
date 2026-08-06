@@ -2,10 +2,10 @@
 # three lives in pyproject.toml under [tool.ruff] / [tool.mypy].
 name: lint
 
+# Manual trigger only. Nothing runs on push or pull_request; start a run from the
+# Actions tab or with `gh workflow run lint.yml`.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: lint-${{ github.ref }}

@@ -75,8 +75,8 @@ LLM spend — and raises. Running anyway takes the explicit
 `PYHARNESS_ALLOW_UNSANDBOXED=true` opt-in and prints a one-time stderr warning
 that agent code is unconfined. Where a sandbox exists the gate is a no-op and the
 variable is ignored, so the opt-in cannot weaken a platform that has a perimeter.
-The same gate covers a Linux kernel below the ABI floor. CI runs the full suite
-on Ubuntu (3.11/3.12/3.13) and macOS **without** the opt-in set, which is what
+The same gate covers a Linux kernel below the ABI floor. The CI workflow runs the
+full suite on Ubuntu (3.11/3.12/3.13) and macOS **without** the opt-in set, which is what
 makes "confinement is in force" an observation rather than a claim: a runner
 below the floor turns the build red instead of silently running unconfined.
 

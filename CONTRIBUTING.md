@@ -29,11 +29,12 @@ only need `ANTHROPIC_API_KEY` in `.env` to actually run the agent (`make run`).
 
 ## Before you open a PR
 
-Run these locally; CI enforces the first two.
+Run these locally. CI is manual-only and does not fire on push or PR, so these
+local checks are the real gate — not something a runner will catch for you.
 
 ```bash
 make test        # pytest — must be green. No API key required.
-make lint        # ruff check + ruff format --check — must be clean (this is what CI gates on)
+make lint        # ruff check + ruff format --check — must be clean
 make format      # auto-fix: ruff format + ruff check --fix
 make typecheck   # mypy — lenient and NON-blocking (informational; see pyproject [tool.mypy])
 ```

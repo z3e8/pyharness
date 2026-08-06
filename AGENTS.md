@@ -24,7 +24,7 @@ package manager; there is no `pip`/`venv` step to run by hand.
 make setup     # create .env + install editable package + dev toolchain (one-time)
 make test      # tests + the adversarial suite — no API key needed. Use this to verify changes.
 make evals     # run the adversarial suite alone and rewrite evals/SCOREBOARD.md (commit the diff)
-make lint      # ruff check + ruff format --check (what CI enforces)
+make lint      # ruff check + ruff format --check (what CI checks when triggered)
 make format    # ruff format + ruff check --fix (apply autofixes)
 make typecheck # mypy — lenient, non-blocking (see [tool.mypy] in pyproject.toml)
 make run       # interactive agent + live viewer :6061 (needs ANTHROPIC_API_KEY in .env)
@@ -34,8 +34,11 @@ make up        # optional Phoenix OTel backend (:6006); make down stops it
 
 The dev toolchain (ruff, mypy, pytest) is pinned in the `dev` dependency group
 (`[dependency-groups]` in `pyproject.toml`); `make setup` installs it. CI
-(`.github/workflows/`) runs `make test` across Python 3.11/3.12/3.13 and gates on
-`ruff`; `mypy` runs as a non-blocking signal. Do not wire coverage into the
+(`.github/workflows/`) is **manual-only** (`workflow_dispatch`) — nothing fires on
+push or PR; start a run with `gh workflow run test.yml`. It runs `make test`
+across Python 3.11/3.12/3.13 plus a `ruff` check, with `mypy` as a non-blocking
+signal. Because nothing runs automatically, the local checks are the real gate:
+run `make test` and `make lint` yourself. Do not wire coverage into the
 default `pytest` run — `pytest-cov` breaks the sandbox child's re-exec (6 tests).
 
 To test-drive the harness itself (run a probe task, inspect what happened, fix,

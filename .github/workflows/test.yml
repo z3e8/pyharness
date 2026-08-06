@@ -3,10 +3,10 @@
 # the suite is hermetic (see tests/conftest.py).
 name: test
 
+# Manual trigger only. Nothing runs on push or pull_request; start a run from the
+# Actions tab or with `gh workflow run test.yml`.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: test-${{ github.ref }}

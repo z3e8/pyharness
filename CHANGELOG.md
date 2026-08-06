@@ -14,9 +14,10 @@ unreleased and describes `main`.
 ### Added
 
 - Apache-2.0 `LICENSE` and complete `pyproject.toml` packaging metadata.
-- Continuous integration: a GitHub Actions test matrix (Python 3.11 / 3.12 /
-  3.13 on Linux, plus one macOS leg that exercises the real Seatbelt sandbox),
-  a ruff lint/format gate, a non-blocking mypy job, and Dependabot.
+- Manually-triggered CI (`workflow_dispatch`; nothing fires on push or PR): a
+  GitHub Actions test matrix (Python 3.11 / 3.12 / 3.13 on Linux, plus one macOS
+  leg that exercises the real Seatbelt sandbox), a ruff lint/format check, and a
+  non-blocking mypy job.
 - Developer tooling: `ruff` (lint + format) and `mypy` config, a PEP 735 `dev`
   dependency group, and `make lint` / `make format` / `make typecheck` targets.
 - Open-source community files: `SECURITY.md` (private disclosure via GitHub
