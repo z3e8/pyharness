@@ -132,7 +132,8 @@ Headline mean (runs 2-5 vs run 1, the failed run included): cost +17%, steps
   raises `ImportError`. All four reuse runs paid it (twice, in three of them).
   There is currently no supported way for bundled code to reach a capability,
   while the guidance ("a fetch … belongs in `files`") steers the agent into
-  writing exactly this. Logged in `agents/issues.md`, not fixed here.
+  writing exactly this. Not fixed at the time of this arm; the third published
+  set below was run after the fix.
 - **Where reuse recovered cheaply, the curve bent.** Runs 3 and 5 transcribed
   the surfaced source (`describe_tool` prints bundled code precisely so a
   reader can see it) into a cell and ran it: 2 fetches each — the frozen
@@ -265,8 +266,8 @@ were changed after *a* paid run, and both are disclosed here:
 - **Not a fact about model choice.** haiku-4.5 at `tier="cheap"` throughout.
 - **Not a clean cost measurement.** Prompt caching is live and the trace
   records only *uncached* input tokens (`cache_read`/`cache_creation` are
-  dropped before the trace — logged in `agents/issues.md`), so per-run cost
-  cannot be decomposed from the published record.
+  dropped before the trace), so per-run cost cannot be decomposed from the
+  published record.
 - **Run 1 is not a clean no-skill baseline.** It includes authoring the skill;
   later runs carry a growing recent-sessions preamble. Runs 2-5 differ from
   run 1 in more than one way.

@@ -29,8 +29,7 @@ jobs:
 
   mypy:
     # Non-blocking on purpose: the type pass is lenient and still surfaces ~100
-    # findings (the type-debt path is logged in agents/issues.md). It runs for
-    # signal, not to gate merges — hence continue-on-error.
+    # findings. It runs for signal, not to gate merges — hence continue-on-error.
     name: mypy (non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true

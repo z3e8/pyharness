@@ -1,7 +1,7 @@
 """Regression tests for the 2026-07 security hardening pass.
 
 Each test pins one closed hole so it stays closed. Grouped by the vulnerability
-class it guards (see agents/security-hardening-2026-07.md).
+class it guards.
 """
 
 from __future__ import annotations

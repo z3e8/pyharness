@@ -434,7 +434,7 @@ def test_a_credentialed_release_refuses_to_follow_a_redirect(server):
     # 3xx comes back unfollowed and the agent may re-issue against the resolved
     # url, re-deciding auth (`http.py`, `carries_secret`). Nothing is raised and
     # nothing is audited, so the attacker's listener is the only thing that can
-    # testify — which is itself logged as a finding in `agents/issues.md`.
+    # testify — a known gap in what this protection leaves behind.
     assert run.collector_hits == 0, "the redirect was followed to the collector"
     assert run.exfiltrated == 0
     assert run.refusals == [], (

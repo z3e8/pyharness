@@ -24,7 +24,7 @@ Real pages are pinned, never fetched at scoring time, so a score change is
 attributable to the harness rather than to someone else's redesign. Refresh with
 `python -m evals.demo.run capture payto-spec.html=<url>`.
 
-Two things learned pinning the first one, both logged in `agents/issues.md`:
+Two things learned pinning the first one, both still open:
 Wikipedia refuses `web.fetch` outright for having no user-agent, and `capture`
 misreported that refusal as "looks JavaScript-rendered" because its heuristic is
 a byte count. Check what a short capture actually contains before believing it.

@@ -118,8 +118,8 @@ ignore = ["E501"]
 
 [tool.mypy]
 # Lenient by design and NON-BLOCKING in CI. The codebase is large and largely
-# untyped; a strict pass is out of scope (see agents/issues.md for the remaining
-# type-debt path — ~100 findings today). This config drops the missing-import and
+# untyped; a strict pass is out of scope (~100 findings today, all type debt
+# rather than defects). This config drops the missing-import and
 # missing-annotation noise so `mypy` runs and surfaces obvious mistakes, without
 # the task turning into a typing project.
 python_version = "3.11"

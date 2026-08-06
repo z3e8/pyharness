@@ -137,10 +137,9 @@ evals:
 evals-data:
 	uv run python -m evals.data.run --write evals/data/BOARD.md
 
-# Lint scope is listed explicitly rather than run repo-wide: agents/old/ holds
-# retired scratch scripts that a bare `ruff check .` fails on, and they are not
-# code anyone maintains. deploy/ is in: it carries the container's
-# verify-sandbox script, which is maintained code.
+# Lint scope is listed explicitly rather than run repo-wide so a gitignored
+# working directory full of scratch scripts cannot fail the lint. deploy/ is in:
+# it carries the container's verify-sandbox script, which is maintained code.
 LINT_PATHS = pyharness tests evals deploy
 
 ## lint: check formatting and lints without changing files (what CI enforces)

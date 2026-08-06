@@ -47,8 +47,8 @@ Sub-agent fan-out. The plan wanted one page showing scoped children, but no
 session in this run spawns — every demo task is single-agent. A page for it
 would have to come from a different run.
 
-## Before this is ever public
+## On publishing these
 
-The pages redact the operator's home directory (see `obs/static.py`), but
-publishing at all is gated on the repo going public, which is an open decision —
-see `agents/README.md` § "Deferred: open-source release".
+The pages redact the operator's home directory before they are written (see
+`obs/static.py`). They are self-contained, so serving the directory as-is is all
+that hosting them requires.

@@ -25,8 +25,7 @@ exposes neither `tier` nor `allowed_hosts` nor `max_steps` — and `tier="cheap"
 is the cost control and `allowed_hosts` is the mechanism under test, so neither
 is optional. Building the session directly also lets the tests drive the whole
 runner with a scripted model, which is the only way any of this is verifiable
-without spending money. See `agents/decisions.md` for the CLI flags a follow-up
-should add.
+without spending money.
 """
 
 from __future__ import annotations

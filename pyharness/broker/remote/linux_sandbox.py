@@ -26,7 +26,8 @@ from pathlib import Path
 # Bubblewrap was the obvious alternative and was rejected: it needs unprivileged
 # user namespaces, which Ubuntu 24.04 LTS blocks out of the box (AppArmor, no
 # working bwrap profile until 25.04) and which Docker's default seccomp profile
-# blocks inside containers. See agents/plan-linux-confinement.md.
+# blocks inside containers. See docs/explanation/threat-model.md, "The perimeter,
+# per platform", for the floor this lands on and why.
 #
 # THE MODEL DIFFERENCE THAT MATTERS: Seatbelt is a denylist ((allow default) plus
 # targeted denies), Landlock is an allowlist with no subtraction operator. So the
