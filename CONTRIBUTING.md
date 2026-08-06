@@ -1,8 +1,12 @@
 # Contributing to pyharness
 
-Thanks for your interest. This is a pre-1.0 project; contributions are welcome,
-and the bar is: small, well-scoped changes that keep the tests green and the docs
-true.
+**Read this as fork documentation, not a call for contributions.** pyharness is a
+reference implementation under a feature freeze, not a maintained package, so
+issues and pull requests may not be reviewed promptly. What follows is how to
+build, test and extend it, which is what you need whether you are changing your
+own fork or reading to understand how it holds together. If you do open a pull
+request anyway, the bar is small, well-scoped changes that keep the tests green
+and the docs true.
 
 ## Toolchain
 

@@ -19,15 +19,15 @@ address is needed. If GitHub reporting is unavailable to you, open a minimal
 public issue that says only "security report, please enable private reporting"
 (no details) so a private channel can be opened.
 
-You can expect an initial acknowledgement within a few days. Because this is a
-pre-1.0 single-maintainer project, please allow reasonable time for a fix before
-any public disclosure.
+This is a single-maintainer reference implementation rather than a maintained
+package, so there is no response-time commitment: reports are read and taken
+seriously, but a fix may take a while or may be answered with a documented
+boundary instead. Please allow reasonable time before any public disclosure.
 
 ## Supported versions
 
-Pre-1.0: only the **latest `main`** (and the latest tagged release, once releases
-exist) receives security fixes. There are no backported patches for older
-revisions.
+Only the **latest `main`** receives fixes. There are no releases and no
+backported patches for older revisions.
 
 ## Scope
 

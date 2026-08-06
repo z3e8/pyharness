@@ -1,7 +1,7 @@
 # pyharness
 
 <!-- Badge/link targets track the current github.com/z3e8/pyharness origin; they
-     move if the repo or the (parked) PyPI package name changes. -->
+     move if the repo moves. -->
 [![CI](https://github.com/z3e8/pyharness/actions/workflows/test.yml/badge.svg)](https://github.com/z3e8/pyharness/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
@@ -134,10 +134,9 @@ ANTHROPIC_API_KEY=... uv run pyharness
 uv run pytest -q
 ```
 
-There is no published PyPI package yet — the name is being finalised before the
-first release, so install from source (the clone above, or
-`uv pip install "git+https://github.com/z3e8/pyharness"` for a runtime-only
-install).
+There is no PyPI package and none is planned — install from source (the clone
+above, or `uv pip install "git+https://github.com/z3e8/pyharness"` for a
+runtime-only install). See [project status](#project-status).
 
 The live viewer is on by default; the heavier OTel export (Phoenix/Langfuse) is
 opt-in — see [Run with observability](docs/how-to/observability.md).
@@ -164,11 +163,19 @@ came for the security claims, or [design
 decisions](docs/explanation/design-decisions.md) if you want the forks and the
 reasoning behind them.
 
-## Contributing
+## Project status
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the `make test` / `make lint`
-expectations, and the docs-sync convention, and
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+**This is a reference implementation and a demonstration, not a maintained
+package.** It is published so the design and the evidence behind it can be read
+and re-run, and it is under a deliberate [feature
+freeze](docs/explanation/design-decisions.md#feature-freeze-evidence-over-features).
+There is no PyPI release and none is planned; install from source. Issues and
+pull requests may not be reviewed promptly, so treat the code as something to
+read, fork, and run rather than something to contribute to.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) still documents the setup, the `make test` /
+`make lint` expectations, and the docs-sync convention, which is what a fork
+needs.
 
 Found a security issue? **Do not open a public issue** — follow
 [SECURITY.md](SECURITY.md) (private GitHub advisory).
