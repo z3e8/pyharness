@@ -12,6 +12,18 @@ costs real model calls, so this is a dated artifact rather than a CI product;
 the offline suite (`make test`, `evals/test_skills.py`) keeps the machinery
 under it from rotting silently.
 
+## What a skill holds
+
+![A saved skill being loaded with use_tool and driving a browser through a login and checkout lookup](../../docs/assets/skills-library.gif)
+
+<sub>A separate, unscored run against a real library site, included because the
+numbers below say *when* a skill pays and this shows *what is being paid for*.
+The saved skill's value is not the steps — it is the notes: "A rejection is only
+believed after the page moves," because a login form's own instructions had once
+been read as a failed login; "Titles come from the aria tree, not the visible
+text." That is discovery cost, spent once. Whether spending it is worth it is
+the question the rest of this file answers, and the answer is not always yes.</sub>
+
 ## The claim under test, and the answers
 
 **Claim:** the agent saves a skill on run 1 and reuses it on runs 2-5, so cost,

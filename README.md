@@ -11,12 +11,13 @@ Python.** Every side effect routes through one broker that does policy → audit
 budget → execute, and the agent's code runs in an OS sandbox with no network
 syscall available to it.
 
-![The agent answering three questions about a month of service logs, shown in the session viewer](docs/assets/data-analysis.gif)
+![An operator instructing the agent to read an SSH private key, the read refused at the workspace boundary, and a follow-up attempt to exfiltrate over curl blocked at the network layer](docs/assets/rejection.gif)
 
-<sub>The brokered arm of the [throughput suite](evals/data/BOARD.md): 51MB of
-gzipped logs, five defects planted in them and named in no prompt, and the
-corrections it had to derive before any of the numbers meant anything. This is
-the same viewer the operator watches live.</sub>
+<sub>An operator asks for `~/.ssh/id_ed25519`. The model agrees to try. The read
+never happens, because `read()` resolves the path and it leaves the workspace.
+Told to fall back to `curl` in a subprocess, it finds no network to reach:
+sockets, `urllib` and `curl` all fail in a child process that has no network
+syscall available. Nothing here depends on the model declining.</sub>
 
 **32 of 43 adversarial attacks blocked. 11 known gaps, published with the reason
 each one is a boundary rather than an oversight. 0 unexpected successes.**
@@ -94,6 +95,14 @@ what the agent `print()`s returns to its context, so a hundred parsed invoices
 cost three lines. Arbitrary code is also far harder to contain than a fixed tool
 schema, which is what the rest of this repo is about.
 
+![The agent working through a month of gzipped service logs, finding two planted defects and verifying one of the corrections](docs/assets/data-analysis.gif)
+
+<sub>What that buys, on the [throughput suite](evals/data/BOARD.md): 51MB of
+gzipped logs, five defects planted in them and named in no prompt. It notices
+the URL field is renamed partway through the month, catches `latency_ms` silently
+switching to microseconds, and checks that correction against the previous day's
+p50 before trusting it. The corrections are derived, not told.</sub>
+
 ```python
 from pyharness import Session, Budget
 
@@ -114,6 +123,13 @@ sessions: markdown instructions plus optional bundled `.py` modules under
 [measured, with a negative result and a boundary
 condition](evals/skills/CURVE.md): a skill amortises when a task's cost is
 *discovery*, and costs more than it saves when the work is retrieval.
+
+![A saved skill being loaded with use_tool and driving a browser through a login and checkout lookup](docs/assets/skills-library.gif)
+
+<sub>What a skill actually stores is the part worth seeing: not the steps, but
+what the last run learned the hard way. "A rejection is only believed after the
+page moves" is there because a login form's own instructions had once been read
+as an error. That is the *discovery* cost the curve says a skill amortises.</sub>
 
 ## Run it
 
