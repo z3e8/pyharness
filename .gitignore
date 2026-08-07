@@ -35,3 +35,7 @@ agents/
 
 # macOS
 .DS_Store
+
+# Screen recordings staged for conversion. The committed artifact is the gif
+# under docs/assets/, never the multi-megabyte source capture.
+*.mov
