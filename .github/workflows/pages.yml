@@ -1,0 +1,47 @@
+# Publish the committed static evidence site (evals/demo/site) to GitHub Pages.
+#
+# There is no build step: the pages are committed output, baked by `make site`
+# from real sessions that .sessions/ (gitignored) no longer has to hold. This
+# workflow only uploads the directory.
+#
+# NOT YET ENABLED. Two things are required before a run can succeed, and both
+# are repo settings rather than anything in this file:
+#   1. The repo must be public, or on a plan that allows Pages for private
+#      repos. Pages is public-repo-only on Free.
+#   2. Settings > Pages > Source must be set to "GitHub Actions".
+# Until then this file is inert — it never fires on its own.
+name: pages
+
+# Manual trigger only, matching lint.yml and test.yml. Nothing runs on push.
+# Start a run from the Actions tab or with `gh workflow run pages.yml`.
+on:
+  workflow_dispatch:
+
+# Least privilege: read the tree, mint the Pages deployment token, nothing else.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one midway — a half-applied Pages
+# deploy serves a mix of two commits.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: upload + deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      # Exact tags on purpose — see the note in test.yml.
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: evals/demo/site
+      - id: deployment
+        uses: actions/deploy-pages@v5
