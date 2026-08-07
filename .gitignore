@@ -32,3 +32,6 @@ docs-legacy/
 # scaffolding for building the project, not part of it. The design rationale
 # that is worth publishing lives in docs/explanation/design-decisions.md.
 agents/
+
+# macOS
+.DS_Store
