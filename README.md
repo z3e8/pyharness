@@ -58,6 +58,26 @@ exfiltration an injection would ask for. Whether the model complies with an
 injection is reported separately, as a fact about the model, with its own
 denominator. [Why that distinction matters](docs/explanation/design-decisions.md#containment-is-measured-as-a-control-test-not-by-hoping-a-model-takes-the-bait).
 
+## Is it any good at the work?
+
+Containment is worth nothing if the contained thing cannot do the job. The
+[throughput suite](evals/data/BOARD.md) is the counterweight: one task, three
+arms, 298,603 requests across 30 gzipped files (51MB, roughly ten times a large
+context window), with five defects planted in the data and named in no prompt. A
+shortcut that ignores them is available and returns a specific set of plausible
+wrong numbers, so a correct answer is evidence rather than arithmetic.
+
+The conventional file-tool arm (`list_files` + `read_file`) does not finish: 123
+steps, 0 of 3 questions, and a $2 budget exhausted. This harness answers 2 of 3
+for $0.36 in 15 steps, deriving four of the five defects on its own. A plain
+shell arm ties it at 2 of 3 and does it **cheaper** ($0.23) in more steps (23).
+That is worth saying plainly, because the result is not that a broker wins a
+benchmark — it is that the tool shape almost everything ships collapses at this
+volume, while both arms that can execute real code do not.
+
+Both finishing arms miss the same question the same way, returning the
+shortcut's peak hour instead of the true one. That miss is on the board.
+
 ## How it holds
 
 - **One broker, every side effect.** Files, shell, web, LLM calls, sub-agents and
