@@ -76,9 +76,11 @@ LLM spend — and raises. Running anyway takes the explicit
 that agent code is unconfined. Where a sandbox exists the gate is a no-op and the
 variable is ignored, so the opt-in cannot weaken a platform that has a perimeter.
 The same gate covers a Linux kernel below the ABI floor. The CI workflow runs the
-full suite on Ubuntu (3.11/3.12/3.13) and macOS **without** the opt-in set, which is what
-makes "confinement is in force" an observation rather than a claim: a runner
-below the floor turns the build red instead of silently running unconfined.
+full suite on Ubuntu (3.11/3.12/3.13) and macOS **without** the opt-in set, which
+is what makes "confinement is in force" an observation rather than a claim: a
+runner below the floor turns the run red instead of silently running unconfined.
+That workflow is dispatched by hand rather than on every push, so a green run is
+evidence dated to when it ran, not a standing guarantee about `main`.
 
 ### What is inside the box and what is beside it
 
