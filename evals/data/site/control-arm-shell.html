@@ -1,0 +1,1716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control arm: shell</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii00MCAwIDM4MCA0MjAiPjxzdHlsZT4uaW5re2ZpbGw6IzFFMjQzM31AbWVkaWEgKHByZWZlcnMtY29sb3Itc2NoZW1lOmRhcmspey5pbmt7ZmlsbDojRTZFOUYwfX08L3N0eWxlPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjAiIHk9IjAiIHdpZHRoPSI5MCIgaGVpZ2h0PSI0MjAiLz48cmVjdCBjbGFzcz0iaW5rIiB4PSI5MCIgeT0iMCIgd2lkdGg9IjEyMCIgaGVpZ2h0PSI5MCIvPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjIxMCIgeT0iMCIgd2lkdGg9IjkwIiBoZWlnaHQ9IjI1NSIvPjxyZWN0IGNsYXNzPSJpbmsiIHg9IjkwIiB5PSIxNjUiIHdpZHRoPSIxMjAiIGhlaWdodD0iOTAiLz48cmVjdCB4PSIyMTAiIHk9IjI1NSIgd2lkdGg9IjkwIiBoZWlnaHQ9IjE2NSIgZmlsbD0iIzdGNzdERCIvPjwvc3ZnPgo=">
+<script>
+try {
+  var t = localStorage.getItem('ph-theme');
+  if (t) document.documentElement.setAttribute('data-theme', t);
+} catch (e) {}
+</script>
+<style>
+/* pyharness viewer — one stylesheet for the live view, the baked session pages,
+   the site index, and the eval boards. Everything is driven by the tokens in
+   `:root`, so light mode is a token swap rather than a second stylesheet.
+
+   Theme resolution: `data-theme` on <html> wins (the toggle writes it and
+   persists it); with no attribute we follow the OS. Both directions are
+   spelled out so the toggle can override a system preference either way.
+
+   Two rules keep the whole thing coherent. **One accent**: violet, the mark's
+   own hue — green, amber and red are reserved for outcome, never decoration, so
+   a colored thing on the page always means something. **Hairlines over boxes**:
+   a list is rows divided by a rule, not ten bordered cards; a panel earns a
+   border only when something nests inside it. */
+
+:root {
+  --bg:        #0B0A0F;   /* violet-tinted ink, not neutral slate */
+  --bg-elev:   #121118;
+  --bg-sunken: #08070C;
+  --bg-hover:  #191722;
+  --border:    #221F2E;
+  --border-lo: #16141E;
+  --text:      #E9E7F0;
+  --text-dim:  #9A94AC;
+  --text-faint:#6B6580;
+  --accent:    #9B8CFF;
+  --accent-bg: #1B1730;
+  --ok:        #5FD3A0;
+  --ok-bg:     #0E2419;
+  --warn:      #F0B968;
+  --warn-bg:   #2B2110;
+  --danger:    #FF8A7A;
+  --danger-bg: #2C1614;
+  --violet:    #B8A6FF;
+  --violet-bg: #1E1933;
+  --brand:     #7F77DD;   /* the logo's accent block — fixed in both themes */
+  --logo-ink:  #E9E7F0;   /* the logo's dark blocks, inverted for a dark page */
+  --shadow:    0 1px 2px rgba(0,0,0,.5), 0 12px 32px -16px rgba(0,0,0,.7);
+  /* The page's one piece of atmosphere: a violet wash bleeding off the top
+     edge, so the ground reads as a deliberate hue rather than a dark gray. */
+  --wash: radial-gradient(120% 60% at 50% -20%,
+          rgba(123,109,224,.16) 0%, rgba(123,109,224,0) 62%);
+
+  --r-sm: 7px;
+  --r:    11px;
+  --r-lg: 15px;
+  --col:  min(100%, 52rem);  /* the reading column, shared by feed and docs */
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:        #FCFCFD;
+    --bg-elev:   #F6F5F9;
+    --bg-sunken: #F1F0F6;
+    --bg-hover:  #EDEBF3;
+    --border:    #E3E1EC;
+    --border-lo: #EEEDF4;
+    --text:      #16141C;
+    --text-dim:  #5C5770;
+    --text-faint:#8A85A0;
+    --accent:    #5B44D9;
+    --accent-bg: #EFEBFF;
+    --ok:        #0E7A50;
+    --ok-bg:     #E3F6EC;
+    --warn:      #8A5A09;
+    --warn-bg:   #FDF2DC;
+    --danger:    #C3352B;
+    --danger-bg: #FDECEA;
+    --violet:    #5B44D9;
+    --violet-bg: #F0ECFF;
+    --brand:     #7F77DD;
+    --logo-ink:  #1E2433;   /* the brand's own ink, on a light page */
+    --shadow:    0 1px 2px rgba(20,16,40,.05), 0 12px 32px -18px rgba(20,16,40,.22);
+    --wash: radial-gradient(120% 60% at 50% -20%,
+            rgba(123,109,224,.10) 0%, rgba(123,109,224,0) 62%);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg:        #FCFCFD;
+  --bg-elev:   #F6F5F9;
+  --bg-sunken: #F1F0F6;
+  --bg-hover:  #EDEBF3;
+  --border:    #E3E1EC;
+  --border-lo: #EEEDF4;
+  --text:      #16141C;
+  --text-dim:  #5C5770;
+  --text-faint:#8A85A0;
+  --accent:    #5B44D9;
+  --accent-bg: #EFEBFF;
+  --ok:        #0E7A50;
+  --ok-bg:     #E3F6EC;
+  --warn:      #8A5A09;
+  --warn-bg:   #FDF2DC;
+  --danger:    #C3352B;
+  --danger-bg: #FDECEA;
+  --violet:    #5B44D9;
+  --violet-bg: #F0ECFF;
+  --brand:     #7F77DD;
+  --logo-ink:  #1E2433;
+  --shadow:    0 1px 2px rgba(20,16,40,.05), 0 12px 32px -18px rgba(20,16,40,.22);
+  --wash: radial-gradient(120% 60% at 50% -20%,
+          rgba(123,109,224,.10) 0%, rgba(123,109,224,0) 62%);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.65 var(--sans);
+  letter-spacing: -.003em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+::selection { background: var(--accent-bg); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ---------------------------------------------------------------- shell --- */
+
+.shell { display: grid; grid-template-columns: 244px minmax(0, 1fr); min-height: 100vh; }
+
+/* No right border: the rail is a shade, not a walled-off panel. One less line
+   on the page, and the eye still reads the split. */
+#rail {
+  position: sticky; top: 0; align-self: start; height: 100vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-elev);
+}
+.rail-head { padding: 20px 18px 18px; display: flex; align-items: center; gap: 9px; }
+/* The mark's dark blocks are `currentColor` (see logo.svg), so the ink follows
+   the theme while the accent block stays brand violet in both. */
+.rail-head .mark { height: 19px; width: auto; flex: none; color: var(--logo-ink); }
+.rail-head .wordmark {
+  font-weight: 580; letter-spacing: -.03em; font-size: 16px; color: var(--logo-ink);
+}
+.rail-head .wordmark b { color: var(--brand); font-weight: inherit; }
+.rail-head .theme {
+  margin-left: auto; width: 26px; height: 26px; border-radius: 50%;
+  border: 0; background: transparent; color: var(--text-faint);
+  cursor: pointer; font-size: 13px; line-height: 1; display: grid; place-items: center;
+  transition: background .12s, color .12s;
+}
+.rail-head .theme:hover { background: var(--bg-hover); color: var(--text); }
+
+.rail-nav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
+.rail-nav a, .rail-nav .navitem {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-radius: var(--r-sm); color: var(--text-dim); font-size: 13.5px;
+  transition: background .12s, color .12s;
+}
+.rail-nav a:hover { background: var(--bg-hover); color: var(--text); text-decoration: none; }
+.rail-nav a.on { background: var(--accent-bg); color: var(--accent); font-weight: 560; }
+.rail-nav .ico { width: 14px; text-align: center; opacity: .8; flex: none; font-size: 11px; }
+
+.rail-label {
+  padding: 22px 18px 8px; font-size: 10.5px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint); font-weight: 560;
+  display: flex; align-items: center; gap: 8px;
+}
+.rail-label .follow { margin-left: auto; text-transform: none; letter-spacing: 0;
+  font-size: 11px; color: var(--text-faint); display: flex; align-items: center;
+  gap: 4px; cursor: pointer; }
+
+/* The switcher list and a board's table of contents share the rail's one
+   scrollable slot — neither may push the wordmark off the top. */
+#sessions, #toc { overflow-y: auto; padding: 0 10px 20px; flex: 1; min-height: 0; }
+.slist-empty { padding: 8px 10px; color: var(--text-faint); font-size: 13px; }
+
+/* A switcher entry is a row, not a card: no border, no fill until you touch it,
+   and the current one marked by an accent bar rather than an outline. */
+.sitem {
+  display: block; padding: 7px 10px; border-radius: var(--r-sm);
+  color: var(--text-dim); cursor: pointer; border: 0; position: relative;
+  width: 100%; text-align: left; background: none; font: inherit;
+  transition: background .12s;
+}
+.sitem:hover { background: var(--bg-hover); text-decoration: none; }
+.sitem.on { background: var(--bg-hover); }
+.sitem.on::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+}
+.sitem .n {
+  display: block; font-size: 13px; font-weight: 500; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -.01em;
+}
+.sitem:hover .n, .sitem.on .n { color: var(--text); }
+.sitem .m {
+  display: flex; gap: 7px; align-items: center; margin-top: 2px;
+  font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- topbar ----- */
+
+.main { min-width: 0; display: flex; flex-direction: column; background: var(--wash); }
+
+#topbar {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  border-bottom: 1px solid var(--border-lo);
+}
+/* The topbar shares the feed's reading column, so the title, the toolbar, and
+   the transcript all hang off one left edge instead of three. */
+.tb-row, .tb-search { width: var(--col); margin: 0 auto; }
+.tb-row { display: flex; align-items: center; gap: 12px; padding: 13px 26px; }
+.tb-title { font-weight: 600; font-size: 14.5px; letter-spacing: -.02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-stats { display: flex; gap: 12px; align-items: center; margin-left: auto;
+  font-size: 12.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tb-stats b { color: var(--text-dim); font-weight: 560; }
+.tb-stats .spend b { color: var(--ok); }
+
+.dotstat { display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--text-faint); }
+.dotstat::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--text-faint);
+}
+.dotstat.live::before { background: var(--ok); animation: pulse 1.8s ease-in-out infinite; }
+.dotstat.warn::before { background: var(--warn); }
+.dotstat.err::before  { background: var(--danger); }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* Filtering is a thing you do occasionally, so it costs an icon, not a
+   permanent row. `/` and the icon both open it; Escape and ✕ put it away. */
+.tb-search {
+  display: flex; align-items: center; gap: 8px; padding: 0 26px 11px;
+  color: var(--text-faint);
+}
+.tb-search[hidden] { display: none; }
+.tb-search input {
+  flex: 1; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 14px; color: var(--text);
+  font: 13px var(--sans); outline: none; min-width: 0;
+}
+.tb-search input:focus { border-color: var(--accent); }
+.tb-search .count { font-size: 11.5px; white-space: nowrap; }
+
+.icon {
+  border: 0; background: transparent; color: var(--text-faint); flex: none;
+  width: 27px; height: 27px; border-radius: var(--r-sm); cursor: pointer;
+  font: 14px var(--sans); display: grid; place-items: center;
+  transition: background .12s, color .12s;
+}
+.icon:hover { background: var(--bg-hover); color: var(--text); }
+.icon.on { background: var(--accent-bg); color: var(--accent); }
+
+.menu { position: relative; display: flex; }
+.btn {
+  border: 1px solid var(--border); background: var(--bg-elev); color: var(--text-dim);
+  border-radius: 999px; padding: 5px 13px; cursor: pointer; font: 13px var(--sans);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover { background: var(--bg-hover); color: var(--text); }
+.menu-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 10;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 6px; min-width: 178px; box-shadow: var(--shadow);
+}
+.menu-pop[hidden] { display: none; }
+.menu-pop label {
+  display: flex; align-items: center; gap: 9px; padding: 6px 9px;
+  border-radius: var(--r-sm); font-size: 13.5px; color: var(--text-dim); cursor: pointer;
+}
+.menu-pop label:hover { background: var(--bg-hover); color: var(--text); }
+
+/* ------------------------------------------------------------ banners ---- */
+
+#banner:empty, #now:empty { display: none; }
+#banner, #now { width: var(--col); margin: 0 auto; padding: 0 26px; }
+#banner > *, #now > * { margin: 8px 0 0; }
+
+.approval {
+  background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  color: var(--warn); border-radius: var(--r); padding: 10px 14px;
+  display: flex; gap: 10px; align-items: baseline; font-size: 13.5px;
+}
+.approval .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .8; }
+
+.nowitem {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 8px 14px; display: flex; gap: 10px; align-items: center;
+  font-size: 13.5px; color: var(--text-dim);
+}
+.nowitem .spin {
+  width: 11px; height: 11px; border-radius: 50%; flex: none;
+  border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent); animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.nowitem .elapsed { margin-left: auto; color: var(--text-faint);
+  font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------- feed ---- */
+
+#log { padding: 26px 26px 140px; }
+#log, .doc-body { width: var(--col); margin: 0 auto; }
+
+.turn { margin: 0 0 4px; }
+
+/* The operator's instruction. No box — a rule down the left says "this is the
+   thing that was asked" without spending a whole panel on it. */
+.task {
+  margin: 22px 0 26px; padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--accent);
+}
+.task .who {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 5px; font-weight: 600;
+}
+.task .md { font-size: 15.5px; letter-spacing: -.01em; }
+
+/* the model's prose */
+.msg { margin: 16px 0; }
+
+/* The final answer — the one place a tinted fill is worth it, because it is
+   what the whole page was for. */
+.answer {
+  margin: 24px 0; padding: 16px 18px; border-radius: var(--r-lg);
+  background: var(--ok-bg);
+  border: 1px solid color-mix(in srgb, var(--ok) 26%, transparent);
+}
+.answer .who {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ok); margin-bottom: 8px; font-weight: 600;
+}
+
+/* A step: one code cell and everything it caused. The card carries the only
+   border in the stack — the cells and the <pre> inside it sit on tone alone,
+   so a code block is not three nested rectangles. */
+.step {
+  margin: 16px 0; border: 1px solid var(--border-lo); border-radius: var(--r-lg);
+  background: var(--bg-elev); overflow: hidden;
+}
+.step-head {
+  display: flex; align-items: center; gap: 10px; padding: 9px 15px 7px;
+  font-size: 11px; color: var(--text-faint);
+  letter-spacing: .07em; text-transform: uppercase;
+}
+.step-head .idx {
+  font-variant-numeric: tabular-nums; color: var(--text-faint); font-weight: 600;
+  flex: none; white-space: nowrap;  /* a busy step's chips must not wrap it */
+}
+.step-head .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto;
+  justify-content: flex-end; text-transform: none; letter-spacing: 0; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 1.5px 9px;
+  border-radius: 999px; font: 11px var(--mono); background: var(--bg-sunken);
+  border: 1px solid var(--border-lo); color: var(--text-dim); white-space: nowrap;
+}
+.chip.ok::before   { content: "✓"; color: var(--ok); }
+.chip.err  { background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger) 26%, transparent); color: var(--danger); }
+.chip.err::before  { content: "✕"; }
+.chip.deny { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 40%, transparent); color: var(--warn); font-weight: 600; }
+.chip.deny::before { content: "⛔"; }
+.chip .t { color: var(--text-faint); }
+
+/* The cell bar's tools stay invisible until the step is hovered — copy and
+   fold buttons on every cell were a permanent row of chrome for a rare click. */
+.cellbar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 15px 4px;
+  font: 10.5px var(--mono); color: var(--text-faint);
+}
+.cellbar .lbl { text-transform: uppercase; letter-spacing: .1em; }
+.cellbar .peek { color: var(--text-faint); overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; flex: 1; min-width: 0; opacity: .75; }
+.cellbar .tools { margin-left: auto; display: flex; gap: 3px; flex: none;
+  opacity: 0; transition: opacity .12s; }
+.step:hover .cellbar .tools, .cellbar:focus-within .tools { opacity: 1; }
+.mini {
+  border: 0; background: transparent; color: var(--text-faint);
+  border-radius: 5px; padding: 2px 7px; cursor: pointer; font: 11px var(--sans);
+  transition: background .12s, color .12s;
+}
+.mini:hover { background: var(--bg-hover); color: var(--text); }
+.mini.on { color: var(--accent); }
+
+.cellbody { padding: 0 15px 13px; }
+.cellbody[hidden] { display: none; }
+
+/* Borderless: the sunken tone is the boundary. */
+pre.src {
+  margin: 0; padding: 13px 15px; border-radius: var(--r);
+  background: var(--bg-sunken);
+  overflow-x: auto; white-space: pre; tab-size: 4;
+  font: 12.5px/1.6 var(--mono); color: var(--text);
+}
+pre.out {
+  margin: 0; padding: 13px 15px; border-radius: var(--r);
+  background: var(--bg-sunken);
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  font: 12.5px/1.6 var(--mono); color: var(--text-dim);
+}
+.clamp { max-height: 300px; overflow: hidden; position: relative; }
+.clamp::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 64px;
+  background: linear-gradient(transparent, var(--bg-elev));
+  pointer-events: none;
+}
+.more {
+  display: block; width: 100%; margin-top: 6px; padding: 5px;
+  border: 0; background: var(--bg-sunken); color: var(--text-faint);
+  border-radius: var(--r-sm); cursor: pointer; font: 11.5px var(--sans);
+  transition: background .12s, color .12s;
+}
+.more:hover { background: var(--bg-hover); color: var(--text); }
+
+/* Rendered tool output is a quotation, not the page's own voice — its headings
+   must not outrank the transcript around them. */
+.cellbody .md h1 { font-size: 16px; }
+.cellbody .md h2 { font-size: 14.5px; }
+.cellbody .md h3, .cellbody .md h4 { font-size: 13.5px; }
+.cellbody .md { font-size: 14px; }
+
+img.shot {
+  max-width: 100%; border-radius: var(--r); border: 1px solid var(--border-lo);
+  display: block; margin: 4px 0;
+}
+
+/* thinking + the full prompt snapshot: present, quiet, collapsed */
+details.fold { margin: 10px 0; }
+details.fold > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px;
+  font: 10.5px var(--mono); color: var(--text-faint); padding: 4px 0;
+  letter-spacing: .04em;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before {
+  content: "▸"; font-size: 9px; transition: transform .12s;
+}
+details.fold[open] > summary::before { transform: rotate(90deg); }
+details.fold > summary:hover { color: var(--text-dim); }
+details.fold .body {
+  border-left: 1px solid var(--border); padding-left: 13px; margin: 4px 0 0 3px;
+}
+.think .body pre { color: var(--text-dim); font-style: italic; }
+.prompt .role {
+  font: 10.5px var(--mono); color: var(--accent); text-transform: uppercase;
+  letter-spacing: .08em; margin: 10px 0 3px;
+}
+.prompt .role.sys { color: var(--violet); }
+.prompt pre { max-height: 280px; overflow: auto; }
+
+/* one-line records */
+.note { font-size: 12px; color: var(--text-faint); margin: 8px 0;
+  display: flex; gap: 8px; align-items: baseline; }
+.note.err { color: var(--danger); white-space: pre-wrap; }
+.note.warn { color: var(--warn); }
+
+/* a spawned sub-agent, inline at its spawn point */
+.subagent {
+  margin: 16px 0; border: 1px solid color-mix(in srgb, var(--violet) 26%, var(--border));
+  border-radius: var(--r-lg); background: var(--bg-elev); overflow: hidden;
+}
+.subagent > summary {
+  cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: center;
+  padding: 10px 15px; background: var(--violet-bg); font-size: 13px;
+}
+.subagent > summary::-webkit-details-marker { display: none; }
+.subagent .sub-name { color: var(--violet); font-weight: 600; }
+.subagent .sub-task { color: var(--text-dim); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.subagent .sub-stat { margin-left: auto; color: var(--text-faint); flex: none;
+  font-variant-numeric: tabular-nums; font-size: 12px; }
+.subagent .dot { width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--accent); }
+.subagent .dot.done { background: var(--ok); }
+.subagent .dot.err { background: var(--danger); }
+.sub-body { padding: 2px 16px 12px; }
+
+/* ------------------------------------------------------------ markdown --- */
+
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md p { margin: 0 0 12px; }
+.md h1, .md h2, .md h3, .md h4 {
+  margin: 30px 0 10px; line-height: 1.25; letter-spacing: -.022em; font-weight: 620;
+}
+.md h1 { font-size: 25px; }
+.md h2 { font-size: 19px; }
+.md h3 { font-size: 15.5px; }
+.md h4 { font-size: 13.5px; color: var(--text-dim); }
+.md ul, .md ol { margin: 0 0 12px; padding-left: 22px; }
+.md li { margin: 4px 0; }
+.md li > ul, .md li > ol { margin: 4px 0; }
+.md blockquote {
+  margin: 12px 0; padding: 2px 0 2px 15px; border-left: 2px solid var(--accent);
+  color: var(--text-dim);
+}
+.md hr { border: 0; border-top: 1px solid var(--border-lo); margin: 26px 0; }
+.md code {
+  font: 12.5px var(--mono); background: var(--bg-sunken);
+  border-radius: 5px; padding: 1.5px 6px; color: var(--text-dim);
+}
+.md pre {
+  margin: 0 0 12px; padding: 13px 15px; border-radius: var(--r);
+  background: var(--bg-sunken);
+  overflow-x: auto; font: 12.5px/1.6 var(--mono); white-space: pre;
+}
+.md pre code { background: none; padding: 0; font-size: inherit; color: var(--text); }
+.md strong { font-weight: 620; color: var(--text); }
+.md del { color: var(--text-faint); }
+
+/* Tables lose their grid: header rule, row hairlines, nothing vertical. A
+   forty-row scoreboard stops looking like a spreadsheet screenshot. */
+.md .tablewrap { overflow-x: auto; margin: 0 0 16px; }
+.md table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.md th, .md td {
+  border: 0; border-bottom: 1px solid var(--border-lo);
+  padding: 8px 14px 8px 0; text-align: left; vertical-align: top;
+}
+.md th {
+  font-weight: 560; white-space: nowrap; color: var(--text-faint);
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
+  border-bottom-color: var(--border);
+}
+.md tr:last-child td { border-bottom: 0; }
+.md td:has(> code:only-child) { white-space: nowrap; }
+
+/* ------------------------------------------------------- index + docs ---- */
+
+.page { padding: 8px 26px 90px; }
+.page-head, .hero { width: var(--col); margin: 0 auto; }
+
+/* The site's one display setting. Big, tight, and short-measure — a headline
+   that wraps at three lines reads as a statement; one that runs the full column
+   reads as a paragraph in bold. */
+.hero { padding: 74px 0 40px; }
+.hero h1, .page-head h1 {
+  font-size: clamp(30px, 3.9vw, 43px); line-height: 1.08; letter-spacing: -.035em;
+  font-weight: 600; margin: 0 0 18px; max-width: 19ch; text-wrap: balance;
+}
+.page-head { padding: 46px 0 30px; }
+.page-head h1 { font-size: clamp(26px, 3vw, 34px); margin-bottom: 12px; max-width: 24ch; }
+.hero .lede, .page-head .lede {
+  color: var(--text-dim); margin: 0; font-size: 16px; line-height: 1.6;
+  max-width: 62ch; letter-spacing: -.008em;
+}
+
+/* The eyebrow: the one place a bare colored dot appears as decoration, and it
+   is doing the job a logo lockup would on a marketing page. */
+.eyebrow {
+  display: flex; align-items: center; gap: 9px; margin: 0 0 22px;
+  font: 10.5px var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.eyebrow::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex: none;
+}
+
+/* The numbers, on one hairline-bounded band. Boxes around three figures were
+   three borders doing what whitespace already does. */
+.stats {
+  display: flex; flex-wrap: wrap; gap: 14px 52px; width: var(--col);
+  margin: 0 auto; padding: 22px 0 24px;
+  border-top: 1px solid var(--border-lo); border-bottom: 1px solid var(--border-lo);
+}
+.stat { flex: 0 0 auto; }
+.stat .v { font-size: 27px; font-weight: 600; letter-spacing: -.035em;
+  font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat .k { font-size: 10.5px; color: var(--text-faint); margin-top: 5px;
+  text-transform: uppercase; letter-spacing: .11em; }
+.stat.good .v { color: var(--ok); }
+.stat.flag .v { color: var(--warn); }
+
+/* The run list: rows on hairlines, not a stack of cards. */
+.cards { width: var(--col); margin: 0 auto; display: flex; flex-direction: column; }
+.card {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px 20px;
+  padding: 17px 12px 17px 14px; margin: 0 -12px 0 -14px; border-radius: var(--r);
+  border-bottom: 1px solid var(--border-lo); color: inherit;
+  transition: background .12s;
+}
+.card:last-child { border-bottom: 0; }
+.card:hover { background: var(--bg-elev); text-decoration: none; }
+.card .name {
+  display: flex; align-items: center; gap: 9px; font-weight: 560; font-size: 14.5px;
+  color: var(--text); letter-spacing: -.015em; min-width: 0;
+}
+.card .name .dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--ok); }
+.card .name .dot.warn { background: var(--warn); }
+.card .blurb { grid-column: 1; color: var(--text-dim); font-size: 13px;
+  line-height: 1.55; padding-left: 15px;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.card .nums { grid-column: 2; grid-row: 1; display: flex; gap: 12px;
+  align-items: center; font-size: 13px; color: var(--text);
+  font-variant-numeric: tabular-nums; font-weight: 560; }
+.card .tail { grid-column: 2; grid-row: 2; display: flex; gap: 8px;
+  align-items: center; justify-content: flex-end; }
+
+.pill {
+  display: inline-block; border-radius: 999px; padding: 1.5px 9px;
+  font: 10.5px var(--mono); letter-spacing: .04em;
+  background: var(--bg-sunken); color: var(--text-faint);
+}
+.pill.ok   { background: transparent; color: var(--text-dim); padding-right: 0; }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.err  { background: var(--danger-bg); color: var(--danger); }
+
+footer.site { width: var(--col); margin: 56px auto 0; padding-top: 18px;
+  border-top: 1px solid var(--border-lo); color: var(--text-faint); font-size: 12px; }
+
+/* --------------------------------------------------------------- misc ---- */
+
+body.hide-code .k-code, body.hide-output .k-output,
+body.hide-action .k-action, body.hide-prompt .k-prompt,
+body.hide-think .k-think { display: none; }
+.search-hide { display: none !important; }
+
+#jump {
+  position: fixed; right: 28px; bottom: 28px; z-index: 8;
+  border-radius: 999px; padding: 9px 17px; box-shadow: var(--shadow);
+  background: var(--accent); color: var(--bg); border: 0; cursor: pointer;
+  font: 13px var(--sans); font-weight: 560;
+}
+#jump[hidden] { display: none; }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  #rail { position: static; height: auto;
+          border-bottom: 1px solid var(--border); }
+  #sessions { max-height: 210px; }
+  .tb-row, .tb-search, #log, .page { padding-left: 18px; padding-right: 18px; }
+  .hero { padding: 40px 0 34px; }
+  .stats { gap: 14px 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+@media print {
+  #rail, #topbar, #jump { display: none; }
+  .main { background: none; }
+  body { background: #fff; }
+}
+
+</style>
+</head>
+<body>
+<div class="shell">
+<aside id="rail">
+  <div class="rail-head">
+    <!-- The pyharness mark. The four dark blocks are `currentColor` so the mark
+     inverts with the theme (the brand's #1E2433 is invisible on a dark page);
+     the accent block keeps the brand violet in both, where it reads on either
+     background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" class="mark" aria-hidden="true">
+  <rect x="0"   y="0"   width="90"  height="420" fill="currentColor"/>
+  <rect x="90"  y="0"   width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="0"   width="90"  height="255" fill="currentColor"/>
+  <rect x="90"  y="165" width="120" height="90"  fill="currentColor"/>
+  <rect x="210" y="255" width="90"  height="165" fill="#7F77DD"/>
+</svg>
+
+    <span class="wordmark">py<b>h</b>arness</span>
+    <button class="theme" id="theme" aria-label="Toggle theme"></button>
+  </div>
+  <nav class="rail-nav" id="nav">
+<a class="" href="index.html"><span class="ico">◆</span>Overview</a>
+<a class="" href="board.html"><span class="ico">▤</span>Board</a>
+<a class="" href="control-arm-files.html"><span class="ico">▤</span>Control arm: files</a>
+<a class="on" href="control-arm-shell.html"><span class="ico">▤</span>Control arm: shell</a>
+</nav>
+  <div class="rail-label">On this page</div>
+  <div id="toc"></div>
+</aside>
+<div class="main">
+  <div class="page">
+    <div class="page-head">
+      <div class="eyebrow">Eval board</div>
+      <h1>Control arm: shell</h1>
+      
+    </div>
+    <div class="doc-body md" id="doc-body"></div>
+    <footer class="site">Rendered from the committed markdown artifact by
+    <code>pyharness-watch --static</code>.</footer>
+  </div>
+</div>
+</div>
+<script>
+/* A small markdown renderer that builds DOM nodes.
+ *
+ * Everything it renders is untrusted: model prose, tool output, a page the
+ * agent fetched, an eval board. So the one rule this file exists to keep is
+ * that no string from the input ever reaches `innerHTML`. Text lands via
+ * `textContent`, structure comes from `createElement`, and the only attribute
+ * ever set from input is `href` — behind a scheme allowlist, because
+ * `javascript:` in a link is the whole attack.
+ *
+ * Supported, because it is what actually shows up in these traces: fenced and
+ * indented code, ATX headings, hr, blockquotes, nested lists, GFM pipe tables
+ * (invoices and eval boards are full of them), and inline code / bold / italic
+ * / strike / links / autolinks.
+ *
+ * Exposes `renderMarkdown(text) -> HTMLDivElement` and `looksLikeMarkdown(text)`.
+ */
+
+(function (global) {
+  "use strict";
+
+  var SAFE_SCHEME = /^(https?:|mailto:|#|\/)/i;
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+
+  /* ---------------------------------------------------------------- inline */
+
+  // Ordered by how greedily each pattern should win. Code first: a backtick
+  // span is literal, so `**x**` inside it must not become bold.
+  var INLINE = [
+    { re: /`([^`\n]+)`/, node: function (m) { return el("code", null, m[1]); } },
+    { re: /\*\*([^\n]+?)\*\*/, node: function (m) { return inlineInto(el("strong"), m[1]); } },
+    { re: /__([^\n]+?)__/, node: function (m) { return inlineInto(el("strong"), m[1]); } },
+    { re: /~~([^\n]+?)~~/, node: function (m) { return inlineInto(el("del"), m[1]); } },
+    { re: /(?:^|(?<=[\s(]))\*([^*\n]+?)\*/, node: function (m) { return inlineInto(el("em"), m[1]); } },
+    { re: /(?:^|(?<=[\s(]))_([^_\n]+?)_/, node: function (m) { return inlineInto(el("em"), m[1]); } },
+    { re: /\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/, node: function (m) { return link(m[2], m[1] || m[2]); } },
+    { re: /<((?:https?:\/\/|mailto:)[^>\s]+)>/, node: function (m) { return link(m[1], m[1]); } },
+    { re: /(?:^|(?<=[\s(<]))(https?:\/\/[^\s<>()"']+[^\s<>()"'.,;:!?])/, node: function (m) { return link(m[1], m[1]); } },
+  ];
+
+  function link(href, text) {
+    if (!SAFE_SCHEME.test(href)) return document.createTextNode(text);
+    var a = el("a", null, text);
+    a.href = href;
+    if (/^https?:/i.test(href)) {
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
+    return a;
+  }
+
+  /** Append the inline rendering of `text` into `parent`, and return `parent`. */
+  function inlineInto(parent, text) {
+    var rest = String(text == null ? "" : text);
+    while (rest) {
+      var best = null;
+      for (var i = 0; i < INLINE.length; i++) {
+        var m = INLINE[i].re.exec(rest);
+        if (m && (best === null || m.index < best.m.index)) {
+          best = { m: m, rule: INLINE[i] };
+          if (m.index === 0) break;
+        }
+      }
+      if (!best) break;
+      if (best.m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, best.m.index)));
+      parent.appendChild(best.rule.node(best.m));
+      rest = rest.slice(best.m.index + best.m[0].length);
+    }
+    if (rest) parent.appendChild(document.createTextNode(rest));
+    return parent;
+  }
+
+  /* ----------------------------------------------------------------- table */
+
+  function splitRow(line) {
+    var cells = [];
+    var cur = "";
+    var esc = false;
+    var body = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    for (var i = 0; i < body.length; i++) {
+      var c = body[i];
+      if (esc) { cur += c; esc = false; continue; }
+      if (c === "\\") { esc = true; continue; }
+      if (c === "|") { cells.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  var DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+  function table(lines, start) {
+    // A table is a header row, a `---|---` divider, then body rows. Anything
+    // else and the caller falls through to paragraph handling.
+    if (start + 1 >= lines.length) return null;
+    if (lines[start].indexOf("|") === -1) return null;
+    if (!DIVIDER.test(lines[start + 1])) return null;
+
+    var head = splitRow(lines[start]);
+    var i = start + 2;
+    var rows = [];
+    while (i < lines.length && lines[i].indexOf("|") !== -1 && lines[i].trim()) {
+      rows.push(splitRow(lines[i]));
+      i++;
+    }
+    var wrap = el("div", "tablewrap");
+    var t = el("table");
+    var thead = el("thead");
+    var tr = el("tr");
+    head.forEach(function (h) { tr.appendChild(inlineInto(el("th"), h)); });
+    thead.appendChild(tr);
+    t.appendChild(thead);
+    var tbody = el("tbody");
+    rows.forEach(function (r) {
+      var row = el("tr");
+      for (var c = 0; c < head.length; c++) {
+        row.appendChild(inlineInto(el("td"), r[c] === undefined ? "" : r[c]));
+      }
+      tbody.appendChild(row);
+    });
+    t.appendChild(tbody);
+    wrap.appendChild(t);
+    return { node: wrap, next: i };
+  }
+
+  /* ------------------------------------------------------------------ list */
+
+  var BULLET = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+
+  /** Consume one list (and its nested sublists) starting at `start`. */
+  function list(lines, start) {
+    var first = BULLET.exec(lines[start]);
+    var indent = first[1].length;
+    var ordered = /\d/.test(first[2]);
+    var root = el(ordered ? "ol" : "ul");
+    var i = start;
+    var item = null;
+    var buf = [];
+
+    function flush() {
+      if (!item) return;
+      inlineInto(item, buf.join("\n").trim());
+      buf = [];
+    }
+
+    while (i < lines.length) {
+      var line = lines[i];
+      var m = BULLET.exec(line);
+      if (m && m[1].length <= indent) {
+        if (m[1].length < indent) break;
+        if (/\d/.test(m[2]) !== ordered) break;
+        flush();
+        item = el("li");
+        root.appendChild(item);
+        buf.push(m[3]);
+        i++;
+        continue;
+      }
+      if (m && m[1].length > indent && item) {
+        flush();
+        var sub = list(lines, i);
+        item.appendChild(sub.node);
+        i = sub.next;
+        continue;
+      }
+      // A lazy continuation line: indented text under the current bullet.
+      if (item && line.trim() && /^\s{2,}/.test(line)) { buf.push(line.trim()); i++; continue; }
+      break;
+    }
+    flush();
+    return { node: root, next: i };
+  }
+
+  /* ---------------------------------------------------------------- blocks */
+
+  function render(text) {
+    var out = el("div", "md");
+    var lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+    var i = 0;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (!line.trim()) { i++; continue; }
+
+      // fenced code — ``` or ~~~, with an optional info string
+      var fence = /^\s*(```+|~~~+)\s*([\w+-]*)\s*$/.exec(line);
+      if (fence) {
+        var close = fence[1][0];
+        var body = [];
+        i++;
+        while (i < lines.length && !new RegExp("^\\s*" + close + "{" + fence[1].length + ",}\\s*$").test(lines[i])) {
+          body.push(lines[i]);
+          i++;
+        }
+        i++; // the closing fence (or the end of input)
+        var pre = el("pre");
+        var code = el("code", fence[2] ? "lang-" + fence[2] : null, body.join("\n"));
+        pre.appendChild(code);
+        out.appendChild(pre);
+        continue;
+      }
+
+      var head = /^(#{1,6})\s+(.*?)\s*#*$/.exec(line);
+      if (head) {
+        out.appendChild(inlineInto(el("h" + Math.min(head[1].length, 4)), head[2]));
+        i++;
+        continue;
+      }
+
+      if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.appendChild(el("hr")); i++; continue; }
+
+      if (/^\s*>/.test(line)) {
+        var quoted = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) {
+          quoted.push(lines[i].replace(/^\s*>\s?/, ""));
+          i++;
+        }
+        var bq = el("blockquote");
+        bq.appendChild(render(quoted.join("\n")));
+        out.appendChild(bq);
+        continue;
+      }
+
+      var tbl = table(lines, i);
+      if (tbl) { out.appendChild(tbl.node); i = tbl.next; continue; }
+
+      if (BULLET.test(line)) {
+        var lst = list(lines, i);
+        out.appendChild(lst.node);
+        i = lst.next;
+        continue;
+      }
+
+      // paragraph — runs to the next blank line or block opener
+      var para = [];
+      while (i < lines.length && lines[i].trim()) {
+        var l = lines[i];
+        if (/^\s*(```|~~~)/.test(l) || /^#{1,6}\s/.test(l) || /^\s*>/.test(l) ||
+            BULLET.test(l) || (l.indexOf("|") !== -1 && DIVIDER.test(lines[i + 1] || ""))) break;
+        para.push(l);
+        i++;
+      }
+      if (para.length) {
+        var p = el("p");
+        for (var k = 0; k < para.length; k++) {
+          if (k) p.appendChild(el("br"));
+          inlineInto(p, para[k].trim());
+        }
+        out.appendChild(p);
+      }
+    }
+    return out;
+  }
+
+  /** Is this text a *document*, or just program output that happens to contain
+   *  a `#`?
+   *
+   *  This decides whether a tool result renders as prose or stays verbatim, so
+   *  a loose answer is expensive in both directions: too eager and a tool's
+   *  one-line `# browser — drive a headless browser…` blurb becomes a giant
+   *  heading; too strict and a fetched invoice stays a wall of pipes. So: a
+   *  table or a code fence is decisive on its own (nothing else produces
+   *  either by accident), and anything weaker has to corroborate — two
+   *  independent signals, where a lone heading is not one. */
+  function looksLikeMarkdown(text) {
+    var t = String(text == null ? "" : text);
+    if (!t.trim()) return false;
+
+    var lines = t.split("\n");
+    for (var i = 0; i < lines.length - 1; i++) {
+      if (lines[i].indexOf("|") !== -1 && DIVIDER.test(lines[i + 1])) return true;
+    }
+    if (/^\s*(```|~~~)/m.test(t)) return true;
+
+    var count = function (re) { return (t.match(re) || []).length; };
+    var signals =
+      (count(/^#{1,6}\s+\S/gm) >= 2) +
+      (count(/^\s*([-*+]|\d{1,9}[.)])\s+\S/gm) >= 2) +
+      /\[[^\]\n]+\]\([^)\s]+\)/.test(t) +
+      /\*\*[^\n*]+\*\*/.test(t);
+    return signals >= 2;
+  }
+
+  global.renderMarkdown = render;
+  global.looksLikeMarkdown = looksLikeMarkdown;
+})(window);
+
+</script>
+<script>
+/* The session renderer: a trace event stream in, a chat transcript out.
+ *
+ * One implementation serves both views. The live page feeds it Server-Sent
+ * Events; the baked page feeds it a frozen array through the same `handle()`.
+ * Nothing here knows which it is — that is the whole point of the split, and
+ * why a published page cannot drift from what the operator watched.
+ *
+ * Shape of the output: the operator's task, then one *turn* per model
+ * completion — its prose, then a step card holding the code it ran, the
+ * actions that code triggered, and the output that came back — then the
+ * answer. Prompt snapshots and thinking are present but folded away; a
+ * refusal is not, because a refusal is the claim this project makes.
+ *
+ * Untrusted input, always: prose and output go through `renderMarkdown`
+ * (DOM-built, never `innerHTML`), everything else through `textContent`.
+ */
+
+/* --------------------------------------------------------------- theme --- */
+
+function isDark() {
+  var set = document.documentElement.getAttribute("data-theme");
+  if (set) return set === "dark";
+  return !matchMedia("(prefers-color-scheme: light)").matches;
+}
+function wireTheme() {
+  var btn = document.getElementById("theme");
+  if (!btn) return;
+  function paint() {
+    btn.textContent = isDark() ? "☾" : "☀";
+    btn.title = isDark() ? "Switch to light" : "Switch to dark";
+  }
+  btn.onclick = function () {
+    var next = isDark() ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("ph-theme", next); } catch (e) { /* private mode */ }
+    paint();
+  };
+  paint();
+}
+
+/* ---------------------------------------------------------------- utils -- */
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+function fmtUsd(x) {
+  var v = Number(x) || 0;
+  return v > 0 && v < 0.01 ? "$" + v.toFixed(4) : "$" + v.toFixed(2);
+}
+function fmtDur(s) {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
+}
+function byId(id) { return document.getElementById(id); }
+
+var rootLog, nowEl, bannerEl;
+var active = new Map();     // laneKey -> {label, t0, lane}
+var approvals = new Map();  // key -> {label, t0}
+var lanes = new Map();      // session dir name -> lane
+var rootName = null;
+var followTail = true;
+var sessionStartMs = 0;
+var searchTerm = "";
+
+addEventListener("scroll", function () {
+  followTail = innerHeight + scrollY >= document.body.scrollHeight - 80;
+  var jump = byId("jump");
+  if (jump) jump.hidden = followTail;
+});
+function scrollTail() { if (followTail) scrollTo(0, document.body.scrollHeight); }
+
+/* ---------------------------------------------------------------- cells -- */
+
+function copyButton(getText) {
+  var b = el("button", "mini", "copy");
+  b.onclick = function (ev) {
+    ev.preventDefault();
+    if (navigator.clipboard) navigator.clipboard.writeText(getText() || "");
+    b.textContent = "copied";
+    setTimeout(function () { b.textContent = "copy"; }, 1200);
+  };
+  return b;
+}
+
+/** Clamp a tall body behind a "show more", so one 900-line output does not
+ *  bury the rest of the session. */
+function clamp(body, node) {
+  requestAnimationFrame(function () {
+    if (node.scrollHeight <= 320) return;
+    node.classList.add("clamp");
+    var more = el("button", "more", "show all (" + node.scrollHeight + "px)");
+    more.onclick = function () {
+      node.classList.toggle("clamp");
+      more.textContent = node.classList.contains("clamp") ? "show all" : "show less";
+    };
+    body.appendChild(more);
+  });
+}
+
+/** A code or output cell: a one-line bar that stays readable when collapsed,
+ *  plus the body. Output that looks like markdown renders as markdown, with
+ *  `raw` one click away — the record has to stay inspectable. */
+function cell(kind, text) {
+  text = text || "";
+  var wrap = el("div", "cell k-" + kind);
+  var bar = el("div", "cellbar");
+  bar.appendChild(el("span", "lbl", kind));
+  var first = text.split("\n", 1)[0].slice(0, 96);
+  bar.appendChild(el("span", "peek", first));
+  var tools = el("div", "tools");
+
+  var body = el("div", "cellbody");
+  var rendered = kind === "output" && window.looksLikeMarkdown && looksLikeMarkdown(text);
+
+  function paint() {
+    body.replaceChildren();
+    if (rendered) {
+      body.appendChild(renderMarkdown(text));
+    } else {
+      var pre = el("pre", kind === "code" ? "src" : "out", text);
+      body.appendChild(pre);
+      clamp(body, pre);
+    }
+  }
+
+  if (kind === "output" && window.looksLikeMarkdown && looksLikeMarkdown(text)) {
+    var raw = el("button", "mini", "raw");
+    raw.onclick = function () {
+      rendered = !rendered;
+      raw.classList.toggle("on", !rendered);
+      raw.textContent = rendered ? "raw" : "rendered";
+      paint();
+    };
+    tools.appendChild(raw);
+  }
+  tools.appendChild(copyButton(function () { return text; }));
+  var fold = el("button", "mini", "−");
+  fold.onclick = function () {
+    body.hidden = !body.hidden;
+    fold.textContent = body.hidden ? "+" : "−";
+  };
+  tools.appendChild(fold);
+  bar.appendChild(tools);
+  wrap.appendChild(bar);
+  wrap.appendChild(body);
+  paint();
+  return wrap;
+}
+
+/** The full prompt sent for one completion. Folded, and built only on first
+ *  open — a session's prompt snapshots outweigh everything else on the page. */
+function promptView(e) {
+  var d = el("details", "fold prompt k-prompt");
+  var sum = el("summary");
+  sum.appendChild(el("span", null, "prompt" +
+    (e.input_tokens ? " · " + e.input_tokens + " tok" : "") +
+    (e.model ? " · " + e.model : "")));
+  d.appendChild(sum);
+  var body = el("div", "body");
+  d.appendChild(body);
+  var built = false;
+  d.addEventListener("toggle", function () {
+    if (!d.open || built) return;
+    built = true;
+    if (e.system) {
+      body.appendChild(el("div", "role sys", "system"));
+      body.appendChild(el("pre", "out", e.system));
+    }
+    (e.messages || []).forEach(function (m) {
+      body.appendChild(el("div", "role", m.role));
+      if (typeof m.text === "string") { body.appendChild(el("pre", "out", m.text)); return; }
+      (m.content || []).forEach(function (b) {
+        if (b.type === "text") body.appendChild(el("pre", "out", b.text || ""));
+        else if (b.type === "tool_use") body.appendChild(el("pre", "out", "→ " + (b.name || "") +
+          "\n" + ((b.input && b.input.code) || JSON.stringify(b.input || {}))));
+        else if (b.type === "tool_result") body.appendChild(el("pre", "out", "⟵ result\n" +
+          (typeof b.content === "string" ? b.content : JSON.stringify(b.content))));
+        else if (b.type === "image") body.appendChild(el("pre", "out", "[image]"));
+        else body.appendChild(el("pre", "out", JSON.stringify(b)));
+      });
+    });
+  });
+  return d;
+}
+
+/* ---------------------------------------------------------------- lanes -- */
+
+function makeLane(name, logEl, isRoot, head) {
+  var lane = { name: name, logEl: logEl, isRoot: isRoot, head: head, spend: 0, steps: 0,
+    step: null, think: null, refused: new Set() };
+  lanes.set(name, lane);
+  return lane;
+}
+function laneFor(name) {
+  if (!name || name === rootName) return lanes.get(rootName);
+  return lanes.get(name) || openSubLane(name, null, lanes.get(rootName));
+}
+function shortName(name) { return name.replace(/^.*-spawn-/, "spawn-"); }
+
+function openSubLane(name, spawn, parent) {
+  if (lanes.get(name)) return lanes.get(name);
+  var panel = el("details", "subagent");
+  panel.open = true;
+  var sum = el("summary");
+  var dot = el("span", "dot");
+  sum.appendChild(dot);
+  sum.appendChild(el("span", "sub-name", shortName(name)));
+  if (spawn) {
+    if (spawn.tier) sum.appendChild(el("span", "chip", spawn.tier));
+    sum.appendChild(el("span", "sub-task", spawn.text || ""));
+  }
+  var stat = el("span", "sub-stat", "running…");
+  sum.appendChild(stat);
+  panel.appendChild(sum);
+  var body = el("div", "sub-body");
+  panel.appendChild(body);
+  (parent ? parent.logEl : rootLog).appendChild(panel);
+  scrollTail();
+  return makeLane(name, body, false, { dot: dot, stat: stat, budget: spawn && spawn.budget_usd });
+}
+
+function laneAdd(lane, node, kindClass) {
+  node.classList.add("item-row");
+  if (kindClass) node.classList.add(kindClass);
+  lane.logEl.appendChild(node);
+  applyRowVisibility(node);
+  scrollTail();
+  return node;
+}
+
+/** The step card: one code cell and everything that code caused. Opened by a
+ *  `code` event, closed by the next completion, answer, or task. */
+function stepCard(lane) {
+  if (lane.step) return lane.step;
+  var card = el("div", "step");
+  var head = el("div", "step-head");
+  lane.steps++;
+  head.appendChild(el("span", "idx", "step " + lane.steps));
+  var chips = el("div", "chips k-action");
+  head.appendChild(chips);
+  card.appendChild(head);
+  laneAdd(lane, card);
+  lane.step = { card: card, chips: chips };
+  return lane.step;
+}
+function closeStep(lane) { lane.step = null; }
+
+function into(lane, node, kindClass) {
+  // Output and media belong to the step that produced them; anything arriving
+  // without an open step still has to land somewhere visible.
+  if (lane.step) {
+    node.classList.add("item-row");
+    if (kindClass) node.classList.add(kindClass);
+    lane.step.card.appendChild(node);
+    applyRowVisibility(node);
+    scrollTail();
+    return node;
+  }
+  return laneAdd(lane, node, kindClass);
+}
+
+/* ------------------------------------------------------------- rollups --- */
+
+function updateStats() {
+  var total = 0;
+  lanes.forEach(function (l) { total += l.spend; });
+  var c = byId("stat-cost");
+  if (c) c.textContent = fmtUsd(total);
+}
+function laneSpent(lane, usd, cumulative) {
+  if (usd == null) return;
+  lane.spend = cumulative ? Math.max(lane.spend, usd) : lane.spend + usd;
+  if (lane.head) {
+    lane.head.stat.textContent = fmtUsd(lane.spend) +
+      (lane.head.budget ? " / " + fmtUsd(lane.head.budget) : "");
+  }
+  updateStats();
+}
+function laneDone(lane, cls, label) {
+  if (!lane.head) return;
+  lane.head.dot.className = "dot " + cls;
+  lane.head.stat.textContent = lane.head.stat.textContent.split(" — ")[0] + " — " + label;
+}
+
+/* --------------------------------------------------- in-flight + banner -- */
+
+function renderNow() {
+  if (!nowEl) return;
+  nowEl.replaceChildren();
+  active.forEach(function (a) {
+    var item = el("div", "nowitem");
+    item.appendChild(el("span", "spin"));
+    item.appendChild(el("span", null,
+      (a.lane && !a.lane.isRoot ? "[" + shortName(a.lane.name) + "] " : "") + a.label));
+    item.appendChild(el("span", "elapsed", ""));
+    item.dataset.t0 = a.t0;
+    nowEl.appendChild(item);
+  });
+}
+function renderBanner() {
+  if (!bannerEl) return;
+  bannerEl.replaceChildren();
+  approvals.forEach(function (a) {
+    var item = el("div", "approval");
+    item.appendChild(el("span", null, "⚠"));
+    item.appendChild(el("span", null, a.label));
+    item.appendChild(el("span", "elapsed", ""));
+    item.dataset.t0 = a.t0;
+    bannerEl.appendChild(item);
+  });
+}
+var ticker = setInterval(function () {
+  if (!nowEl || !bannerEl) return;
+  [].concat([].slice.call(nowEl.children), [].slice.call(bannerEl.children))
+    .forEach(function (item) {
+      var s = (Date.now() - Number(item.dataset.t0)) / 1000;
+      item.querySelector(".elapsed").textContent = s.toFixed(0) + "s";
+    });
+  if (sessionStartMs) {
+    var clock = byId("stat-clock");
+    if (clock) clock.textContent = fmtDur((Date.now() - sessionStartMs) / 1000);
+  }
+}, 500);
+function startActive(lane, sub, label) {
+  active.set(lane.name + "\x00" + sub, { label: label, t0: Date.now(), lane: lane });
+  renderNow();
+}
+function endActive(lane, sub) { active.delete(lane.name + "\x00" + sub); renderNow(); }
+
+/* ------------------------------------------------- filters, search, nav -- */
+
+function applyRowVisibility(node) {
+  if (searchTerm && node.textContent.toLowerCase().indexOf(searchTerm) === -1) {
+    node.classList.add("search-hide");
+  } else {
+    node.classList.remove("search-hide");
+  }
+}
+
+function wireChrome() {
+  document.querySelectorAll("#viewpop input[data-f]").forEach(function (cb) {
+    cb.onchange = function () {
+      document.body.classList.toggle("hide-" + cb.dataset.f, !cb.checked);
+    };
+  });
+  var menu = byId("viewmenu"), pop = byId("viewpop");
+  if (menu && pop) {
+    menu.onclick = function (ev) { ev.stopPropagation(); pop.hidden = !pop.hidden; };
+    pop.onclick = function (ev) { ev.stopPropagation(); };
+    addEventListener("click", function () { pop.hidden = true; });
+  }
+  // Filtering is occasional, so the input is folded away behind an icon rather
+  // than holding a permanent row of the topbar. Closing it also clears the
+  // term — a hidden filter still hiding half the transcript is a trap.
+  var search = byId("search"), bar = byId("searchbar");
+  if (search && bar) {
+    function applyTerm(term) {
+      searchTerm = term.toLowerCase();
+      var hits = 0;
+      rootLog.querySelectorAll(".item-row").forEach(function (r) {
+        applyRowVisibility(r);
+        if (searchTerm && !r.classList.contains("search-hide")) hits++;
+      });
+      byId("searchcount").textContent = searchTerm ? hits + " match" : "";
+    }
+    function openSearch() {
+      bar.hidden = false;
+      byId("searchbtn").classList.add("on");
+      search.focus();
+    }
+    function closeSearch() {
+      bar.hidden = true;
+      byId("searchbtn").classList.remove("on");
+      search.value = "";
+      applyTerm("");
+    }
+    search.oninput = function (ev) { applyTerm(ev.target.value); };
+    byId("searchbtn").onclick = function () { bar.hidden ? openSearch() : closeSearch(); };
+    byId("searchclose").onclick = closeSearch;
+    addEventListener("keydown", function (ev) {
+      if (ev.key === "/" && document.activeElement !== search) { ev.preventDefault(); openSearch(); }
+      if (ev.key === "Escape" && document.activeElement === search) closeSearch();
+    });
+  }
+  var jump = byId("jump");
+  if (jump) {
+    jump.onclick = function () { followTail = true; scrollTail(); jump.hidden = true; };
+    jump.hidden = true;
+  }
+  renderSessionList();
+}
+
+/* -------------------------------------------------------------- sidebar -- */
+/* Static pages carry their session list baked in (`window.SESSIONS`, and a
+ * `currentSession` the feed assigns); the live viewer polls `/sessions` and
+ * defines `switchTo`. Same markup either way, so the switcher looks and
+ * behaves identically in the archive and in front of a running agent. */
+
+var currentSession = null;
+var sessionList = [];  // last list rendered — a re-render must not wipe the rail
+var sessionSig = null;
+
+function renderSessionList(list) {
+  var host = byId("sessions");
+  if (!host) return;
+  var items = list || window.SESSIONS || sessionList;
+  sessionList = items;
+  // The live viewer polls every few seconds. Rebuilding the rail each time
+  // would throw away scroll position and, worse, swap the node out from under
+  // a click in flight — so repaint only when something actually moved.
+  var sig = currentSession + "|" + items.map(function (s) {
+    return s.name + ":" + s.outcome + ":" + s.steps + ":" + s.cost_usd;
+  }).join(",");
+  if (sig === sessionSig) return;
+  sessionSig = sig;
+  if (!items.length) {
+    host.replaceChildren(el("div", "slist-empty", "no sessions yet"));
+    return;
+  }
+  var frag = document.createDocumentFragment();
+  items.forEach(function (s) {
+    var node = s.href ? el("a", "sitem") : el("button", "sitem");
+    if (s.href) node.href = s.href;
+    if (s.name === currentSession) node.classList.add("on");
+    node.appendChild(el("span", "n", s.name));
+    if (s.outcome) {
+      var m = el("span", "m");
+      m.appendChild(el("span", "pill " + (s.outcome === "answered" ? "ok" : "warn"), s.outcome));
+      node.appendChild(m);
+    }
+    // A baked page links; the live viewer switches the stream in place. Picking
+    // a session by hand also stops following the newest — otherwise the next
+    // poll drags you straight back to it, four seconds after you chose.
+    if (!s.href) {
+      node.onclick = function () {
+        var follow = byId("follow");
+        if (follow) follow.checked = false;
+        window.switchTo(s.name);
+      };
+    }
+    frag.appendChild(node);
+  });
+  host.replaceChildren(frag);
+}
+
+/** Site nav, for a baked page. The live viewer has nowhere to navigate to and
+ *  supplies nothing, leaving the container empty. */
+function renderNav(items) {
+  var host = byId("nav");
+  if (!host || !items || !items.length) return;
+  var frag = document.createDocumentFragment();
+  items.forEach(function (it) {
+    var a = el("a");
+    a.href = it.href;
+    a.appendChild(el("span", "ico", it.icon || "\u25c6"));
+    a.appendChild(document.createTextNode(it.label));
+    frag.appendChild(a);
+  });
+  host.replaceChildren(frag);
+}
+
+function setStatus(text, cls) {
+  var s = byId("status");
+  if (!s) return;
+  s.textContent = text;
+  s.className = "dotstat " + (cls || "");
+}
+
+/* --------------------------------------------------------------- events -- */
+
+function resetAll(name) {
+  if (!rootLog) return;  // a docs/index page has no feed to reset
+  rootLog.replaceChildren();
+  nowEl.replaceChildren();
+  bannerEl.replaceChildren();
+  active.clear();
+  approvals.clear();
+  lanes.clear();
+  rootName = name;
+  currentSession = name;
+  sessionStartMs = 0;
+  makeLane(name, rootLog, true, null);
+  var t = byId("session-title");
+  if (t) t.textContent = name;
+  document.title = "pyharness — " + name;
+  updateStats();
+}
+
+function handle(e) {
+  var k = e.kind;
+  if (k === "watch_session") { resetAll(e.session); renderSessionList(); return; }
+  if (rootName === null) resetAll(e.session || "session");
+  if (!sessionStartMs) sessionStartMs = Date.now();
+  var lane = laneFor(e.session);
+  if (!lane) return;
+
+  if (k === "spawn") {
+    openSubLane(e.child, e, lane);
+  } else if (k === "spawned_by") {
+    // the child->parent link; the nested panel already carries the relationship
+  } else if (k === "session_start") {
+    laneAdd(lane, el("div", "note", "session started"));
+  } else if (k === "task") {
+    closeStep(lane);
+    var task = el("div", "task");
+    task.appendChild(el("div", "who", "task"));
+    task.appendChild(renderMarkdown(e.text || ""));
+    laneAdd(lane, task);
+  } else if (k === "llm_start") {
+    startActive(lane, "llm", "thinking (" + (e.tier || "?") + ")…");
+  } else if (k === "llm_thinking") {
+    if (!lane.think) {
+      var d = el("details", "fold think k-think");
+      var sum = el("summary");
+      var meta = el("span", null, "thinking");
+      sum.appendChild(meta);
+      d.appendChild(sum);
+      var body = el("div", "body");
+      var pre = el("pre", "out", "");
+      body.appendChild(pre);
+      d.appendChild(body);
+      lane.think = { pre: pre, meta: meta };
+      laneAdd(lane, d);
+    }
+    lane.think.pre.textContent += e.text || "";
+    lane.think.meta.textContent = "thinking";
+  } else if (k === "llm_call") {
+    endActive(lane, "llm");
+    lane.think = null;
+    closeStep(lane);
+    if (e.text) {
+      var msg = el("div", "msg");
+      msg.appendChild(renderMarkdown(e.text));
+      laneAdd(lane, msg);
+    }
+    laneAdd(lane, promptView(e));
+    laneSpent(lane, e.cost_usd, false);
+  } else if (k === "code") {
+    closeStep(lane);
+    stepCard(lane);
+    into(lane, cell("code", e.text), "k-code");
+    updateStats();
+  } else if (k === "output") {
+    into(lane, cell("output", e.text), "k-output");
+  } else if (k === "media") {
+    var img = el("img", "shot");
+    img.src = e.src || "";
+    img.alt = e.text || "screenshot";
+    img.loading = "lazy";
+    var holder = el("div", "cellbody");
+    holder.appendChild(img);
+    into(lane, holder, "k-output");
+  } else if (k === "action_start") {
+    startActive(lane, "a:" + e.text, e.text + (e.args ? "(" + e.args + ")" : ""));
+  } else if (k === "action_end") {
+    endActive(lane, "a:" + e.text);
+    // A refusal is not a failure — it is the thing this harness claims to do,
+    // and it reaches the trace three ways: the broker denying outright
+    // (`decision: "deny"`), the call it gated raising PermissionDenied, and an
+    // action the human refused at the gate, which records only `ok: false`
+    // against an earlier `approval_resolved`. All read as refused; only a
+    // genuine crash reads as an error.
+    var denied = e.decision === "deny" || /PermissionDenied/.test(e.error || "");
+    if (!denied && e.ok === false && lane.refused.has(e.text)) {
+      lane.refused.delete(e.text);
+      denied = true;
+    }
+    var ok = e.ok !== false && !denied;
+    var chip = el("span", "chip " + (denied ? "deny" : ok ? "ok" : "err"));
+    chip.appendChild(el("span", null, e.text));
+    // Only when it is long enough to be worth knowing — every action carrying
+    // "0.001s" is four characters of nothing on every row.
+    if (e.elapsed_s >= 0.5) chip.appendChild(el("span", "t", e.elapsed_s + "s"));
+    if (e.decision === "deny") chip.appendChild(el("span", "t", "refused by policy"));
+    else if (e.error) chip.appendChild(el("span", "t", e.error));
+    if (lane.step) {
+      lane.step.chips.appendChild(chip);
+    } else {
+      var row = el("div", "note k-action");
+      row.appendChild(chip);
+      laneAdd(lane, row);
+    }
+  } else if (k === "approval_pending") {
+    approvals.set(e.text, {
+      label: (lane.isRoot ? "" : "[" + shortName(lane.name) + "] ") +
+        "[" + (e.category || "") + "] " + e.text + " — " + (e.summary || "") +
+        " (answer in the terminal)",
+      t0: Date.now(),
+    });
+    renderBanner();
+  } else if (k === "approval_resolved") {
+    approvals.delete(e.text);
+    renderBanner();
+    var row = el("div", "note");
+    if (e.outcome === "deny") lane.refused.add(e.text);
+    var verdict = el("span", "chip " + (e.outcome === "deny" ? "deny" : "ok"));
+    verdict.appendChild(el("span", null, e.text));
+    verdict.appendChild(el("span", "t", "approval " + e.outcome));
+    row.appendChild(verdict);
+    into(lane, row);
+  } else if (k === "notify") {
+    var n = el("div", "note warn");
+    n.appendChild(el("span", null, "note"));
+    n.appendChild(renderMarkdown(e.text || ""));
+    laneAdd(lane, n);
+  } else if (k === "error") {
+    endActive(lane, "llm");
+    lane.think = null;
+    closeStep(lane);
+    laneAdd(lane, el("div", "note err", e.text));
+    if (!lane.isRoot) laneDone(lane, "err", "error");
+  } else if (k === "answer") {
+    closeStep(lane);
+    var ans = el("div", "answer");
+    ans.appendChild(el("div", "who", "answer"));
+    ans.appendChild(renderMarkdown(e.text || ""));
+    laneAdd(lane, ans);
+    if (!lane.isRoot) laneDone(lane, "done", "answered");
+  } else if (k === "budget") {
+    laneSpent(lane, e.spent_usd, true);
+  } else if (k === "session_end") {
+    endActive(lane, "llm");
+    closeStep(lane);
+    laneSpent(lane, e.spent_usd, true);
+    laneAdd(lane, el("div", "note", "session ended"));
+    if (!lane.isRoot && lane.head && lane.head.dot.className === "dot") {
+      laneDone(lane, "done", "done");
+    }
+  } else if (k === "skill_use") {
+    into(lane, el("div", "note", "skill " + (e.skill || "") + ": " + (e.outcome || "") +
+      " " + (e.note || "")));
+  } else if (k === "reflection") {
+    laneAdd(lane, el("div", "note", "reflection: " + (e.text || "")));
+  } else if (k === "worker") {
+    into(lane, el("div", "note", e.text || ""));
+  } else if (k === "llm_attempt") {
+    laneAdd(lane, el("div", "note", "llm " + (e.text || "")));
+  } else if (k === "note") {
+    // preamble text, duplicated by the llm_call event — skip
+  } else {
+    // Unknown kind. A viewer that silently drops what it does not recognize is
+    // worse than one that renders it plainly: a new trace kind (or an old
+    // session replayed by a newer viewer) would simply not exist on screen,
+    // with nothing to notice. Render the kind and whatever fields it carried.
+    var rest = Object.keys(e)
+      .filter(function (f) { return ["kind", "ts", "text", "session"].indexOf(f) === -1; })
+      .map(function (f) {
+        return f + "=" + (typeof e[f] === "object" ? JSON.stringify(e[f]) : e[f]);
+      });
+    laneAdd(lane, el("div", "note", k + (e.text ? ": " + e.text : "") +
+      (rest.length ? " · " + rest.join(" ") : "")));
+  }
+}
+
+/* ----------------------------------------------------------------- boot -- */
+/* The scripts sit at the end of <body>, so the DOM is already there. The feed
+ * runs next and starts calling `handle()` immediately — nothing may be waiting
+ * on DOMContentLoaded, or a baked page would replay into a null log. */
+
+rootLog = byId("log");
+nowEl = byId("now");
+bannerEl = byId("banner");
+wireTheme();
+wireChrome();
+
+</script>
+<script>
+
+var __doc = document.getElementById('doc-body');
+__doc.appendChild(renderMarkdown("# Control arm: `shell`\n\nOne `shell` tool, running in the data directory. It can `awk` and `python -c`, so it can genuinely win this task \u2014 that is the honest finding rather than a flaw in the control. What it does not get is a persistent kernel: every call is a fresh process.\n\n**Score 2/3** \u00b7 $0.2261 \u00b7 23 tool calls\n\nThe corpus is 51MB uncompressed across 30 files \u2014 more than this arm can read into its context. The answer is `requests=298603`, `breach_day=25`, `peak_hour=15`; the shortcut that trusts the data yields `309965`, `19`, `12`.\n\n- `requests` \u2192 `298603` \u2014 correct\n- `breach_day` \u2192 `25` \u2014 correct\n- `peak_hour` \u2192 `12` \u2014 **the naive answer**\n\n## Turns\n\n### 1. `shell`\n\nLet me start by exploring the data.\n\n```json\n{\n  \"command\": \"ls logs/ | head -20 && echo \\\"---\\\" && ls logs/ | wc -l\"\n}\n```\n\n```\n---\n       0\nls: logs/: No such file or directory\nls: logs/: No such file or directory\n```\n\n### 2. `shell`\n\nLet me start by exploring the data.\n\n```json\n{\n  \"command\": \"ls -lh logs/ | head -10\"\n}\n```\n\n```\nls: logs/: No such file or directory\n```\n\n### 3. `shell`\n\n```json\n{\n  \"command\": \"ls -la && find . -name \\\"*.gz\\\" | head -20\"\n}\n```\n\n```\ntotal 13432\ndrwxr-xr-x@ 32 agent        staff    1024 Aug  4 22:45 .\ndrwxr-xr-x@  3 agent        staff      96 Aug  4 22:54 ..\n-rw-r--r--@  1 agent        staff  193966 Aug  4 22:45 2026-06-01.ndjson.gz\n-rw-r--r--@  1 agent        staff  235255 Aug  4 22:45 2026-06-02.ndjson.gz\n-rw-r--r--@  1 agent        staff  206508 Aug  4 22:45 2026-06-03.ndjson.gz\n-rw-r--r--@  1 agent        staff  218997 Aug  4 22:45 2026-06-04.ndjson.gz\n-rw-r--r--@  1 agent        staff  216667 Aug  4 22:45 2026-06-05.ndjson.gz\n-rw-r--r--@  1 agent        staff  207843 Aug  4 22:45 2026-06-06.ndjson.gz\n-rw-r--r--@  1 agent        staff  204016 Aug  4 22:45 2026-06-07.ndjson.gz\n-rw-r--r--@  1 agent        staff  205689 Aug  4 22:45 2026-06-08.ndjson.gz\n-rw-r--r--@  1 agent        staff  205012 Aug  4 22:45 2026-06-09.ndjson.gz\n-rw-r--r--@  1 agent        staff  197847 Aug  4 22:45 2026-06-10.ndjson.gz\n-rw-r--r--@  1 agent        staff  209298 Aug  4 22:45 2026-06-11.ndjson.gz\n-rw-r--r--@  1 agent        staff  227087 Aug  4 22:45 2026-06-12.ndjson.gz\n-rw-r--r--@  1 agent        staff  235913 Aug  4 22:45 2026-06-13.ndjson.gz\n-rw-r--r--@  1 agent        staff  499365 Aug  4 22:45 2026-06-14.ndjson.gz\n-rw-r--r-\n\u2026 [2,866 chars total]\n```\n\n### 4. `shell`\n\n```json\n{\n  \"command\": \"zcat ./2026-06-01.ndjson.gz | head -5 | python3 -m json.tool\"\n}\n```\n\n```\nzcat: can't stat: ./2026-06-01.ndjson.gz (./2026-06-01.ndjson.gz.Z): No such file or directory\nExpecting value: line 1 column 1 (char 0)\n```\n\n### 5. `shell`\n\n```json\n{\n  \"command\": \"zcat ./2026-06-14.ndjson.gz | head -5 | python3 -m json.tool\"\n}\n```\n\n```\nzcat: can't stat: ./2026-06-14.ndjson.gz (./2026-06-14.ndjson.gz.Z): No such file or directory\nExpecting value: line 1 column 1 (char 0)\n```\n\n### 6. `shell`\n\n```json\n{\n  \"command\": \"gunzip -c ./2026-06-01.ndjson.gz | head -5\"\n}\n```\n\n```\n{\"ts\":\"2026-06-01T13:32:58.774Z\",\"service\":\"edge\",\"route\":\"/api/products\",\"status\":200,\"latency_ms\":32.8,\"upstream\":\"catalog-svc\",\"request_id\":\"010000000c69576\",\"bytes\":9804}\n{\"ts\":\"2026-06-01T09:34:13.811Z\",\"service\":\"edge\",\"route\":\"/checkout\",\"status\":200,\"latency_ms\":109.4,\"upstream\":\"payments-gw\",\"request_id\":\"01000000101d470\",\"bytes\":11191}\n{\"ts\":\"2026-06-01T00:30:45.002Z\",\"service\":\"edge\",\"route\":\"/health\",\"status\":200,\"latency_ms\":4.2,\"upstream\":\"-\",\"request_id\":\"0100000026fe4cc\",\"bytes\":1367}\n{\"ts\":\"2026-06-01T16:52:02.532Z\",\"service\":\"edge\",\"route\":\"/health\",\"status\":200,\"latency_ms\":4.0,\"upstream\":\"-\",\"request_id\":\"010000003aac499\",\"bytes\":9446}\n{\"ts\":\"2026-06-01T03:09:49.700Z\",\"service\":\"edge\",\"route\":\"/api/products\",\"status\":200,\"latency_ms\":99.5,\"upstream\":\"catalog-svc\",\"request_id\":\"0100000046d594a\",\"bytes\":16704}\n```\n\n### 7. `shell`\n\n```json\n{\n  \"command\": \"gunzip -c ./2026-06-14.ndjson.gz | head -5\"\n}\n```\n\n```\n{\"ts\":\"2026-06-14T03:59:57.365Z\",\"service\":\"edge\",\"path\":\"/api/products\",\"status\":200,\"latency_ms\":40.3,\"upstream\":\"catalog-svc\",\"request_id\":\"1400000002d0127\",\"bytes\":663}\n{\"ts\":\"2026-06-14T08:18:21.686Z\",\"service\":\"edge\",\"path\":\"/health\",\"status\":200,\"latency_ms\":2.9,\"upstream\":\"-\",\"request_id\":\"14000000183d16a\",\"bytes\":297}\n{\"ts\":\"2026-06-14T06:13:02.567Z\",\"service\":\"edge\",\"path\":\"/api/products\",\"status\":200,\"latency_ms\":44.9,\"upstream\":\"catalog-svc\",\"request_id\":\"140000002456d32\",\"bytes\":747}\n{\"ts\":\"2026-06-14T06:38:29.730Z\",\"service\":\"edge\",\"path\":\"/checkout\",\"status\":200,\"latency_ms\":259.8,\"upstream\":\"payments-gw\",\"request_id\":\"140000003bb839e\",\"bytes\":8030}\n{\"ts\":\"2026-06-14T13:08:53.386Z\",\"service\":\"edge\",\"path\":\"/health\",\"status\":200,\"latency_ms\":3.5,\"upstream\":\"-\",\"request_id\":\"140000004e5c7f6\",\"bytes\":6329}\n```\n\n### 8. `shell`\n\n```json\n{\n  \"command\": \"# Check which files use \\\"path\\\" vs \\\"route\\\"\\nfor f in ./2026-06-*.ndjson.gz; do\\n  day=$(basename $f | grep -o '06-[0-9]*')\\n  key=$(gunzip -c \\\"$f\\\" | head -1 | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print('path' if 'path' in d else 'route')\\\")\\n  echo \\\"$day: $key\\\"\\ndone\"\n}\n```\n\n```\n06-01: route\n06-02: route\n06-03: route\n06-04: route\n06-05: route\n06-06: route\n06-07: route\n06-08: route\n06-09: route\n06-10: path\n06-11: path\n06-12: path\n06-13: path\n06-14: path\n06-15: path\n06-16: path\n06-17: path\n06-18: path\n06-19: path\n06-20: path\n06-21: path\n06-22: path\n06-23: path\n06-24: path\n06-25: path\n06-26: path\n06-27: path\n06-28: path\n06-29: path\n06-30: path\n```\n\n### 9. `shell`\n\n```json\n{\n  \"command\": \"# Check for any other anomalies - look at a few sample lines across files\\nfor f in ./2026-06-*.ndjson.gz; do\\n  day=$(basename $f | grep -o '06-[0-9]*')\\n  # Count lines and check for malformed JSON\\n  count=$(gunzip -c \\\"$f\\\" | wc -l)\\n  echo \\\"$day: $count lines\\\"\\ndone\"\n}\n```\n\n```\n06-01:     8812 lines\n06-02:    10698 lines\n06-03:     9393 lines\n06-04:     9959 lines\n06-05:     9836 lines\n06-06:     9438 lines\n06-07:     9281 lines\n06-08:     9358 lines\n06-09:     9302 lines\n06-10:     8998 lines\n06-11:     9532 lines\n06-12:    10333 lines\n06-13:    10725 lines\n06-14:    22726 lines\n06-15:    10295 lines\n06-16:     9499 lines\n06-17:     9412 lines\n06-18:    11235 lines\n06-19:    11317 lines\n06-20:    10256 lines\n06-21:     9711 lines\n06-22:    10050 lines\n06-23:    10195 lines\n06-24:     9529 lines\n06-25:     9017 lines\n06-26:    11098 lines\n06-27:    10658 lines\n06-28:     9567 lines\n06-29:    10531 lines\n06-30:     9254 lines\n```\n\n### 10. `shell`\n\n```json\n{\n  \"command\": \"# June 14 has ~2x records - check for duplicates by request_id\\ngunzip -c ./2026-06-14.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nids = []\\nfor line in sys.stdin:\\n    d = json.loads(line)\\n    ids.append(d.get('request_id',''))\\ntotal = len(ids)\\nunique = len(set(ids))\\nprint(f'total={total}, unique_request_ids={unique}, dupes={total-unique}')\\n\\\"\"\n}\n```\n\n```\nTraceback (most recent call last):\n  File \"\u003cstring>\", line 5, in \u003cmodule>\n  File \"~/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/decoder.py\", line 338, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"~/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/json/decoder.py\", line 354, in raw_decode\n    obj, end = self.scan_once(s, idx)\n               ^^^^^^^^^^^^^^^^^^^^^^\njson.decoder.JSONDecodeError: Invalid control character at: line 1 column 30 (char 29)\n```\n\n### 11. `shell`\n\n```json\n{\n  \"command\": \"# Check for any lines that might be invalid JSON across all files\\nfor f in ./2026-06-*.ndjson.gz; do\\n  day=$(basename $f | grep -o '06-[0-9]*')\\n  bad=$(gunzip -c \\\"$f\\\" | python3 -c \\\"\\nimport sys, json\\nbad=0\\nfor line in sys.stdin:\\n    line=line.strip()\\n    if not line: continue\\n    try: json.loads(line)\\n    except: bad+=1\\nprint(bad)\\n\\\")\\n  if [ \\\"$bad\\\" != \\\"0\\\" ]; then echo \\\"$day: $bad bad lines\\\"; fi\\ndone\"\n}\n```\n\n```\n06-02: 1 bad lines\n06-03: 1 bad lines\n06-04: 1 bad lines\n06-05: 2 bad lines\n06-06: 5 bad lines\n06-08: 2 bad lines\n06-09: 1 bad lines\n06-11: 4 bad lines\n06-12: 1 bad lines\n06-14: 2 bad lines\n06-17: 2 bad lines\n06-18: 1 bad lines\n06-19: 2 bad lines\n06-20: 2 bad lines\n06-21: 2 bad lines\n06-22: 2 bad lines\n06-23: 2 bad lines\n06-24: 4 bad lines\n06-25: 7 bad lines\n06-26: 1 bad lines\n06-27: 1 bad lines\n06-28: 1 bad lines\n06-29: 1 bad lines\n06-30: 2 bad lines\n```\n\n### 12. `shell`\n\n```json\n{\n  \"command\": \"# Check June 14 duplicate situation\\ngunzip -c ./2026-06-14.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nids = {}\\nfor line in sys.stdin:\\n    line = line.strip()\\n    try:\\n        d = json.loads(line)\\n        rid = d.get('request_id','')\\n        if rid in ids:\\n            ids[rid] += 1\\n        else:\\n            ids[rid] = 1\\n    except:\\n        pass\\ndupes = {k:v for k,v in ids.items() if v > 1}\\nprint(f'total unique ids: {len(ids)}')\\nprint(f'ids with duplicates: {len(dupes)}')\\nprint(f'sample dupes: {list(dupes.items())[:5]}')\\n\\\"\"\n}\n```\n\n```\ntotal unique ids: 11362\nids with duplicates: 11362\nsample dupes: [('1400000002d0127', 2), ('14000000183d16a', 2), ('140000002456d32', 2), ('140000003bb839e', 2), ('140000004e5c7f6', 2)]\n```\n\n### 13. `shell`\n\n```json\n{\n  \"command\": \"# Examine some bad lines  \\ngunzip -c ./2026-06-06.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nfor line in sys.stdin:\\n    line=line.strip()\\n    if not line: continue\\n    try: json.loads(line)\\n    except Exception as e: print(repr(line[:200]), '|||', str(e))\\n\\\" | head -10\"\n}\n```\n\n```\n'{\"ts\":\"2026-06-06T00:23:13.1' ||| Unterminated string starting at: line 1 column 7 (char 6)\n'{\"ts\":\"2026-06-06T16:00:39.857Z\",\"service\":\"' ||| Unterminated string starting at: line 1 column 44 (char 43)\n'{\"ts\":\"2026-06-06T02:12:37.150' ||| Unterminated string starting at: line 1 column 7 (char 6)\n'{\"ts\":\"2026-06-06T12:03:57.942Z' ||| Unterminated string starting at: line 1 column 7 (char 6)\n'{\"ts\":\"2026-06-06T11:04:03.709Z\",\"service\":\"edge\",\"ro' ||| Unterminated string starting at: line 1 column 51 (char 50)\n```\n\n### 14. `shell`\n\n```json\n{\n  \"command\": \"# Verify June 14 is exactly 2x duplicated (every single ID appears exactly twice)\\ngunzip -c ./2026-06-14.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nids = {}\\nfor line in sys.stdin:\\n    line = line.strip()\\n    try:\\n        d = json.loads(line)\\n        rid = d.get('request_id','')\\n        ids[rid] = ids.get(rid, 0) + 1\\n    except:\\n        pass\\ncounts = list(ids.values())\\nfrom collections import Counter\\nprint(Counter(counts))\\nprint(f'min={min(counts)}, max={max(counts)}')\\n\\\"\"\n}\n```\n\n```\nCounter({2: 11362})\nmin=2, max=2\n```\n\n### 15. `shell`\n\n```json\n{\n  \"command\": \"# Check timestamps in June 14 - are duplicate lines byte-for-byte identical?\\ngunzip -c ./2026-06-14.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlines = {}\\nfor line in sys.stdin:\\n    line = line.strip()\\n    try:\\n        d = json.loads(line)\\n        rid = d.get('request_id','')\\n        if rid not in lines:\\n            lines[rid] = []\\n        lines[rid].append(line)\\n    except:\\n        pass\\n# Show first duplicate pair\\nfor rid, llist in list(lines.items())[:2]:\\n    print('ID:', rid)\\n    for l in llist:\\n        print(' ', l)\\n    print()\\n\\\"\"\n}\n```\n\n```\nID: 1400000002d0127\n  {\"ts\":\"2026-06-14T03:59:57.365Z\",\"service\":\"edge\",\"path\":\"/api/products\",\"status\":200,\"latency_ms\":40.3,\"upstream\":\"catalog-svc\",\"request_id\":\"1400000002d0127\",\"bytes\":663}\n  {\"ts\":\"2026-06-14T03:59:57.365Z\",\"service\":\"edge\",\"path\":\"/api/products\",\"status\":200,\"latency_ms\":40.3,\"upstream\":\"catalog-svc\",\"request_id\":\"1400000002d0127\",\"bytes\":663}\n\nID: 14000000183d16a\n  {\"ts\":\"2026-06-14T08:18:21.686Z\",\"service\":\"edge\",\"path\":\"/health\",\"status\":200,\"latency_ms\":2.9,\"upstream\":\"-\",\"request_id\":\"14000000183d16a\",\"bytes\":297}\n  {\"ts\":\"2026-06-14T08:18:21.686Z\",\"service\":\"edge\",\"path\":\"/health\",\"status\":200,\"latency_ms\":2.9,\"upstream\":\"-\",\"request_id\":\"14000000183d16a\",\"bytes\":297}\n```\n\n### 16. `shell`\n\n```json\n{\n  \"command\": \"python3 \u003c\u003c 'EOF'\\nimport gzip, json, glob, os\\nfrom collections import defaultdict\\n\\n# Data structures\\ntotal_requests = 0\\ncheckout_latencies_by_day = defaultdict(list)  # day (1-30) -> list of latency_ms\\nhour_counts = defaultdict(int)  # hour (0-23) -> count\\nbad_lines = 0\\nskipped_dupes = 0\\n\\nfiles = sorted(glob.glob('./2026-06-*.ndjson.gz'))\\n\\nfor fpath in files:\\n    day = int(os.path.basename(fpath).split('-')[2].split('.')[0])\\n    \\n    seen_ids = set()\\n    is_june14 = (day == 14)\\n    \\n    with gzip.open(fpath, 'rt', encoding='utf-8', errors='replace') as f:\\n        for line in f:\\n            line = line.strip()\\n            if not line:\\n                continue\\n            try:\\n                d = json.loads(line)\\n            except json.JSONDecodeError:\\n                bad_lines += 1\\n                continue\\n            \\n            # Deduplicate June 14 (every request_id appears exactly twice)\\n            if is_june14:\\n                rid = d.get('request_id', '')\\n                if rid in seen_ids:\\n                    skipped_dupes += 1\\n                    continue\\n                seen_ids.add(rid)\\n            \\n            total_requests += 1\\n            \\n            # Route field: \\\"route\\\" for days 1-9, \\\"path\\\" for days 10-30\\n            route = d.get('route') or d.get('path', '')\\n            lat = d.get('latency_ms')\\n            ts = d.get('ts', '')\\n            \\n            # Hour extraction\\n            try:\\n                # ts format: \\\"2026-06-01T13:32:58.774Z\\\"\\n                hour = int(ts[11:13])\\n                hour_counts[hour] += 1\\n            except:\\n                pass\\n            \\n            # Checkout latencies\\n            if route == '/checkout' and lat is not None:\\n                checkout_latencies_by_day[day].append(lat)\\n\\nprint(f\\\"Total requests: {total_requests}\\\")\\nprint(f\\\"Bad lines skipped: {bad_lines}\\\")\\nprint(f\\\"June 14 dupes removed: {skipped_dupes}\\\")\\nprint()\\n\\n# P95 per day for /checkout\\nprint(\\\"Checkout p95 latency by day:\\\")\\nfor day in sorted(checkout_latencies_by_day.keys()):\\n    lats = sorted(checkout_latencies_by_day[day])\\n    n = len(lats)\\n    # p95: index at ceil(0.95 * n) - 1\\n    idx = int(0.95 * n)\\n    if idx >= n:\\n        idx = n - 1\\n    p95 = lats[idx]\\n    breach = \\\"BREACH\\\" if p95 > 500 else \\\"\\\"\\n    print(f\\\"  Day {day:2d}: n={n:4d}, p95={p95:.1f} ms {breach}\\\")\\n\\nprint()\\nprint(\\\"Hour counts (top 5):\\\")\\nfor hour, cnt in sorted(hour_counts.items(), key=lambda x: -x[1])[:5]:\\n    print(f\\\"  Hour {hour:02d}:00 UTC -> {cnt} requests\\\")\\n\\nEOF\"\n}\n```\n\n```\nTotal requests: 298603\nBad lines skipped: 50\nJune 14 dupes removed: 11362\n\nCheckout p95 latency by day:\n  Day  1: n= 915, p95=292.7 ms \n  Day  2: n=1084, p95=283.7 ms \n  Day  3: n= 957, p95=305.9 ms \n  Day  4: n= 972, p95=294.2 ms \n  Day  5: n= 992, p95=304.6 ms \n  Day  6: n= 931, p95=292.6 ms \n  Day  7: n= 915, p95=294.5 ms \n  Day  8: n= 942, p95=307.3 ms \n  Day  9: n= 904, p95=312.9 ms \n  Day 10: n= 919, p95=302.1 ms \n  Day 11: n= 961, p95=282.2 ms \n  Day 12: n=1009, p95=300.9 ms \n  Day 13: n=1056, p95=302.5 ms \n  Day 14: n=1170, p95=308.4 ms \n  Day 15: n= 992, p95=291.4 ms \n  Day 16: n= 959, p95=308.4 ms \n  Day 17: n= 987, p95=311.7 ms \n  Day 18: n=1148, p95=288.2 ms \n  Day 19: n=1091, p95=293000.0 ms BREACH\n  Day 20: n=1083, p95=303100.0 ms BREACH\n  Day 21: n=1032, p95=274900.0 ms BREACH\n  Day 22: n= 996, p95=300900.0 ms BREACH\n  Day 23: n=1028, p95=299800.0 ms BREACH\n  Day 24: n= 908, p95=293300.0 ms BREACH\n  Day 25: n= 888, p95=784000.0 ms BREACH\n  Day 26: n=1098, p95=774500.0 ms BREACH\n  Day 27: n=1018, p95=788400.0 ms BREACH\n  Day 28: n= 999, p95=761000.0 ms BREACH\n  Day 29: n=1061, p95=759700.0 ms BREACH\n  Day 30: n= 890, p95=775200.0 ms BREACH\n\nHour counts (top 5):\n  Hour\n\u2026 [1,368 chars total]\n```\n\n### 17. `shell`\n\n```json\n{\n  \"command\": \"# Those huge p95s suggest the latency unit might have changed. Investigate days 19+ \\ngunzip -c ./2026-06-19.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlats = []\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        if route == '/checkout':\\n            lats.append(d.get('latency_ms'))\\n    except: pass\\nlats.sort()\\nn = len(lats)\\nprint('n =', n)\\nprint('min =', lats[0])\\nprint('max =', lats[-1])\\nprint('sample low:', lats[:5])\\nprint('sample high:', lats[-5:])\\nprint('median:', lats[n//2])\\nprint('p95:', lats[int(0.95*n)])\\n\\\"\"\n}\n```\n\n```\nn = 1091\nmin = 22200\nmax = 830300\nsample low: [22200, 23500, 23500, 24400, 25500]\nsample high: [551300, 561000, 572300, 633900, 830300]\nmedian: 120600\np95: 293000\n```\n\n### 18. `shell`\n\n```json\n{\n  \"command\": \"# Check distribution of latency_ms values for day 19 checkout\\ngunzip -c ./2026-06-19.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlats = []\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        if route == '/checkout':\\n            lats.append(d.get('latency_ms'))\\n    except: pass\\nlats.sort()\\n# Check value ranges\\nimport math\\nbuckets = {}\\nfor l in lats:\\n    if l \u003c 1000: b='\u003c1s'\\n    elif l \u003c 10000: b='1-10s'\\n    elif l \u003c 100000: b='10-100s'\\n    elif l \u003c 1000000: b='100s-1000s'\\n    else: b='>1000s'\\n    buckets[b] = buckets.get(b, 0) + 1\\nprint(buckets)\\nprint('Values > 1000:', [l for l in lats if l > 1000][:10])\\n\\\"\"\n}\n```\n\n```\n{'10-100s': 398, '100s-1000s': 693}\nValues > 1000: [22200, 23500, 23500, 24400, 25500, 25900, 26200, 26700, 28000, 29200]\n```\n\n### 19. `shell`\n\n```json\n{\n  \"command\": \"# Compare checkout latency distribution for day 18 vs day 19\\necho \\\"=== Day 18 checkout latencies (first/last few) ===\\\"\\ngunzip -c ./2026-06-18.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlats = []\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        if route == '/checkout': lats.append(d.get('latency_ms'))\\n    except: pass\\nlats.sort()\\nprint('n=', len(lats), 'min=', lats[0], 'max=', lats[-1], 'median=', lats[len(lats)//2])\\n\\\"\\n\\necho \\\"=== Day 19 checkout latencies (first/last few) ===\\\"\\ngunzip -c ./2026-06-19.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlats = []\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        if route == '/checkout': lats.append(d.get('latency_ms'))\\n    except: pass\\nlats.sort()\\nprint('n=', len(lats), 'min=', lats[0], 'max=', lats[-1], 'median=', lats[len(lats)//2])\\n\\\"\"\n}\n```\n\n```\n=== Day 18 checkout latencies (first/last few) ===\nn= 1148 min= 16.1 max= 619.3 median= 120.3\n=== Day 19 checkout latencies (first/last few) ===\nn= 1091 min= 22200 max= 830300 median= 120600\n```\n\n### 20. `shell`\n\n```json\n{\n  \"command\": \"# Check ALL routes day 19 to understand scale - also look at /health latency\\ngunzip -c ./2026-06-19.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nby_route = {}\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        lat = d.get('latency_ms')\\n        if route not in by_route:\\n            by_route[route] = []\\n        by_route[route].append(lat)\\n    except: pass\\nfor r, lats in sorted(by_route.items()):\\n    lats.sort()\\n    print(f'{r}: n={len(lats)}, min={lats[0]}, max={lats[-1]}, median={lats[len(lats)//2]:.1f}')\\n\\\"\"\n}\n```\n\n```\n/api/products: n=2263, min=10000, max=224400, median=45400.0\n/cart: n=1698, min=14300, max=462100, median=69400.0\n/checkout: n=1091, min=22200, max=830300, median=120600.0\n/health: n=3940, min=1000, max=14300, median=4000.0\n/login: n=515, min=15700, max=232600, median=61400.0\n/search: n=1808, min=11000, max=842300, median=91400.0\n```\n\n### 21. `shell`\n\n```json\n{\n  \"command\": \"# Check health route latency across all days to identify the unit shift\\nfor d in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do\\n  gunzip -c ./2026-06-$d.ndjson.gz | python3 -c \\\"\\nimport sys, json\\nlats = []\\nfor line in sys.stdin:\\n    try:\\n        d = json.loads(line.strip())\\n        route = d.get('route') or d.get('path','')\\n        if route == '/health':\\n            lats.append(d.get('latency_ms'))\\n    except: pass\\nif lats:\\n    lats.sort()\\n    print(f'median={lats[len(lats)//2]:.1f}, max={lats[-1]:.1f}')\\n\\\" | awk \\\"{print \\\\\\\"$d:\\\\\\\", \\\\$0}\\\"\\ndone\"\n}\n```\n\n```\n01: median=4.0, max=11.7\n02: median=4.0, max=13.9\n03: median=4.0, max=15.8\n04: median=4.0, max=14.7\n05: median=4.0, max=12.5\n06: median=4.0, max=14.0\n07: median=4.1, max=14.1\n08: median=4.0, max=16.1\n09: median=4.0, max=13.0\n10: median=4.0, max=13.0\n11: median=4.0, max=13.7\n12: median=4.0, max=13.7\n13: median=4.0, max=11.7\n14: median=4.0, max=13.2\n15: median=3.9, max=12.6\n16: median=4.0, max=12.2\n17: median=4.0, max=12.9\n18: median=4.0, max=15.4\n19: median=4000.0, max=14300.0\n20: median=4000.0, max=13100.0\n21: median=4000.0, max=13400.0\n22: median=4000.0, max=16200.0\n23: median=4000.0, max=15300.0\n24: median=4000.0, max=14100.0\n25: median=4000.0, max=12400.0\n26: median=4000.0, max=13500.0\n27: median=4000.0, max=16200.0\n28: median=4000.0, max=14400.0\n29: median=4000.0, max=13200.0\n30: median=4000.0, max=14300.0\n```\n\n### 22. `shell`\n\n```json\n{\n  \"command\": \"python3 \u003c\u003c 'EOF'\\nimport gzip, json, glob, os\\nfrom collections import defaultdict\\n\\n# Data structures\\ntotal_requests = 0\\ncheckout_latencies_by_day = defaultdict(list)\\nhour_counts = defaultdict(int)\\nbad_lines = 0\\nskipped_dupes = 0\\n\\n# Known corrections:\\n# 1. June 14: every record is duplicated exactly once -> deduplicate by request_id\\n# 2. Days 1-9 use \\\"route\\\" field; days 10-30 use \\\"path\\\" field (same concept)\\n# 3. Days 19-30: latency_ms is actually in microseconds -> divide by 1000 for ms\\n\\nMICROSECOND_DAYS = set(range(19, 31))  # days 19-30\\n\\nfiles = sorted(glob.glob('./2026-06-*.ndjson.gz'))\\n\\nfor fpath in files:\\n    day = int(os.path.basename(fpath).split('-')[2].split('.')[0])\\n    is_june14 = (day == 14)\\n    us_unit = day in MICROSECOND_DAYS\\n    \\n    seen_ids = set()\\n    \\n    with gzip.open(fpath, 'rt', encoding='utf-8', errors='replace') as f:\\n        for line in f:\\n            line = line.strip()\\n            if not line:\\n                continue\\n            try:\\n                d = json.loads(line)\\n            except json.JSONDecodeError:\\n                bad_lines += 1\\n                continue\\n            \\n            # Deduplicate June 14\\n            if is_june14:\\n                rid = d.get('request_id', '')\\n                if rid in seen_ids:\\n                    skipped_dupes += 1\\n                    continue\\n                seen_ids.add(rid)\\n            \\n            total_requests += 1\\n            \\n            route = d.get('route') or d.get('path', '')\\n            lat = d.get('latency_ms')\\n            ts = d.get('ts', '')\\n            \\n            # Convert microseconds to ms for days 19-30\\n            if lat is not None and us_unit:\\n                lat = lat / 1000.0\\n            \\n            # Hour extraction\\n            try:\\n                hour = int(ts[11:13])\\n                hour_counts[hour] += 1\\n            except:\\n                pass\\n            \\n            # Checkout latencies\\n            if route == '/checkout' and lat is not None:\\n                checkout_latencies_by_day[day].append(lat)\\n\\nprint(f\\\"Total requests: {total_requests}\\\")\\nprint(f\\\"Bad lines skipped: {bad_lines}\\\")\\nprint(f\\\"June 14 dupes removed: {skipped_dupes}\\\")\\nprint()\\n\\n# P95 per day for /checkout\\nprint(\\\"Checkout p95 latency by day:\\\")\\nfirst_breach_day = None\\nfor day in sorted(checkout_latencies_by_day.keys()):\\n    lats = sorted(checkout_latencies_by_day[day])\\n    n = len(lats)\\n    idx = int(0.95 * n)\\n    if idx >= n:\\n        idx = n - 1\\n    p95 = lats[idx]\\n    breach = \\\"BREACH\\\" if p95 > 500 else \\\"\\\"\\n    if p95 > 500 and first_breach_day is None:\\n        first_breach_day = day\\n    print(f\\\"  Day {day:2d}: n={n:4d}, p95={p95:.2f} ms {breach}\\\")\\n\\nprint()\\nprint(f\\\"First breach day: {first_breach_day}\\\")\\n\\nprint()\\nprint(\\\"Hour counts (all hours):\\\")\\nfor hour in range(24):\\n    cnt = hour_counts.get(hour, 0)\\n    bar = '#' * (cnt // 500)\\n    print(f\\\"  Hour {hour:02d}:00 UTC -> {cnt:6d} {bar}\\\")\\n\\npeak_hour = max(hour_counts, key=hour_counts.get)\\nprint(f\\\"\\\\nPeak hour: {peak_hour} ({hour_counts[peak_hour]} requests)\\\")\\n\\nEOF\"\n}\n```\n\n```\nTotal requests: 298603\nBad lines skipped: 50\nJune 14 dupes removed: 11362\n\nCheckout p95 latency by day:\n  Day  1: n= 915, p95=292.70 ms \n  Day  2: n=1084, p95=283.70 ms \n  Day  3: n= 957, p95=305.90 ms \n  Day  4: n= 972, p95=294.20 ms \n  Day  5: n= 992, p95=304.60 ms \n  Day  6: n= 931, p95=292.60 ms \n  Day  7: n= 915, p95=294.50 ms \n  Day  8: n= 942, p95=307.30 ms \n  Day  9: n= 904, p95=312.90 ms \n  Day 10: n= 919, p95=302.10 ms \n  Day 11: n= 961, p95=282.20 ms \n  Day 12: n=1009, p95=300.90 ms \n  Day 13: n=1056, p95=302.50 ms \n  Day 14: n=1170, p95=308.40 ms \n  Day 15: n= 992, p95=291.40 ms \n  Day 16: n= 959, p95=308.40 ms \n  Day 17: n= 987, p95=311.70 ms \n  Day 18: n=1148, p95=288.20 ms \n  Day 19: n=1091, p95=293.00 ms \n  Day 20: n=1083, p95=303.10 ms \n  Day 21: n=1032, p95=274.90 ms \n  Day 22: n= 996, p95=300.90 ms \n  Day 23: n=1028, p95=299.80 ms \n  Day 24: n= 908, p95=293.30 ms \n  Day 25: n= 888, p95=784.00 ms BREACH\n  Day 26: n=1098, p95=774.50 ms BREACH\n  Day 27: n=1018, p95=788.40 ms BREACH\n  Day 28: n= 999, p95=761.00 ms BREACH\n  Day 29: n=1061, p95=759.70 ms BREACH\n  Day 30: n= 890, p95=775.20 ms BREACH\n\nFirst breach day: 25\n\nHour counts (all hours):\n  Hour 00:00 UTC ->   \n\u2026 [2,467 chars total]\n```\n\n### 23. `shell`\n\nNow let me do a final sanity check on the June 25 breach \u2014 confirming the latency distribution looks right:\n\n```json\n{\n  \"command\": \"python3 \u003c\u003c 'EOF'\\nimport gzip, json\\n\\n# Verify day 24 vs 25 in detail (unit-corrected)\\nfor day, fname in [(24, './2026-06-24.ndjson.gz'), (25, './2026-06-25.ndjson.gz')]:\\n    lats = []\\n    with gzip.open(fname, 'rt', encoding='utf-8', errors='replace') as f:\\n        for line in f:\\n            try:\\n                d = json.loads(line.strip())\\n                route = d.get('route') or d.get('path','')\\n                lat = d.get('latency_ms')\\n                if route == '/checkout' and lat is not None:\\n                    lats.append(lat / 1000.0)  # both are in microseconds (days 19+)\\n            except: pass\\n    lats.sort()\\n    n = len(lats)\\n    idx = int(0.95 * n)\\n    print(f\\\"Day {day}: n={n}, p50={lats[n//2]:.1f}ms, p90={lats[int(0.9*n)]:.1f}ms, p95={lats[idx]:.1f}ms, p99={lats[int(0.99*n)]:.1f}ms, max={lats[-1]:.1f}ms\\\")\\n\\n# Also check where the high latencies come from on day 25\\nprint()\\nprint(\\\"Day 25 checkout latency distribution:\\\")\\nlats25 = []\\nwith gzip.open('./2026-06-25.ndjson.gz', 'rt', encoding='utf-8', errors='replace') as f:\\n    for line in f:\\n        try:\\n            d = json.loads(line.strip())\\n            route = d.get('route') or d.get('path','')\\n            lat = d.get('latency_ms')\\n            if route == '/checkout' and lat is not None:\\n                lats25.append(lat / 1000.0)\\n        except: pass\\nlats25.sort()\\nbuckets = {'\u003c100ms':0,'100-300ms':0,'300-500ms':0,'500-1000ms':0,'>1000ms':0}\\nfor l in lats25:\\n    if l\u003c100: buckets['\u003c100ms']+=1\\n    elif l\u003c300: buckets['100-300ms']+=1\\n    elif l\u003c500: buckets['300-500ms']+=1\\n    elif l\u003c1000: buckets['500-1000ms']+=1\\n    else: buckets['>1000ms']+=1\\nprint(buckets)\\nEOF\"\n}\n```\n\n```\nDay 24: n=908, p50=121.5ms, p90=244.2ms, p95=293.3ms, p99=417.6ms, max=519.7ms\nDay 25: n=888, p50=312.1ms, p90=632.3ms, p95=784.0ms, p99=1168.7ms, max=2158.9ms\n\nDay 25 checkout latency distribution:\n{'\u003c100ms': 24, '100-300ms': 395, '300-500ms': 286, '500-1000ms': 169, '>1000ms': 14}\n```\n\n## Final answer\n\n```\nAll checks are consistent. Here is the full accounting of what was found and corrected:\n\n---\n\n## Data-quality issues discovered and corrected\n\n| Issue | Details | Fix |\n|---|---|---|\n| **Field name rename** | `route` field (days 1\u20139) \u2192 `path` field (days 10\u201330) \u2014 same semantic meaning, just renamed | Read whichever key is present |\n| **June 14 full-file duplication** | Every one of the 11,362 valid records in `2026-06-14.ndjson.gz` appeared **exactly twice** (byte-for-byte identical, same `request_id`, same timestamp). The file is ~2\u00d7 larger than neighboring days for that reason. | Deduplicated by `request_id`; subtracted 11,362 ghost records |\n| **Latency unit change (days 19\u201330)** | The `latency_ms` field silently switched from **milliseconds** to **microseconds** starting June 19. Confirmed by `/health` having a rock-steady ~4 ms median on days 1\u201318 that jumped to ~4 000 on days 19\u201330 with identical distribution shape. | Divided `latency_ms` by 1 000 for days 19\u201330 |\n| **Truncated / malformed JSON lines** | 50 lines across 23 days were cut off mid-string (e.g. `{\"ts\":\"2026-06-06T00:23:13.1`). | Skipped; too broken to salvage |\n\n---\n\n## Answers\n\n**1. Total requests served (after deduplication of June 14, skipping 50 unparseable lines):** **298,603**\n\n**2. `/checkout` p95 first breach:** After correcting the \u00b5s\u2192ms unit issue, days 1\u201324 all sat below 300 ms p95. Day 25 jumped to **784 ms**, clearly exceeding the 500 ms SLO \u2014 the first breach of the month.\n\n**3. Peak UTC hour:** Hour 12 (noon UTC) carried **23,328** requests, edging out hour 11 (23,254).\n\n---\n\nrequests=298603\nbreach_day=25\npeak_hour=12\n```\n"));
+// A board opens with its own `# Title`, and the shell already printed one. Let
+// the document's title win — it is the more specific of the two — rather than
+// stacking two headings that say almost the same thing.
+(function () {
+  var first = __doc.querySelector('.md > h1');
+  if (!first) return;
+  document.querySelector('.page-head h1').textContent = first.textContent;
+  first.remove();
+})();
+// The rail's switcher slot becomes a table of contents on a board: same
+// layout, and a 350-line scoreboard stops being a single scroll.
+(function () {
+  var toc = document.getElementById('toc');
+  if (!toc) return;
+  // Sections always; subsections only while they are still navigation. The
+  // scoreboard has one h3 per attack — forty of them is a second document, not
+  // a contents list.
+  var deep = __doc.querySelectorAll('.md > h3').length < 20;
+  var frag = document.createDocumentFragment();
+  var n = 0;
+  __doc.querySelectorAll(deep ? '.md > h2, .md > h3' : '.md > h2').forEach(function (h) {
+    var id = 'h' + (++n);
+    h.id = id;
+    var a = el('a', 'sitem');
+    a.href = '#' + id;
+    a.style.paddingLeft = h.tagName === 'H3' ? '22px' : '10px';
+    a.appendChild(el('span', 'n', h.textContent));
+    frag.appendChild(a);
+  });
+  toc.replaceChildren(frag);
+})();
+
+</script>
+</body>
+</html>

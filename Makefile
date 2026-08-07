@@ -71,6 +71,19 @@ site:
 		--doc "Skill cost curve=evals/skills/CURVE.md" \
 		--doc "Throughput=evals/data/BOARD.md"
 
+## site-data: rebuild the throughput suite's own site (all three arms)
+# Separate from `site` because it bakes a different run: the demo site shows ten
+# single-agent tasks, this one shows the same task attempted three ways. The two
+# control arms have no session of their own, so they ride in as --doc transcripts.
+DATA_RUN ?= .sessions/data-eval-20260804-224520
+.PHONY: site-data
+site-data:
+	uv run pyharness-watch $(DATA_RUN)/brokered --static evals/data/site \
+		--title "Throughput suite" \
+		--doc "Board=evals/data/BOARD.md" \
+		--doc "Control arm: files=$(DATA_RUN)/arm-files/transcript.md" \
+		--doc "Control arm: shell=$(DATA_RUN)/arm-shell/transcript.md"
+
 ## up: start the optional Phoenix OTel backend (then set PYHARNESS_TELEMETRY_ENABLED=true)
 .PHONY: up
 up: .env
