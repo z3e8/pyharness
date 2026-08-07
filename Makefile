@@ -68,7 +68,8 @@ site:
 		--lede "Every side effect routes through one broker that can refuse it. These are real runs: the same instruction contained in one destination and delivered in another." \
 		--doc "Adversarial suite=evals/SCOREBOARD.md" \
 		--doc "Demo vs baseline=evals/demo/COMPARISON.md" \
-		--doc "Skill cost curve=evals/skills/CURVE.md"
+		--doc "Skill cost curve=evals/skills/CURVE.md" \
+		--doc "Throughput=evals/data/BOARD.md"
 
 ## up: start the optional Phoenix OTel backend (then set PYHARNESS_TELEMETRY_ENABLED=true)
 .PHONY: up
