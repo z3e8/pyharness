@@ -11,6 +11,13 @@ Python.** Every side effect routes through one broker that does policy → audit
 budget → execute, and the agent's code runs in an OS sandbox with no network
 syscall available to it.
 
+![The agent answering three questions about a month of service logs, shown in the session viewer](docs/assets/data-analysis.gif)
+
+<sub>The brokered arm of the [throughput suite](evals/data/BOARD.md): 51MB of
+gzipped logs, five defects planted in them and named in no prompt, and the
+corrections it had to derive before any of the numbers meant anything. This is
+the same viewer the operator watches live.</sub>
+
 **32 of 43 adversarial attacks blocked. 11 known gaps, published with the reason
 each one is a boundary rather than an oversight. 0 unexpected successes.**
 
