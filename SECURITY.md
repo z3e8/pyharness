@@ -14,10 +14,9 @@ Report privately through **GitHub's private vulnerability reporting**:
 2. Click **Report a vulnerability** (GitHub Security Advisories).
 3. Describe the issue, the impact, and a reproduction if you have one.
 
-This opens a private advisory visible only to you and the maintainers — no email
-address is needed. If GitHub reporting is unavailable to you, open a minimal
-public issue that says only "security report, please enable private reporting"
-(no details) so a private channel can be opened.
+This opens a private advisory visible only to you and the maintainer, and no
+email address is needed. Private reporting is the only channel: this repository
+has issues disabled, so there is no public tracker to fall back to.
 
 This is a single-maintainer reference implementation rather than a maintained
 package, so there is no response-time commitment: reports are read and taken

@@ -68,8 +68,11 @@ make typecheck   # mypy — lenient and NON-blocking (informational; see pyproje
 
 ## Reporting bugs and requesting features
 
-Use the GitHub issue templates. For **security vulnerabilities, do not open a
-public issue** — follow [SECURITY.md](SECURITY.md) (private GitHub advisory).
+Issues are disabled: this is a frozen reference implementation, not a project
+taking feature requests, and a tracker nobody reads is worse than none. Fork it
+and change what you need. For **security vulnerabilities** there is a private
+channel, and it is the exception: follow [SECURITY.md](SECURITY.md) to open a
+GitHub advisory.
 
 ## Dependency licensing note
 

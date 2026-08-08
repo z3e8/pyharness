@@ -212,16 +212,16 @@ reasoning behind them.
 package.** It is published so the design and the evidence behind it can be read
 and re-run, and it is under a deliberate [feature
 freeze](docs/explanation/design-decisions.md#feature-freeze-evidence-over-features).
-There is no PyPI release and none is planned; install from source. Issues and
-pull requests may not be reviewed promptly, so treat the code as something to
-read, fork, and run rather than something to contribute to.
+There is no PyPI release and none is planned; install from source. Issues are
+disabled and pull requests may not be reviewed, so treat the code as something
+to read, fork, and run rather than something to contribute to.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) still documents the setup, the `make test` /
 `make lint` expectations, and the docs-sync convention, which is what a fork
 needs.
 
-Found a security issue? **Do not open a public issue** — follow
-[SECURITY.md](SECURITY.md) (private GitHub advisory).
+Found a security issue? Report it through a **private GitHub advisory** on the
+Security tab; [SECURITY.md](SECURITY.md) has the scope and the process.
 
 ## License
 

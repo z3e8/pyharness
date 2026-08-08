@@ -9,28 +9,9 @@ requires-python = ">=3.11"
 authors = [
     { name = "Zane Hensley", email = "177496803+z3e8@users.noreply.github.com" },
 ]
-keywords = [
-    "ai",
-    "agent",
-    "llm",
-    "anthropic",
-    "claude",
-    "code-execution",
-    "jupyter-kernel",
-    "automation",
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
+# No keywords/classifiers: those fields exist to render a PyPI listing, and
+# there will not be one. The name is taken on PyPI by an unrelated project and
+# no release is planned. What stays here is what an editable install needs.
 dependencies = [
     "anthropic>=0.40",
     "httpx>=0.27",
@@ -72,7 +53,6 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/z3e8/pyharness"
 Repository = "https://github.com/z3e8/pyharness"
-Issues = "https://github.com/z3e8/pyharness/issues"
 
 [project.scripts]
 pyharness = "pyharness.cli.main:main"
