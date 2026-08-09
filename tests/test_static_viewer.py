@@ -159,6 +159,121 @@ def test_absolute_paths_are_redacted(tmp_path, monkeypatch):
     assert any("<session>/workspace/out.txt" in t for t in texts)
 
 
+def test_the_private_temp_root_is_redacted(tmp_path, monkeypatch):
+    """The regression that motivated this: macOS puts each user's temp under
+    `/var/folders/<xx>/<id>/T`, which is under neither `$HOME` nor the session
+    root, so the two prefixes missed it. It reached a published page through a
+    pip notice naming the sandbox venv's interpreter, and re-appeared on every
+    re-bake because the pages are built from gitignored `.sessions/`."""
+    private_tmp = tmp_path / "var" / "folders" / "rq" / "n0tar3alid3ntifier" / "T"
+    private_tmp.mkdir(parents=True)
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(private_tmp))
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path / "home"))
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {
+            "ts": 1003.0,
+            "kind": "output",
+            "text": f"run: {private_tmp}/pyharness-sb-ab12/venv/bin/python3.12",
+        },
+    )
+    html = build_page(d)
+    assert str(private_tmp) not in html
+    assert "n0tar3alid3ntifier" not in html
+    texts = [e.get("text", "") for e in _baked_events(html)]
+    # The shape survives: a reader still sees a temp path was involved.
+    assert any("<tmp>/pyharness-sb-ab12/venv" in t for t in texts)
+
+
+def test_a_foreign_temp_id_is_redacted_by_shape(tmp_path, monkeypatch):
+    """A session recorded under a `TMPDIR` this process no longer has — a bake on
+    another machine, or after the root rotated — carries an id the prefix map
+    never saw. Matching the shape is what makes the scrub survive that."""
+    monkeypatch.setattr("tempfile.gettempdir", lambda: "/tmp")
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path / "home"))
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {
+            "ts": 1003.0,
+            "kind": "output",
+            "text": "at /private/var/folders/aa/s0me0therh0st/T/x.log",
+        },
+    )
+    html = build_page(d)
+    assert "s0me0therh0st" not in html
+    texts = [e.get("text", "") for e in _baked_events(html)]
+    assert any("<tmp>/x.log" in t for t in texts)
+
+
+def test_a_shared_temp_root_is_left_alone(tmp_path, monkeypatch):
+    """`/tmp` is the same path for every user on the host, so redacting it would
+    add noise and remove no information. Only the per-user roots are secrets."""
+    monkeypatch.setattr("tempfile.gettempdir", lambda: "/tmp")
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path / "home"))
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {"ts": 1003.0, "kind": "output", "text": "wrote /tmp/out.txt"},
+    )
+    texts = [e.get("text", "") for e in _baked_events(build_page(d))]
+    assert any("/tmp/out.txt" in t for t in texts)
+
+
+def test_the_bare_login_name_is_redacted(tmp_path, monkeypatch):
+    """`ls -la` prints an owner column, which is a username in no path at all —
+    the second leak found the same day as the temp root, and the reason the
+    scrub cannot be only about paths."""
+    monkeypatch.setattr(
+        "pathlib.Path.home", classmethod(lambda cls: tmp_path / "chandlerbing")
+    )
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {
+            "ts": 1003.0,
+            "kind": "output",
+            "text": "drwxr-xr-x@ 32 chandlerbing  staff  1024 Aug  4 22:45 .",
+        },
+    )
+    html = build_page(d)
+    assert "chandlerbing" not in html
+    texts = [e.get("text", "") for e in _baked_events(html)]
+    assert any("<user>  staff" in t for t in texts)
+
+
+def test_a_short_login_name_is_left_alone(tmp_path, monkeypatch):
+    """A three-character login is as likely to be an ordinary word in captured
+    output as an identifier. Corrupting a transcript is the worse failure."""
+    monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path / "cat"))
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {"ts": 1003.0, "kind": "output", "text": "cat the file, then concatenate"},
+    )
+    texts = [e.get("text", "") for e in _baked_events(build_page(d))]
+    assert any("cat the file, then concatenate" in t for t in texts)
+
+
+def test_doc_pages_are_scrubbed_like_session_pages(tmp_path, monkeypatch):
+    """`--doc` takes arbitrary markdown, and the throughput site points it at a
+    control arm's transcript read straight out of gitignored `.sessions/`. That
+    path bypassed the scrub entirely until a re-bake put a username back into a
+    committed page."""
+    monkeypatch.setattr(
+        "pathlib.Path.home", classmethod(lambda cls: tmp_path / "chandlerbing")
+    )
+    doc = tmp_path / "transcript.md"
+    doc.write_text("# Arm\n\n```\n-rw-r--r-- 1 chandlerbing staff 12 out.gz\n```\n")
+    out = tmp_path / "site"
+    build_site([_session(tmp_path)], out, docs=[("Control arm", doc)])
+    page = (out / "control-arm.html").read_text()
+    assert "chandlerbing" not in page
+    # `<` is escaped on the way into the script block, as it is for a session.
+    assert r"\u003cuser> staff" in page
+
+
 def test_the_page_says_it_is_a_record_not_a_live_view(tmp_path):
     """Replayed, every event lands in the same millisecond. A ticking clock
     would count from when the page opened and claim a 30-second session had run

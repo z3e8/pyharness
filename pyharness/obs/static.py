@@ -14,8 +14,11 @@ What the bake has to do that the live view does not:
   server, so screenshots become data: URIs.
 - **Redact absolute paths.** A trace records the session root, and the model's
   preamble names the workspace — both absolute, both carrying the operator's home
-  directory. Publishing them leaks a username and a machine layout to anyone who
-  reads the page.
+  directory. Subprocess output adds a third: the per-user temp root, which is
+  under neither. Publishing them leaks a username and a machine layout to anyone
+  who reads the page. This is the only place the scrub can live, because the
+  published pages are baked from gitignored `.sessions/` — a leak fixed by hand
+  in the committed HTML comes straight back on the next re-bake.
 - **Stop the clock.** The page ticks elapsed time off `Date.now()`. Replayed, every
   event lands in the same millisecond, so a live clock would count up from the
   moment the page opened and claim a five-second session had been running for
@@ -28,8 +31,10 @@ import base64
 import json
 import mimetypes
 import re
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from functools import lru_cache
 from html import escape
 from pathlib import Path
 
@@ -39,24 +44,64 @@ from .watch import Tail, render_page
 
 _MEDIA_PREFIX = "/media/"
 
+# macOS gives each user a private temp root at `/var/folders/<xx>/<id>/T` (the
+# same place as `/private/var/folders/...`, since `/var` is a symlink). The id is
+# host-identifying, and the root is under neither `$HOME` nor the session dir, so
+# the prefix map below cannot reach it. Ordinary subprocess output carries it out
+# — a pip notice naming the sandbox venv's interpreter is enough.
+_TMP_PATTERN = re.compile(
+    r"(?:/private)?/var/folders/[A-Za-z0-9_+=-]+/[A-Za-z0-9_+=-]+/T"
+)
 
-def _redaction_map(session_dir: Path) -> dict[str, str]:
+# Temp roots every user on the host shares, so nothing about them identifies
+# anyone. Redacting these would add noise and remove no information.
+_SHARED_TMP = frozenset({"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"})
+
+
+@lru_cache(maxsize=8)
+def _user_pattern(login: str) -> re.Pattern[str] | None:
+    """The bare login name as a whole word, or None if it is too short to match
+    safely. `ls -la` prints the owner column, which is a username in no path at
+    all, so the prefix map cannot see it. A login under four characters is as
+    likely to be an ordinary word in captured output as an identifier, and
+    corrupting a transcript is worse than leaving a common name in it."""
+    return re.compile(rf"\b{re.escape(login)}\b") if len(login) >= 4 else None
+
+
+def _redaction_map(session_dir: Path | None = None) -> dict[str, str]:
     """Absolute prefixes to strip from a page, longest first.
 
     The session root is replaced with a stable placeholder rather than deleted so
     a reader can still see *that* paths were involved and how they nested; the
     home directory falls back to `~` for anything the root doesn't cover (the
-    preamble's workspace line, a traceback from an installed package)."""
-    return {
-        str(session_dir.resolve()): "<session>",
-        str(Path.home()): "~",
-    }
+    preamble's workspace line, a traceback from an installed package). Pass no
+    session for text that belongs to no single one, like a `--doc` transcript.
+
+    Baking is the boundary between gitignored session data and committed output,
+    which is why host scrubbing belongs here rather than in a review step: the
+    published pages are regenerated from `.sessions/`, so anything this function
+    misses comes back on every re-bake."""
+    mapping = {str(Path.home()): "~"}
+    if session_dir is not None:
+        mapping[str(session_dir.resolve())] = "<session>"
+    tmp = tempfile.gettempdir().rstrip("/")
+    if tmp not in _SHARED_TMP:
+        # Both spellings: a trace may carry either, and only one of the two
+        # survives `resolve()` on a platform where the root is symlinked.
+        mapping[tmp] = "<tmp>"
+        mapping[str(Path(tmp).resolve())] = "<tmp>"
+    return mapping
 
 
 def _redact(text: str, mapping: dict[str, str]) -> str:
     for needle, replacement in sorted(mapping.items(), key=lambda kv: -len(kv[0])):
         text = text.replace(needle, replacement)
-    return text
+    # A session recorded under a temp root this process no longer has (a
+    # different `TMPDIR`, or a bake on another machine) carries an id the map
+    # never saw, so match the shape as well as the literal.
+    text = _TMP_PATTERN.sub("<tmp>", text)
+    pattern = _user_pattern(Path.home().name)
+    return pattern.sub("<user>", text) if pattern else text
 
 
 def _inline_media(container: Path, src: str) -> str:
@@ -327,10 +372,12 @@ def build_site(
 
     for label, src, name in doc_pages:
         page = out_dir / name
+        # Scrubbed like a session page. A committed board has nothing to strip,
+        # but a `--doc` transcript is read straight out of gitignored
+        # `.sessions/` and carries whatever the run's shell output carried.
+        text = _redact(src.read_text(encoding="utf-8"), _redaction_map())
         page.write_text(
-            render_doc_page(
-                src.read_text(encoding="utf-8"), title=label, nav=nav, current=name
-            ),
+            render_doc_page(text, title=label, nav=nav, current=name),
             encoding="utf-8",
         )
         written.append(page)
