@@ -33,7 +33,8 @@ backported patches for older revisions.
 In scope — issues that let untrusted, model-authored code or attacker-controlled
 input escape the intended trust boundary, for example:
 
-- Escaping the OS sandbox that confines executed code (macOS Seatbelt today).
+- Escaping the OS sandbox that confines executed code — macOS Seatbelt, or
+  Linux Landlock + seccomp-bpf. Both backends are in scope.
 - Reading or exfiltrating vault secrets, TOTP seeds, or browser login profiles
   that the policy is supposed to keep out of the agent's reach.
 - SSRF / egress-guard bypasses (reaching internal or link-local addresses that
@@ -64,7 +65,9 @@ If you are unsure whether something is in scope, report it privately anyway.
 The trust boundary and the four mechanisms that enforce it (policy, the OS
 sandbox, the secrets vault, and the audit log) are documented in
 [docs/explanation/security-and-audit.md](docs/explanation/security-and-audit.md).
-The non-macOS sandbox gap and its opt-in gate are covered there and in
+Confinement is built for macOS and Linux; the platforms with neither (Windows,
+or a Linux kernel below the Landlock ABI floor) fail closed behind an explicit
+opt-in. That gap and its gate are covered there and in
 [docs/reference/configuration.md](docs/reference/configuration.md). Read those
 before reporting to confirm the behavior is unintended rather than a documented
 limitation.
