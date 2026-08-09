@@ -6,8 +6,8 @@ and records everything.** Four mechanisms, all sitting at or behind
 [the broker](broker.md).
 
 > This page is the *mechanisms*. For the perimeter they add up to — the
-> adversary model, what is confined on each platform, and all ten published
-> gaps grouped by the decision behind them — see the
+> adversary model, what is confined on each platform, and all
+> 12 gaps grouped by the decision behind them — see the
 > [threat model](threat-model.md).
 
 ## Policy — what may run
@@ -25,12 +25,15 @@ Rules match by prefix, so `"files"` gates every file operation and
 content that would load and run in later sessions, so a human signs off at
 author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
 proposals too — reflection routes its skill writes through the same broker gate).
-A `save_skill` prompt shows the **bundled source** it is approving, not just the
-skill's name: that code is what a later run executes. It does *not* show the
-markdown instructions, and `edit_skill`'s prompt shows only how many edits are
-being applied — a published gap
-([8](threat-model.md#8-a-skills-sign-off-looks-at-the-code-and-not-the-prose)),
-since the prose is the half a later run reads and follows.
+A `save_skill` prompt shows **both halves of what it is approving**, not just the
+skill's name: the bundled source, because that code is what a later run
+executes, and the markdown, because `describe_tool` puts it into a later run's
+context and the model follows it. An `edit_skill` prompt shows the old→new text
+of each delta rather than a count. Both are capped for a terminal and for the
+audit record — code past the limit collapses to its outline, prose is elided in
+the middle so an instruction appended at the end still appears, and the marker
+says how much was dropped. Disclosing only the code was scored as a gap
+(`skill-text-approved-unseen`) before it was closed.
 `shell.bash` is approval-gated too, and the reason is narrower than it looks: it
 executes **parent-side**, so its jail is applied by a per-platform wrap
 (`sandboxed_shell_argv`) that has to be right, and that falls back to no jail at

@@ -76,10 +76,12 @@ returns the bundled code as a module.
   instructions), optional `*.py` modules, and a `journal.json` trust sidecar.
 - **You can author one by hand** — just create that directory; it loads next
   session, no code required. A hand-authored skill also starts unverified.
-- `save_skill` requires approval by default (it writes code that auto-runs
-  later), and **the prompt shows the bundled source** — full text for small
-  files, a def outline for large ones — because that source is what a later run
-  executes. See [Security & audit](../explanation/security-and-audit.md).
+- `save_skill` requires approval by default (it writes content that auto-loads
+  later), and **the prompt shows both halves of it** — the bundled source (full
+  text for small files, a def outline for large ones), because that code runs on
+  a later call, and the procedure text (elided in the middle when long), because
+  a later run reads it and follows it. `edit_skill` shows the old→new of each
+  delta. See [Security & audit](../explanation/security-and-audit.md).
 - **Trust is earned by a real run.** A new or revised skill is `unverified`
   (tagged in `search_tools`, spelled out in `describe_tool`) — treat its steps as
   a hypothesis. After running it, call

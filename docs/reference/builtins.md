@@ -246,8 +246,9 @@ IPC boundary rather than a proxy, so raw filesystem or network access inside a
 bundled function is jailed exactly as the same line in a cell is.
 
 > Saving or editing a skill requires human approval by default (it writes
-> content that auto-loads in later sessions), and a save's prompt shows the
-> bundled source it is signing off on — see
+> content that auto-loads in later sessions), and the prompt shows what it is
+> signing off on: the bundled source, the procedure text, and — for an edit —
+> the old→new of each delta. See
 > [the approval policy](../explanation/security-and-audit.md).
 
 **Every skill should carry a `check`** — one line saying how a run confirms the
@@ -280,7 +281,7 @@ run deviated. Recording a use writes only metadata, so it is *not* gated for
 approval — which is also why `verified` is advice rather than permission: it is
 self-reported, nothing watches a run and decides, and it grants a skill no
 capability an unverified one lacks (published gap
-[9](../explanation/threat-model.md#9-a-skills-this-worked-before-marker-is-self-reported)).
+[8](../explanation/threat-model.md#8-a-skills-this-worked-before-marker-is-self-reported)).
 
 **Revising a skill: prefer `edit_skill`.** `edits` is a list of
 `{"old": <exact text occurring once in the instructions>, "new": <replacement>}`

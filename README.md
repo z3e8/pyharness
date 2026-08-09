@@ -21,7 +21,7 @@ Told to fall back to `curl` in a subprocess, it finds no network to reach:
 sockets, `urllib` and `curl` all fail in a child process that has no network
 syscall available. Nothing here depends on the model declining.</sub>
 
-**36 of 49 adversarial attacks blocked. 13 known gaps, published with the reason
+**37 of 49 adversarial attacks blocked. 12 known gaps, published with the reason
 each one is a boundary rather than an oversight. 0 unexpected successes.**
 
 The gaps are the point. A suite that only reports wins persuades nobody, so
@@ -166,14 +166,17 @@ through the broker on the day they fire, under the boundaries of the session
 firing them.
 
 The `skills` rows on the [scoreboard](evals/SCOREBOARD.md) test that from both
-ends, and the ones that fail are as informative as the ones that hold. A skill
-saved in an open session is refused when it reaches out from a confined one, and
-cannot spend its old approval in a session with no human at the prompt. But the
-approval prompt shows the bundled *code* and never the procedure text — and for
-a CodeAct agent the prose is the half a later model reads and follows. And the
-*this has worked before* marker a later run is shown is the agent's own say-so,
-because recording a use is ungated by design. Both are published as gaps, with
-what bounds each.
+ends. A skill saved in an open session is refused when it reaches out from a
+confined one, cannot spend its old approval in a session with no human at the
+prompt, cannot take a trusted capability's name, and cannot be planted through
+the agent's file access without the sign-off.
+
+Writing them found one thing wrong and left one thing standing. The approval
+prompt showed a skill's bundled *code* and never its procedure text — the half a
+later model reads and follows — which is now fixed and pinned shut by the row
+that found it. What stands is that the *this has worked before* marker a later
+run is shown is the agent's own say-so, since recording a use is ungated by
+design; published as a gap, with what bounds it.
 
 There is **no skill sharing and none is planned**, so the threat here is
 self-poisoning across time rather than a third-party supply chain. One author is
