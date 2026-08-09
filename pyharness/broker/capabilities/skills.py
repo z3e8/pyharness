@@ -9,7 +9,9 @@ from ...tools.skills import (
     edit_skill_md,
     record_use,
     register_skill_dir,
+    render_edits_preview,
     render_files_preview,
+    render_instructions_preview,
     validate_skill_name,
     write_skill,
 )
@@ -32,10 +34,10 @@ def _code_in_markdown_warning(instructions: str, files: dict | None) -> str:
     )
 
 
-def _positional_files(args: tuple):
-    """`save_skill`'s `files` as a positional — the shape the child's IPC sends
-    (name, description, instructions, files, ...)."""
-    return args[3] if len(args) >= 4 else None
+def _positional(args: tuple, index: int):
+    """One of `save_skill`'s arguments as a positional — the shape the child's
+    IPC sends (name, description, instructions, files, ...)."""
+    return args[index] if len(args) > index else None
 
 
 class SkillsCapability:
@@ -96,21 +98,31 @@ class SkillsCapability:
         in later sessions); recording a use writes only metadata, so it isn't
         gated.
 
-        A save shows the **bundled source**, not just the skill's name. That
-        code executes on a later run — approving the name alone was approving
-        something the human could not see. `edit_skill` never touches bundled
-        files, so its preview stays about the instruction edits."""
+        A save or an edit shows **what will run later**, never just the skill's
+        name or a count of what changed. Both halves count: the bundled source,
+        because it executes on a later call, and the markdown, because
+        `describe_tool` puts it into a later run's context and the model follows
+        it. Showing only the code was scored as a gap
+        (`skill-text-approved-unseen`) before it was closed."""
         name = kwargs.get("name") or (args[0] if args else "?")
         if op == "record_skill_use":
             outcome = kwargs.get("outcome") or (args[1] if len(args) >= 2 else "?")
             return ActionCategory.LOCAL, f"record use of skill {name!r}: {outcome}"
         if op == "edit_skill":
-            edits = kwargs.get("edits") or (args[1] if len(args) >= 2 else [])
-            return ActionCategory.LOCAL, f"apply {len(edits)} edit(s) to skill {name!r}"
-        files = kwargs.get("files") if "files" in kwargs else _positional_files(args)
+            edits = kwargs.get("edits") or _positional(args, 1) or []
+            summary = f"apply {len(edits)} edit(s) to skill {name!r}"
+            if delta := render_edits_preview(edits):
+                summary += "\n" + delta
+            return ActionCategory.LOCAL, summary
+        files = kwargs.get("files") if "files" in kwargs else _positional(args, 3)
+        instructions = kwargs.get("instructions") or _positional(args, 2) or ""
         summary = f"save skill {name!r} to {self.skills_dir}"
-        if code := render_files_preview(dict(files or {})):
-            summary += "\n" + code
+        for block in (
+            render_instructions_preview(instructions),
+            render_files_preview(dict(files or {})),
+        ):
+            if block:
+                summary += "\n" + block
         return ActionCategory.LOCAL, summary
 
     def save_skill(

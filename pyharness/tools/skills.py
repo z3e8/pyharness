@@ -581,6 +581,65 @@ def render_files_preview(files: dict[str, str], indent: str = "    ") -> str:
         blocks.append(f"--- {fname}\n{body}")
     text = f"bundles {len(files)} file(s), which run when the skill is called:\n"
     text += "\n".join(blocks)
+    return _indented(text, indent)
+
+
+def render_instructions_preview(instructions: str, indent: str = "    ") -> str:
+    """The procedure text a `save_skill` approval is signing off on.
+
+    The other half of `render_files_preview`, and for a CodeAct agent the more
+    consequential one: the markdown is what `describe_tool` puts into a later
+    run's context, and what the model then follows. Approving the code alone was
+    approving the half that is legible as code while the half that steers
+    behaviour went unread — scored as `skill-text-approved-unseen`.
+
+    Long procedures are elided in the *middle* rather than truncated, so an
+    instruction appended at the end is still shown; the marker names how much
+    was dropped, because a human told the prompt is incomplete can decline."""
+    text = (instructions or "").strip()
+    if not text:
+        return ""
+    return _indented(
+        f"the procedure it saves, which a later run reads and follows:\n{_elide(text)}",
+        indent,
+    )
+
+
+def render_edits_preview(edits, indent: str = "    ") -> str:
+    """The old→new text an `edit_skill` approval is signing off on.
+
+    An edit never touches bundled files, so its prompt used to report only how
+    many deltas were being applied — a count, against a skill whose approval was
+    already given once. What changes is the procedure a later run follows, so
+    that is what the prompt has to show."""
+    blocks: list[str] = []
+    budget = _PREVIEW_TOTAL_LIMIT
+    for i, edit in enumerate(edits or []):
+        try:
+            old, new = (edit["old"], edit["new"]) if isinstance(edit, dict) else edit
+        except (KeyError, TypeError, ValueError):
+            blocks.append(f"--- edit {i + 1}: (unreadable: {edit!r})")
+            continue
+        limit = max(80, budget // max(1, len(edits) - i))
+        rendered = f"- {_elide(str(old), limit)}\n+ {_elide(str(new), limit)}"
+        budget -= len(rendered)
+        blocks.append(f"--- edit {i + 1}\n{rendered}")
+    if not blocks:
+        return ""
+    head = f"replaces {len(blocks)} passage(s) of the procedure a later run follows:"
+    return _indented(head + "\n" + "\n".join(blocks), indent)
+
+
+def _elide(text: str, limit: int = _PREVIEW_FULL_LIMIT) -> str:
+    """`text`, with its middle replaced by a marker if it exceeds `limit`."""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    dropped = len(text) - 2 * half
+    return f"{text[:half]}\n… ({dropped} chars elided) …\n{text[-half:]}"
+
+
+def _indented(text: str, indent: str) -> str:
     return "\n".join(indent + line for line in text.splitlines())
 
 
