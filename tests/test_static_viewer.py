@@ -7,7 +7,9 @@ media, redact absolute paths, and stop claiming to be live.
 """
 
 import base64
+import getpass
 import json
+import pathlib
 import re
 
 import pytest
@@ -272,6 +274,58 @@ def test_doc_pages_are_scrubbed_like_session_pages(tmp_path, monkeypatch):
     assert "chandlerbing" not in page
     # `<` is escaped on the way into the script block, as it is for a session.
     assert r"\u003cuser> staff" in page
+
+
+# Account names generic enough to appear in ordinary prose ("the test runner",
+# "run as root"). Checking them against a page would fail on wording, not on a
+# leak, and a gate that cries wolf gets deleted.
+_GENERIC_LOGINS = frozenset(
+    {"runner", "root", "ubuntu", "user", "admin", "build", "test", "agent", "docker"}
+)
+
+_HOST_PATTERNS = {
+    "a home directory": re.compile(r"/(?:Users|home)/[A-Za-z0-9._-]+"),
+    "a private temp root": re.compile(
+        r"/var/folders/[A-Za-z0-9_+=-]+/[A-Za-z0-9_+=-]+"
+    ),
+}
+
+
+def _committed_pages():
+    root = pathlib.Path(__file__).resolve().parents[1]
+    return sorted(root.glob("evals/*/site/*.html"))
+
+
+def test_committed_pages_carry_no_host_identifiers():
+    """A gate on the artifacts, not on the code that writes them.
+
+    `obs/static.py` scrubs at the bake, which is the fix. This is the check that
+    a leak arriving by some *other* route — a hand-edit, a new `--doc` source, a
+    page baked before the scrub existed — does not reach a published page
+    unnoticed. It is worth having separately because such a leak is invisible in
+    review: a baked page is one enormous JSON line, so `git diff` reports one
+    changed line and shows nothing legible.
+
+    Two leaks motivated this, both found by accident on 2026-08-09: a macOS
+    temp-dir id restored by a re-bake, and a bare login name in an `ls -la`
+    owner column inside a `--doc` transcript."""
+    pages = _committed_pages()
+    assert pages, "no committed site pages found — has the layout moved?"
+
+    offenders = []
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        for what, pattern in _HOST_PATTERNS.items():
+            for hit in set(pattern.findall(text)):
+                offenders.append(f"{page.name}: {what} — {hit}")
+        login = getpass.getuser()
+        if login.lower() not in _GENERIC_LOGINS and re.search(
+            rf"\b{re.escape(login)}\b", text
+        ):
+            offenders.append(f"{page.name}: this machine's login — {login}")
+    assert not offenders, "committed pages carry host identifiers:\n" + "\n".join(
+        sorted(offenders)
+    )
 
 
 def test_the_page_says_it_is_a_record_not_a_live_view(tmp_path):
