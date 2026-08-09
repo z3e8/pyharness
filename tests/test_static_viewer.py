@@ -372,6 +372,34 @@ def test_committed_pages_carry_no_host_identifiers():
     )
 
 
+_CLOCK_PATTERNS = {
+    "a dated wall clock": re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"),
+    "an HTTP Date header": re.compile(r"\w{3}, \d{1,2} \w{3} \d{4} \d{2}:\d{2}:\d{2}"),
+}
+
+
+def test_committed_pages_carry_no_wall_clock_times():
+    """The sibling of the host-identifier gate, for the same reason and against
+    the same blind spot — a baked page is one enormous JSON line, so a clock
+    coming back on a re-bake is invisible in review.
+
+    What motivated it: three session directory names quoted in `CURVE.md` were
+    `skills-<date>-<HHMMSS>`, and a directory name is a wall-clock stamp of the
+    machine that made it. Nothing on a published page needs the hour."""
+    pages = _committed_pages()
+    assert pages, "no committed site pages found — has the layout moved?"
+
+    offenders = [
+        f"{page.name}: {what} — {hit}"
+        for page in pages
+        for what, pattern in _CLOCK_PATTERNS.items()
+        for hit in sorted(set(pattern.findall(page.read_text(encoding="utf-8"))))
+    ]
+    assert not offenders, "committed pages carry wall-clock times:\n" + "\n".join(
+        sorted(offenders)
+    )
+
+
 def test_the_page_says_it_is_a_record_not_a_live_view(tmp_path):
     """Replayed, every event lands in the same millisecond. A ticking clock
     would count from when the page opened and claim a 30-second session had run
