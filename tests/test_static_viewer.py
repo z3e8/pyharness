@@ -258,6 +258,50 @@ def test_a_short_login_name_is_left_alone(tmp_path, monkeypatch):
     assert any("cat the file, then concatenate" in t for t in texts)
 
 
+def test_wall_clock_times_are_redacted(tmp_path):
+    """The model's `## Session` preamble opens with the current time, and any
+    HTTP response the agent captured carries a `Date:` header. Both are baked
+    into the page verbatim. The date is which run this is; the clock is only
+    when the operator was at the keyboard."""
+    d = _session(tmp_path)
+    _write(
+        d / "trace.jsonl",
+        {
+            "ts": 1003.0,
+            "kind": "output",
+            "text": (
+                "## Session\n- Now: 2031-03-04 13:37 PDT (Tuesday)\n"
+                "{'date': 'Tue, 04 Mar 2031 20:37:11 GMT'}"
+            ),
+        },
+    )
+    html = build_page(d)
+    texts = [e.get("text", "") for e in _baked_events(html)]
+    assert any("- Now: 2031-03-04 (Tuesday)" in t for t in texts)
+    assert any("'date': 'Tue, 04 Mar 2031 GMT'" in t for t in texts)
+    assert "13:37" not in html and "20:37:11" not in html
+
+
+def test_an_iso_timestamp_keeps_its_clock(tmp_path):
+    """The throughput suite's corpus is a month of `...T<HH:MM:SS>.<ms>Z` log
+    lines, and the hour is the answer to one of the questions that eval asks.
+    Scrubbing it would protect nobody and would quietly break the evidence, so
+    the clock pattern matches a space separator and never `T`."""
+    d = _session(tmp_path)
+    line = '{"ts":"2031-03-04T13:32:58.774Z","service":"edge"}'
+    _write(d / "trace.jsonl", {"ts": 1003.0, "kind": "output", "text": line})
+    texts = [e.get("text", "") for e in _baked_events(build_page(d))]
+    assert any(line in t for t in texts)
+
+
+def test_the_archived_stamp_carries_no_clock(tmp_path):
+    """The status line is built at bake time rather than replayed from an event,
+    so it is the one clock the redaction map never sees."""
+    html = build_page(_session(tmp_path))
+    assert re.search(r"archived · \d{4}-\d{2}-\d{2}'", html)
+    assert not re.search(r"archived · \d{4}-\d{2}-\d{2} \d{2}:\d{2}", html)
+
+
 def test_doc_pages_are_scrubbed_like_session_pages(tmp_path, monkeypatch):
     """`--doc` takes arbitrary markdown, and the throughput site points it at a
     control arm's transcript read straight out of gitignored `.sessions/`. That

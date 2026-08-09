@@ -19,6 +19,10 @@ What the bake has to do that the live view does not:
   who reads the page. This is the only place the scrub can live, because the
   published pages are baked from gitignored `.sessions/` — a leak fixed by hand
   in the committed HTML comes straight back on the next re-bake.
+- **Redact the wall clock.** The same argument, for a different identifier: the
+  date of a run is provenance, but the hour and minute only record when the
+  operator was at the keyboard, which is not evidence of anything the page
+  claims. Dates survive; clocks do not.
 - **Stop the clock.** The page ticks elapsed time off `Date.now()`. Replayed, every
   event lands in the same millisecond, so a live clock would count up from the
   moment the page opened and claim a five-second session had been running for
@@ -56,6 +60,25 @@ _TMP_PATTERN = re.compile(
 # Temp roots every user on the host shares, so nothing about them identifies
 # anyone. Redacting these would add noise and remove no information.
 _SHARED_TMP = frozenset({"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"})
+
+# Wall-clock times reach a page from two directions the bake does not control:
+# the model's `## Session` preamble opens with `- Now: <date> <HH:MM ZONE>
+# (<weekday>)`, and any HTTP response the agent captured carries a `Date:`
+# header. Both keep their date, which is the run's provenance; both lose the
+# clock, which only says when somebody was at the keyboard.
+#
+# The separator is a literal space on purpose. An ISO stamp writes `T`, and the
+# throughput suite's corpus is a month of `<date>T<HH:MM:SS>.<ms>Z` log lines
+# whose *hour* is the answer to one of the questions that eval asks — scrubbing
+# those would not protect anyone and would silently break the evidence.
+_CLOCK_PATTERN = re.compile(
+    r"(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}(?::\d{2})?(?:\.\d+)?"
+    r"(?: ?(?:[A-Z]{2,5}|[+-]\d{2}:?\d{2}))?"
+)
+
+# RFC 7231 `Date:` — `<Ddd>, <DD Mmm YYYY> <HH:MM:SS> GMT`. Its own pattern
+# because it shares no shape with the ISO form above.
+_HTTP_DATE_PATTERN = re.compile(r"(\w{3}, \d{1,2} \w{3} \d{4}) \d{2}:\d{2}:\d{2} GMT")
 
 
 @lru_cache(maxsize=8)
@@ -100,6 +123,8 @@ def _redact(text: str, mapping: dict[str, str]) -> str:
     # different `TMPDIR`, or a bake on another machine) carries an id the map
     # never saw, so match the shape as well as the literal.
     text = _TMP_PATTERN.sub("<tmp>", text)
+    text = _CLOCK_PATTERN.sub(r"\1", text)
+    text = _HTTP_DATE_PATTERN.sub(r"\1 GMT", text)
     pattern = _user_pattern(Path.home().name)
     return pattern.sub("<user>", text) if pattern else text
 
@@ -172,10 +197,11 @@ def _static_feed(
     # `</script>` inside trace text would end the block early; `<` is the
     # same string to JSON.parse and inert to the HTML parser.
     payload = payload.replace("<", "\\u003c")
+    # Date only, for the reason the redaction map drops clocks: which run this is
+    # matters to a reader, what time of day it was does not. This one is built
+    # here rather than replayed from an event, so `_redact` never sees it.
     when = (
-        datetime.fromtimestamp(ended, UTC).strftime("%Y-%m-%d %H:%M UTC")
-        if ended
-        else "unknown"
+        datetime.fromtimestamp(ended, UTC).strftime("%Y-%m-%d") if ended else "unknown"
     )
     duration = max(0.0, ended - started)
     listing = json.dumps(siblings or [], default=str).replace("<", "\\u003c")

@@ -91,9 +91,11 @@ It is the *same page* as the live view — `obs/page.py` and `obs/assets/` own t
 shell, the stylesheet and the renderer; the export only swaps the feed (a baked
 event array for the SSE stream), so the two cannot drift. Four things differ,
 all because a record is not a live view: screenshots are inlined as `data:` URIs
-(there is no server to fetch `/media/...`), absolute paths are redacted (a trace
-records the session root and the preamble names the workspace — both carry your
-home directory), the clock is frozen at the session's real duration instead of
+(there is no server to fetch `/media/...`), absolute paths and wall-clock times
+are redacted (a trace records the session root and the preamble names the
+workspace — both carry your home directory — and the preamble's `Now:` line and
+any captured HTTP `Date:` header keep their date but lose the hour), the clock is
+frozen at the session's real duration instead of
 ticking from whenever the page was opened, and the live-only controls (*follow*,
 *jump to latest*) are removed rather than left promising something untrue. The
 session switcher survives: the list is baked into every session page as links.
