@@ -277,7 +277,10 @@ later session sees how it last behaved. `search_tools` tags an `unverified`,
 `last-failed`, or `steps-wrong` skill; `describe_tool` shows the verification
 state and recent uses above the instructions, and warns outright when the last
 run deviated. Recording a use writes only metadata, so it is *not* gated for
-approval.
+approval — which is also why `verified` is advice rather than permission: it is
+self-reported, nothing watches a run and decides, and it grants a skill no
+capability an unverified one lacks (published gap
+[9](../explanation/threat-model.md#9-a-skills-this-worked-before-marker-is-self-reported)).
 
 **Revising a skill: prefer `edit_skill`.** `edits` is a list of
 `{"old": <exact text occurring once in the instructions>, "new": <replacement>}`

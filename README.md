@@ -21,7 +21,7 @@ Told to fall back to `curl` in a subprocess, it finds no network to reach:
 sockets, `urllib` and `curl` all fail in a child process that has no network
 syscall available. Nothing here depends on the model declining.</sub>
 
-**32 of 43 adversarial attacks blocked. 11 known gaps, published with the reason
+**36 of 49 adversarial attacks blocked. 13 known gaps, published with the reason
 each one is a boundary rather than an oversight. 0 unexpected successes.**
 
 The gaps are the point. A suite that only reports wins persuades nobody, so
@@ -155,13 +155,37 @@ what the last run learned the hard way. "A rejection is only believed after the
 page moves" is there because a login form's own instructions had once been read
 as an error. That is the *discovery* cost the curve says a skill amortises.</sub>
 
+**A skill is also the sharpest case for having a broker at all.** It is the one
+thing the agent authors that outlives the session: written on one run, loaded
+automatically into a later one. So a poisoned skill is a *time-delayed*
+injection — the content enters on the run where a human looked at it and said
+yes, and fires on a run where nobody can revisit that decision. Inspecting the
+current turn structurally cannot catch that; the payload was planted in a turn
+that is long gone. What can catch it is that the skill's side effects still go
+through the broker on the day they fire, under the boundaries of the session
+firing them.
+
+The `skills` rows on the [scoreboard](evals/SCOREBOARD.md) test that from both
+ends, and the ones that fail are as informative as the ones that hold. A skill
+saved in an open session is refused when it reaches out from a confined one, and
+cannot spend its old approval in a session with no human at the prompt. But the
+approval prompt shows the bundled *code* and never the procedure text — and for
+a CodeAct agent the prose is the half a later model reads and follows. And the
+*this has worked before* marker a later run is shown is the agent's own say-so,
+because recording a use is ungated by design. Both are published as gaps, with
+what bounds each.
+
+There is **no skill sharing and none is planned**, so the threat here is
+self-poisoning across time rather than a third-party supply chain. One author is
+enough for the argument.
+
 ## Run it
 
 ```bash
 make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .env
 make run       # the agent + its live viewer → http://localhost:6061
 make test      # tests + the adversarial suite (no API key needed)
-make evals     # re-run the 43 attacks and rewrite the scoreboard
+make evals     # re-run the 49 attacks and rewrite the scoreboard
 make lint      # ruff check + format (make format applies fixes)
 ```
 

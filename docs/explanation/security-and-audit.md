@@ -26,7 +26,11 @@ content that would load and run in later sessions, so a human signs off at
 author time (this holds for the [reflection pass](../how-to/observability.md#post-session-reflection)'s
 proposals too — reflection routes its skill writes through the same broker gate).
 A `save_skill` prompt shows the **bundled source** it is approving, not just the
-skill's name: that code is what a later run executes.
+skill's name: that code is what a later run executes. It does *not* show the
+markdown instructions, and `edit_skill`'s prompt shows only how many edits are
+being applied — a published gap
+([8](threat-model.md#8-a-skills-sign-off-looks-at-the-code-and-not-the-prose)),
+since the prose is the half a later run reads and follows.
 `shell.bash` is approval-gated too, and the reason is narrower than it looks: it
 executes **parent-side**, so its jail is applied by a per-platform wrap
 (`sandboxed_shell_argv`) that has to be right, and that falls back to no jail at
@@ -397,7 +401,8 @@ Enumeration tests prove the wiring exists. They do not prove it works. `evals/`
 holds a scripted adversary that attacks the claims on this page directly — SSRF
 against the metadata endpoint in four spellings, host-scope evasion, redirect
 escape, credential replay, grant reuse after revocation, log tampering,
-delegation escape, MCP rebinding — and scores the result. `make evals` runs it
+delegation escape, MCP rebinding, a saved skill firing in a later session — and
+scores the result. `make evals` runs it
 and rewrites [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md), which is
 committed; `make test` fails if any attack stops matching what that file says.
 
