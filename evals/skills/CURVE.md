@@ -296,9 +296,8 @@ were changed after *a* paid run, and both are disclosed here:
 ## The boards
 
 Regenerate from the sessions with `python -m evals.skills.run --rescore
-.sessions/<root>` (`.sessions/` is gitignored, so this only works on the
-machine that ran them: retrieval `skills-20260731`, discovery
-`skills-20260731`, discovery re-run `skills-20260731`).
+.sessions/<root>`, one root per arm. `.sessions/` is gitignored, so this only
+works on the machine that ran them.
 
 Retrieval arm, verbatim from the run:
 
