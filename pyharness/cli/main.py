@@ -483,7 +483,7 @@ def _cmd_repl(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="pyharness",
-        description="An AI agent whose action space is Python.",
+        description="A CodeAct agent with a containment and audit layer.",
     )
     sub = parser.add_subparsers(dest="cmd")
 

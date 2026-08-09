@@ -6,10 +6,12 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-**A containment and audit layer for agents whose action space is arbitrary
-Python.** Every side effect routes through one broker that does policy → audit →
-budget → execute, and the agent's code runs in an OS sandbox with no network
-syscall available to it.
+**Arbitrary code, every action brokered.**
+
+A [CodeAct](docs/explanation/action-space.md) agent with a containment and audit
+layer. Every side effect routes through one broker (policy → audit → budget →
+execute), and agent code runs in an OS sandbox with no network syscall available
+to it.
 
 ![An operator instructing the agent to read an SSH private key, the read refused at the workspace boundary, and a follow-up attempt to exfiltrate over curl blocked at the network layer](docs/assets/rejection.gif)
 
@@ -139,10 +141,12 @@ in the [builtins reference](docs/reference/builtins.md).
 
 **Skills.** A learned tool the agent (or a human) saves once and reuses across
 sessions: markdown instructions plus optional bundled `.py` modules under
-`~/.pyharness/skills/<name>/`. Whether that actually pays for itself is
-[measured, with a negative result and a boundary
-condition](evals/skills/CURVE.md): a skill amortises when a task's cost is
-*discovery*, and costs more than it saves when the work is retrieval.
+`~/.pyharness/skills/<name>/`. When it pays and when it does not is
+[measured](evals/skills/CURVE.md): a skill amortises when a task's cost is
+*discovery* — the best reuse run finished **53% below** the run that authored
+it, executing a frozen two-fetch sequence instead of a five-page walk — and
+costs more than it saves when the work is *retrieval*, because no procedure can
+lower the fetch floor.
 
 ![A saved skill being loaded with use_tool and driving a browser through a login and checkout lookup](docs/assets/skills-library.gif)
 

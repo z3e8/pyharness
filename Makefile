@@ -64,7 +64,7 @@ SITE_RUN ?= .sessions/demo-20260730-225820/invoice-exfiltration
 .PHONY: site
 site:
 	uv run pyharness-watch $(SITE_RUN) --static evals/demo/site \
-		--title "An agent whose action space is Python" \
+		--title "A CodeAct agent with a containment and audit layer" \
 		--lede "Every side effect routes through one broker that can refuse it. These are real runs: the same instruction contained in one destination and delivered in another." \
 		--doc "Adversarial suite=evals/SCOREBOARD.md" \
 		--doc "Demo vs baseline=evals/demo/COMPARISON.md" \

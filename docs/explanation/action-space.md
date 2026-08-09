@@ -14,6 +14,15 @@ things each step:
 There are no other tools. When the agent needs a capability, it *writes Python*:
 `read(path)`, `bash(cmd)`, `map_llm(prompts)`.
 
+This shape has a name in the literature: **CodeAct**, from Wang et al.,
+[*Executable Code Actions Elicit Better LLM Agents*](https://arxiv.org/abs/2402.01030)
+(ICML 2024), which consolidates an agent's actions into executable code rather
+than a fixed set of tool schemas. That paper argues the pattern is *better* —
+more expressive, fewer round trips. This repo takes the pattern as given and
+asks the question the paper does not: an action space that can express anything
+can also do anything, so what does it take to contain one? Everything from
+[the broker](broker.md) down is the answer.
+
 ## Why Python instead of JSON tools
 
 - **Composition.** One cell can loop, branch, filter, and combine capabilities —

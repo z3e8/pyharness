@@ -1,7 +1,8 @@
 # pyharness documentation
 
-An AI agent whose **action space is Python**. It either replies with text or
-emits one `run_python` call the harness executes in a persistent kernel.
+A **[CodeAct](explanation/action-space.md)** agent with a containment and audit
+layer. It either replies with text or emits one `run_python` call the harness
+executes in a persistent kernel.
 
 New here? The [README](../README.md) has the quickstart. These docs cover the
 design and the details, in three sections — pick by what you're trying to do:

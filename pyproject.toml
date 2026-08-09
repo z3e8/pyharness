@@ -1,7 +1,7 @@
 [project]
 name = "pyharness"
 version = "0.1.0"
-description = "An AI agent whose action space is Python."
+description = "A CodeAct agent with a containment and audit layer."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

@@ -9,11 +9,11 @@ commands, layout, and conventions it needs.
 
 ## What this is
 
-`pyharness` — an AI agent whose **action space is Python**. The orchestrator
-either replies with text or emits one `run_python` call that the harness runs in
-a persistent Jupyter-style kernel. No fine-grained JSON tools; capabilities are
-builtins in scope or tools imported on demand. See `docs/explanation/` for the
-model.
+`pyharness` — a **CodeAct** agent with a containment and audit layer. The
+orchestrator either replies with text or emits one `run_python` call that the
+harness runs in a persistent Jupyter-style kernel. No fine-grained JSON tools;
+capabilities are builtins in scope or tools imported on demand. See
+`docs/explanation/` for the model.
 
 ## Commands
 
