@@ -21,7 +21,7 @@ saved skill's value is not the steps — it is the notes. "A rejection is only
 believed after the page moves," because a login form's own instructions had once
 been read as a failed login. "Titles come from the aria tree, not the visible
 text." That is discovery cost, spent once. Whether spending it is worth it is
-the question the rest of this file answers, and the answer is not always yes.
+the question the rest of this file measures.
 
 ## The claim under test, and the answers
 
@@ -31,14 +31,13 @@ latency and steps per run should fall and then flatten.
 **Retrieval arm — no.** Runs 2-5 cost **+40%** more than run 1, took +19% more
 steps and +15% more wall time. Every run was correct and used the skill.
 
-**Discovery arm — the curve bends, and something breaks it.** The two reuse
-runs that executed the frozen sequence collapsed to 2 fetches; the cheapest
-(run 5) finished in 5 steps at **-51%** of run 1's cost. But every reuse run
-first paid for a real defect the arm surfaced — the bundled code the agent
-saved fails on import (below) — so one run re-walked the whole site and one
-died at the step wall with the answer in hand. The mean says +17%; the
-distribution says amortization is real here and an identifiable bug is eating
-it.
+**Discovery arm — yes, but a defect interferes.** The two reuse runs that
+executed the frozen sequence collapsed to 2 fetches; the cheapest (run 5)
+finished in 5 steps at **-51%** of run 1's cost. But every reuse run first
+paid for a real defect the arm surfaced — the bundled code the agent saved
+fails on import (below) — so one run re-walked the whole site and one hit the
+step limit after finding the answer. The mean is +17%, but the per-run
+distribution shows real amortization reduced by an identifiable bug.
 
 **Discovery arm, re-run after the fix — the identified breakage is gone.**
 Bundled code now runs with the session builtins ambient (the fix the first
