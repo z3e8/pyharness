@@ -1,8 +1,8 @@
 # Run the adversarial suite
 
 The suite in `evals/` attacks the harness on purpose and scores what happened.
-It answers one question — *what does this thing actually stop?* — and produces
-the number in [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md).
+It measures what the harness stops, and produces the number in
+[`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md).
 
 It needs no API key, no network, and no corpus. Attacks drive the agent loop
 through a scripted model, so a malicious `run_python` cell reaches the broker
@@ -37,12 +37,12 @@ regresses fails, and so does a gap that silently closes without being written up
 |---|---|
 | **blocked** | The defense refused the attack *in the way the attack said it would*. |
 | **known gap** | The attack succeeds today, published with the reason it is a stated boundary rather than an oversight. |
-| **unexpected** | An undocumented hole. This bucket should be empty; anything in it is news. |
+| **unexpected** | An undocumented hole. This bucket should be empty. |
 | **errors** | The attack broke. It says nothing about the system and is never counted as a win. |
 
-The bucket split is the point. A suite that only lists wins is marketing, and one
-that only lists holes is not credible — the controls are what make the gaps
-believable.
+The bucket split matters: a suite that only lists wins is not evidence, and one
+that only lists holes is not credible. The blocked attacks are what make the
+gaps believable.
 
 ## Add an attack
 

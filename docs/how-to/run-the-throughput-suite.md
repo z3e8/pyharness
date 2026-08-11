@@ -1,9 +1,9 @@
 # Run the throughput suite
 
 The suite in `evals/data/` asks whether the agent can work on more data than it
-can read. It answers the question the [action space](../explanation/action-space.md)
-page makes a claim about — *does one `run_python` call actually beat a menu of
-fine-grained tools?* — and produces [`evals/data/BOARD.md`](../../evals/data/BOARD.md).
+can read. It tests the claim the [action space](../explanation/action-space.md)
+page makes — that one `run_python` call beats a menu of fine-grained tools —
+and produces [`evals/data/BOARD.md`](../../evals/data/BOARD.md).
 
 It is the only suite here measuring **competence**. The
 [adversarial suite](run-the-adversarial-suite.md) measures what the harness
@@ -61,9 +61,9 @@ more than most implementations give you. That is deliberate: the arm has to fail
 on **volume**, not on encoding, or the result is about gzip rather than about the
 action space.
 
-The `shell` arm can `awk` and `python -c`, so it can genuinely win. That is the
-honest finding rather than a flaw in the control — *code* is the capability, and
-a shell is one way to get it. What a shell does not give you is a persistent
+The `shell` arm can `awk` and `python -c`, so it can genuinely win. That is a
+finding, not a flaw in the control: *code* is the capability, and a shell is
+one way to get it. What a shell does not give you is a persistent
 kernel: every call is a fresh process, so each exploratory pass re-reads the
 corpus from disk.
 

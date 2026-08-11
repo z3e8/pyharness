@@ -5,8 +5,8 @@ states the **perimeter** they add up to: who the adversary is, what the box
 actually confines on each platform, and every gap that is known and published —
 each with the decision that produced it.
 
-The gaps are here because a perimeter nobody has drawn the edge of is not a
-perimeter. Every one of them is reproduced as a scored attack in
+The gaps are included because the perimeter is not fully described without
+them. Every one of them is reproduced as a scored attack in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md), which `make test` fails on
 in **both** directions: a gap that quietly gets closed breaks the suite exactly
 like a defense that quietly breaks.
@@ -141,8 +141,8 @@ behind it — it is several (host scoping, sandbox wrapping, secret-sink
 mirroring), and each is implemented **per capability**. So every capability added
 is an opportunity to silently opt out of one.
 
-The 2026-07 security recon found four unrelated-looking bugs that were that one
-bug wearing four hats:
+The 2026-07 security recon found the same bug in four unrelated-looking
+places:
 
 - `allowed_hosts` was threaded through 3 of the capabilities and not the rest;
 - `packages.install` skipped the sandbox wrap `shell.bash` already had;
@@ -194,8 +194,8 @@ MCP server rather than the tool. In each case the human is shown one concrete
 thing and grants a slightly wider class of it. The alternative — a grant keyed on
 the exact request, the exact child, the exact tool — re-prompts on every URL of a
 normal multi-step task and on every tool of a twenty-tool server, and the
-reliable outcome of prompt fatigue is that humans approve everything. Precision
-on paper, lost in practice.
+reliable outcome of prompt fatigue is that humans approve everything, so the
+precision is lost in practice.
 
 What bounds it: a grant never widens policy, only short-circuits the prompt;
 IRREVERSIBLE actions are never covered and never mint; grants are exact-match
@@ -257,9 +257,8 @@ be done reliably and would put a prompt in front of ordinary work.
 The stated boundary for arbitrary data is therefore the **host scope**, not
 approval — the companion attack `scoped-data-exfil` shows the same exfiltration
 refused outright inside a confined session — plus the audit chain, which records
-every request whether or not anyone was asked. This is the single most important
-sentence for anyone deciding how to run a task: *if the data matters, scope the
-session.* The next gap is the fine print on that sentence.
+every request whether or not anyone was asked. The practical rule: if the data
+matters, scope the session. The next gap qualifies that rule.
 
 ### 5. A scope answers "which host", never "what is being sent"
 

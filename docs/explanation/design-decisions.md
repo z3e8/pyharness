@@ -4,8 +4,8 @@ The forks this project actually hit, the call I made at each, and the reasoning.
 Written down because the interesting part of a system like this is rarely the
 code — it is which of two defensible options got picked, and what that cost.
 
-Every decision here is one I would defend in a review. Several of them are
-decisions to *not* build something, and a few came out of being wrong first.
+Several of these are decisions to *not* build something, and a few came out of
+being wrong first.
 
 ---
 
@@ -69,9 +69,8 @@ rather than to ask nicely: the child has **no network syscall available**, so
 there is no bypass to find. The only path outward is IPC to the parent, which
 does the vetting.
 
-This is the first thing a security-literate reader asks about a design like this,
-and the answer needs to be a syscall filter, not a promise.
-`make docker-verify` runs eight probes from inside real agent code to show it.
+The boundary has to be a syscall filter, not a promise. `make docker-verify`
+runs eight probes from inside real agent code to show it.
 
 ## Publish the gaps, with a reason each, and fail in both directions
 
@@ -85,10 +84,9 @@ what is published — including a gap that starts getting *blocked*.
 
 **Why.** A gap with a stated reason reads as architecture. A gap without one
 reads as unfinished work. Publishing them is also the only way the number means
-anything: a suite that only shows wins is a marketing asset, and everybody knows
-it, so it persuades nobody worth persuading.
+anything: a suite that only reports wins is not evidence.
 
-The bidirectional gate is the part I would argue hardest for. A suite that
+The gate is bidirectional for a reason. A suite that
 quietly under-claims — a gap silently closed while the docs still call it open —
 stops being a source of truth just as surely as one that over-claims. Both
 failures are the same bug: the artifact and the system drifted apart.
@@ -118,8 +116,7 @@ The rebuild separates two questions that most injection evals average together:
   the payload was asking for.
 
 If a system's containment number moves when you swap the model, it was never
-measuring containment. This is the methodological point I would most want a
-reader to take away, and it generalises well past this repo.
+measuring containment.
 
 ## Six tasks over four axes, not ten tasks and a pass@1
 
@@ -132,9 +129,7 @@ authorized delivery. No single averaged number.
 **Why.** Competence, compliance and containment are different questions, and
 averaging them is exactly how the first run printed a green board having tested
 nothing. Four honest denominators beat one dishonest one, and the eleventh task
-adds a decimal place nobody will check. The scope cut was a downgrade in
-apparent rigor and an upgrade in real rigor, which is usually how that trade
-looks.
+adds a decimal place nobody will check.
 
 ## A no-broker baseline, because a number needs a denominator
 
@@ -144,8 +139,8 @@ without the harness.
 **The call.** The same six tasks run through a naive tool loop with no broker,
 same model, same pages, same attacker's listener.
 
-**Why.** "The harness refused four releases" is unfalsifiable applause without
-knowing what refusal-free looks like. With the control arm, the interesting
+**Why.** "The harness refused four releases" is unfalsifiable without knowing
+what happens with no harness at all. With the control arm, the interesting
 result is not the refusals: it is that **four of ten baseline runs hold the
 credential in cleartext in the model's context**, and not because the model
 misbehaved. With no vault there is nowhere else to put a secret the task
@@ -185,9 +180,8 @@ thousand of them. And if it does get popped, that becomes the most discoverable
 fact about the project, permanently.
 
 What ships instead is a container a stranger can run in five minutes with their
-own key, and ten real sessions baked into static pages. That is a worse demo and
-a much better decision, and I would rather be asked about this trade than about
-an incident.
+own key, and ten real sessions baked into static pages. That is a worse demo
+and a better decision.
 
 ## Windows stays unconfined, and fails closed
 

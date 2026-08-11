@@ -28,7 +28,7 @@ budget before its own completion, so a batch stops dispatching as soon as the
 limit is hit (workers already in flight can still land, so a slight overshoot
 of up to `max_concurrency` completions remains possible).
 
-## The limit stops spending once exceeded. It does not cap it
+## Overshoot past the limit
 
 **`limit_usd` is not a hard cap, and the overshoot is not always small.** The
 check runs *before* an action, using spend already recorded, so an action that

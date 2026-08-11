@@ -34,17 +34,15 @@ can also do anything, so what does it take to contain one? Everything from
   `browser.look`: it attaches a screenshot to the call's result as an image block
   the model sees (staged parent-side through a `MediaOutbox`, never across the
   child pipe) — pixels are the one thing text output can't carry.
-- **A familiar action space.** Models are extraordinarily fluent in Python.
-  Writing code is closer to how they were trained than filling bespoke tool
-  schemas.
+- **A familiar action space.** Models are fluent in Python. Writing code is
+  closer to how they were trained than filling bespoke tool schemas.
 
 These are claims, and one of them is measured rather than asserted: the
 [throughput suite](../how-to/run-the-throughput-suite.md) runs the same task
 through this harness, through a conventional `read_file`/`list_files` pair, and
 through a shell, over ~50MB of logs that no arm can read into its context. The
 board is [`evals/data/BOARD.md`](../../evals/data/BOARD.md). Read it before
-trusting the bullets above — a shell arm gets much of the same leverage, which
-is the honest shape of the argument.
+trusting the bullets above: a shell arm gets much of the same leverage.
 
 ## The kernel is persistent
 
@@ -85,8 +83,8 @@ Two payloads can't live in a string variable and take a different route
 (`broker/capabilities/payload.py`): a **binary** body (PDF, image, zip) and a
 **very large** text body both spill to a workspace file, and the capability
 returns a `path` + head `preview` instead of inline `text`. The agent then reads
-or parses the file with ordinary Python — which is the whole bet: the workspace
-is its filesystem, and a saved payload is just data on disk. An explicit
+or parses the file with ordinary Python: the workspace is its filesystem, and a
+saved payload is just data on disk. An explicit
 `save="path"` forces the same route. Injected secrets are masked *before* a body
 is written, so a spilled file is as safe as an inline read.
 
