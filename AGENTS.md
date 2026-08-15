@@ -29,6 +29,7 @@ make format    # ruff format + ruff check --fix (apply autofixes)
 make typecheck # mypy — lenient, non-blocking (see [tool.mypy] in pyproject.toml)
 make run       # interactive agent + live viewer :6061 (needs ANTHROPIC_API_KEY in .env)
 make watch     # live viewer alone (tails .sessions/) for a session started elsewhere
+make site      # re-bake the committed evidence site (evals/demo/site) — commit the diff
 make up        # optional Phoenix OTel backend (:6006); make down stops it
 ```
 
@@ -40,6 +41,14 @@ across Python 3.11/3.12/3.13 plus a `ruff` check, with `mypy` as a non-blocking
 signal. Because nothing runs automatically, the local checks are the real gate:
 run `make test` and `make lint` yourself. Do not wire coverage into the
 default `pytest` run — `pytest-cov` breaks the sandbox child's re-exec (6 tests).
+
+`pages.yml` is `workflow_dispatch`-only for the same reason, and this one bites:
+it publishes `evals/demo/site` to <https://z3e8.github.io/pyharness/>, so
+**committing a re-baked page does not update the live site.** A clean repo is
+not a clean site. After any change to the committed pages — a `make site`
+re-bake, a redaction, a fix — run `gh workflow run pages.yml` and then verify
+over HTTP (`curl https://z3e8.github.io/pyharness/<page>`), not just in git.
+Only `evals/demo/site` is published; `evals/data/site` is repo-only.
 
 To test-drive the harness itself (run a probe task, inspect what happened, fix,
 re-run) use the headless CLI — the `harness-loop` skill has the full loop:
