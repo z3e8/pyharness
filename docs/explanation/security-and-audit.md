@@ -587,11 +587,13 @@ boundary itself:
   work, and the child's working directory *is* the workspace), while three channels
   that would bypass the broker are denied: outbound **network**, filesystem
   **writes outside the workspace**, and **reads of the user's personal files** (a
-  read jail hides `$HOME`, re-allowing only the interpreter and pyharness's own
+  read jail hides every user home, mounted volumes, `/tmp`, and `/etc`
+  (`_read_deny_roots`), re-allowing only the interpreter and pyharness's own
   package source the child needs to import — the package's `sys.path` directory is
   listable so the import resolves, but its other files, a project `.env` or a prior
   session's data among them, stay unreadable). Anything the child execs inherits
-  the profile. **`shell.bash` runs under this same profile** — the command
+  the profile. See [the read boundary](#the-linux-backend--landlock-plus-seccomp)
+  note below on why macOS uses a denylist where Linux uses an allowlist. **`shell.bash` runs under this same profile** — the command
   executes in the (unsandboxed) parent, so it is wrapped in `sandbox-exec` with
   the identical Seatbelt profile (`sandboxed_shell_argv`) rather than trusted
   with the parent's OS reach; the generated profile lives outside the workspace,
@@ -604,8 +606,8 @@ boundary itself:
   or build hook is arbitrary code executing at install time, in the privileged
   parent, so it is wrapped for the same reason `bash` is. Its profile differs in
   exactly one way — **outbound network is allowed**, because pip has to reach the
-  index — while the `$HOME` read jail stays and writes are confined to the
-  session venv plus a dedicated scratch dir. Notably *not* the whole sandbox dir:
+  index — while the same read jail stays (user homes, volumes, `/tmp`, `/etc`)
+  and writes are confined to the session venv plus a dedicated scratch dir. Notably *not* the whole sandbox dir:
   the generated profiles live there, so a build hook able to write it could
   rewrite the jail confining the next child. pip is also given
   `PIP_NO_CACHE_DIR=1` and a `TMPDIR` inside the scratch dir, since its usual
@@ -658,6 +660,32 @@ a denylist and Landlock is an allowlist.** The macOS profile enumerates what is
 forbidden; the Linux one must enumerate everything the child legitimately reads,
 including the per-session venv (which lives outside the workspace). Omitting a
 path there does not weaken confinement — it breaks an import at runtime.
+
+That difference is not cosmetic, and the Linux allowlist is the **reference** for
+the read boundary. Landlock grants exactly the workspace, the interpreter, and the
+package tree, so everything else is unreadable by default. Seatbelt cannot match
+that: a `file-read-data` allowlist tight enough to be meaningful does not survive
+interpreter boot on macOS — firmlinks alias the same files under two paths, the
+dyld shared cache moves between OS builds and now lives inside signed Cryptexes,
+and Seatbelt has no usable trace tooling to discover what the loader actually
+touches, so every allowlist attempt SIGABRTs the interpreter before the first
+cell. So macOS keeps `allow default` for reads and approximates the allowlist with
+a **denylist** (`_read_deny_roots`) that hides all user homes (`/Users`, plus the
+operator's own `$HOME` in case it lives outside it), mounted volumes (`/Volumes`),
+the world-writable `/tmp`, and host config (`/etc`) — the same security goal as
+Landlock, reached the other way round.
+
+What stays readable under `allow default` is world-readable system libraries and
+pyharness's own source, and both are acceptable rather than overlooked. The child
+is a Python interpreter and must read its runtime to run at all; the pyharness
+source is a public repo with no secrecy assumption. Neither is a secret, and the
+child has no network to send them over — the read jail is defense-in-depth on top
+of that floor, not the only thing standing between the two. One root stays
+readable that is neither: **`/private/var/folders`**, the shared per-user temp,
+because it holds the dyld/CoreFoundation caches, the inherited `TMPDIR`, and the
+child's own sandbox dir, so denying it breaks boot. That is a stated residual;
+closing it safely needs a private child `TMPDIR` so the shared temp can be denied
+without starving the loader, which is deferred.
 
 ### What the sandbox does not cover — other platforms
 

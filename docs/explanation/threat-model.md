@@ -54,7 +54,7 @@ Confinement is built for two platforms, and claimed for exactly those two.
 |---|---|---|---|
 | open an outbound socket | no | no (seccomp on `AF_INET`/`AF_INET6`/`AF_PACKET`) | **yes** |
 | write outside its workspace | no | no (Landlock) | **yes** |
-| read `$HOME` | no | no (Landlock) | **yes** |
+| read the user's files (`$HOME`, other homes, `/Volumes`, `/tmp`, `/etc`) | no | no (Landlock) | **yes** |
 | read the parent's `/proc/<pid>/environ` — where your API key and vault passphrase live | n/a (no `/proc`) | no (Landlock hooks `ptrace_access_check`, which also denies `PTRACE_ATTACH`) | **yes**, on Linux below the floor |
 | exhaust resources | core dumps off | core dumps off, process cap | Linux: same rlimits · Windows: **none** |
 | **start at all, by default** | yes | yes | **no — refuses** |
@@ -66,6 +66,23 @@ kernel reports *no sandbox* rather than a jail with a hole. Both backends are
 applied by the process to itself — no helper binary, no user namespaces, no root
 — and both are irrevocable and inherited across `exec`, so they hold inside an
 ordinary container and cover any subprocess the agent spawns.
+
+The "read the user's files" row is the one where the two backends reach the same
+result by opposite means, and the **Linux allowlist is the reference.** Landlock
+grants exactly the workspace, the interpreter, and the package tree and denies
+everything else. macOS cannot express that: a `file-read-data` allowlist tight
+enough to matter does not survive interpreter boot (firmlinks aliasing files under
+two paths, a dyld shared cache that moves between OS builds and now lives inside
+signed Cryptexes, and no usable Seatbelt trace tooling to discover what the loader
+reads — every attempt SIGABRTs the interpreter). So Seatbelt keeps `allow default`
+for reads and approximates the allowlist with a **denylist** that hides all user
+homes, mounted volumes, `/tmp`, and `/etc` — the same goal, reached the other way.
+What stays readable under `allow default` is acceptable rather than overlooked:
+world-readable system libraries (the child is a Python interpreter and must read
+its runtime) and pyharness's own source (a public repo, no secrecy assumption).
+Neither is a secret, and the child has no network to send them over — the read
+jail is defense-in-depth on that floor, not the only thing holding. One residual
+is stated below.
 
 **Windows is unconfined by design, and fails closed.** No backend is written for
 it, and the honest response to that is to refuse to run rather than to claim a
@@ -412,6 +429,15 @@ floor directly.
   interceptor instead), and any session **behind an HTTP(S) proxy**, where the
   socket goes to the proxy rather than to the vetted address. Both keep the
   original resolve-then-connect race.
+- **The macOS read jail still exposes `/private/var/folders`.** The broadened
+  denylist hides all user homes, mounted volumes, `/tmp`, and `/etc`, but the
+  shared per-user temp stays readable because it holds the dyld/CoreFoundation
+  caches, the inherited `TMPDIR`, and the child's own sandbox dir — denying it
+  breaks boot. Its exposure is bounded: another session's scratch there is not a
+  credential store, and Linux (the reference) denies it outright via the Landlock
+  allowlist. Closing it on macOS safely needs a **private child `TMPDIR`** so the
+  shared temp can be denied without starving the loader; that is a deferred
+  follow-up.
 - **Anything reached by compromising the parent**, per the adversary model above.
 - **`sessionStorage`-based logins** are not captured by a saved site profile, and
   profile auto-refresh persists every cookie the context accrued — so keep a

@@ -162,10 +162,11 @@ def _sys_path_entry() -> Path:
 
 
 def _read_allow_roots(workspace: Path) -> list[str]:
-    """Subtrees the child reads in full from inside the $HOME jail: its workspace,
+    """Subtrees the child reads in full from inside the read jail: its workspace,
     the interpreter (the venv and the managed CPython), and our own package source.
-    Anything outside $HOME (system libraries, the temp sandbox dir) stays readable
-    via `allow default`, so only these HOME-resident paths need re-allowing."""
+    These come *after* the denies below and, being the last matching rule, win — so
+    the child's own roots stay readable even when they live under a denied prefix (a
+    home-resident managed CPython, or a workspace/venv on `/Volumes`)."""
     roots = {
         workspace.resolve(),
         Path(sys.prefix).resolve(),
@@ -175,10 +176,36 @@ def _read_allow_roots(workspace: Path) -> list[str]:
     return sorted(str(p) for p in roots)
 
 
+def _read_deny_roots() -> list[str]:
+    """Subtrees whose *contents* the read jail hides from the child. `allow default`
+    leaves the whole filesystem readable, so the jail is a denylist (macOS Seatbelt
+    cannot express a `file-read-data` allowlist that survives interpreter boot — see
+    docs/explanation/threat-model.md); the interpreter/workspace/package re-allows
+    override these for the child's own roots (last match wins). Denied: every user
+    home (`/Users`, plus the operator's own `Path.home()` in case it sits outside
+    `/Users`, e.g. `/var/root`), mounted volumes (`/Volumes`), the world-writable
+    `/tmp` (`/private/tmp`), and host config (`/private/etc`).
+
+    `/private/var/folders` is deliberately *not* denied: it holds the dyld/
+    CoreFoundation caches, the inherited `TMPDIR`, and the child's own sandbox dir,
+    so denying it breaks boot. Closing it safely needs a private child `TMPDIR`
+    (a deferred follow-up); it stays a stated residual meanwhile (see the read
+    boundary note in docs/explanation/security-and-audit.md)."""
+    roots = {
+        "/Users",
+        str(Path.home()),
+        "/Volumes",
+        "/private/tmp",
+        "/private/etc",
+    }
+    return sorted(roots)
+
+
 def _seatbelt_profile(workspace: Path | None) -> str:
     """Build the Seatbelt profile. Two invariants always hold: no outbound network,
     and no filesystem write outside the workspace. When a workspace is known, the
-    child also gets ergonomic in-workspace writes and a read jail over $HOME."""
+    child also gets ergonomic in-workspace writes and a read jail over the user's
+    files and other sensitive roots (`_read_deny_roots`)."""
     lines = [
         "(version 1)",
         "(allow default)",
@@ -201,14 +228,16 @@ def _seatbelt_profile(workspace: Path | None) -> str:
         # libraries that persist files (savefig, to_csv, ...) work unchanged. Every
         # other write stays denied by the rule above.
         lines.append(f"(allow file-write* (subpath {_sbpl_quote(str(ws))}))")
-        # Read jail: deny the *contents* of the user's personal files ($HOME), then
-        # re-allow only what the interpreter needs to run and import. We deny
-        # `file-read-data`, not `file-read*`: the latter also covers read-metadata,
-        # which the loader needs to exec the interpreter, so denying it wholesale
-        # breaks process startup (EPERM). Denying data alone hides file contents
-        # while leaving stat/exec intact. Last matching rule wins, so the narrower
-        # allows below override the $HOME deny.
-        lines.append(f"(deny file-read-data (subpath {_sbpl_quote(str(Path.home()))}))")
+        # Read jail: deny the *contents* of the user's personal files and other
+        # sensitive roots (all user homes, mounted volumes, /tmp, /etc — see
+        # `_read_deny_roots`), then re-allow only what the interpreter needs to run
+        # and import. We deny `file-read-data`, not `file-read*`: the latter also
+        # covers read-metadata, which the loader needs to exec the interpreter, so
+        # denying it wholesale breaks process startup (EPERM). Denying data alone
+        # hides file contents while leaving stat/exec intact. Last matching rule
+        # wins, so the narrower allows below override these denies.
+        for deny in _read_deny_roots():
+            lines.append(f"(deny file-read-data (subpath {_sbpl_quote(deny)}))")
         lines.append("(allow file-read-data")
         for root in _read_allow_roots(ws):
             lines.append(f"  (subpath {_sbpl_quote(root)})")
@@ -227,8 +256,9 @@ def _install_profile(write_roots: list[Path]) -> str:
     one way it has to: **outbound network is allowed**, because pip must reach
     the index. Everything else is the point of wrapping it at all — a package's
     `setup.py` or build hook is arbitrary code running at install time, and here
-    it cannot read `$HOME` (`~/.ssh`, `~/.aws`, a project `.env`) or write
-    anywhere except the roots below.
+    it cannot read any user home (`~/.ssh`, `~/.aws`, a project `.env`), a mounted
+    volume, `/tmp`, or `/etc` (`_read_deny_roots`) or write anywhere except the
+    roots below.
 
     `write_roots` are the venv and a dedicated scratch dir, deliberately *not*
     the whole sandbox dir or the whole tempdir: the generated Seatbelt profiles
@@ -248,7 +278,8 @@ def _install_profile(write_roots: list[Path]) -> str:
         lines.append(
             f"(allow file-write* (subpath {_sbpl_quote(str(root.resolve()))}))"
         )
-    lines.append(f"(deny file-read-data (subpath {_sbpl_quote(str(Path.home()))}))")
+    for deny in _read_deny_roots():
+        lines.append(f"(deny file-read-data (subpath {_sbpl_quote(deny)}))")
     lines.append("(allow file-read-data")
     roots = {str(r.resolve()) for r in write_roots}
     roots |= {

@@ -336,6 +336,70 @@ def test_sandbox_read_jail_allows_package_but_not_repo_neighbours(
 
 
 @requires_sandbox
+def test_sandbox_read_jail_still_boots_under_broadened_denylist(
+    kernel_factory, tmp_path
+):
+    # Usability half of the broadened read denylist: denying every user home,
+    # /Volumes, /tmp, and /etc must NOT break boot. The child still imports the
+    # heavy stdlib set (each module reads its own extension/data from the
+    # interpreter tree, re-allowed under the denies) and round-trips a real
+    # tempfile in its write-allowed workspace. This is the over-deny regression
+    # `make test` exists to catch — a profile that SIGABRTs the interpreter shows
+    # up here, not as a dead session with no output.
+    ws = Workspace(tmp_path)
+    kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+    out = kernel.run(
+        "import ssl, hashlib, ctypes, socket, json, sqlite3, zoneinfo\n"
+        "import subprocess, base64, re, urllib.request, tempfile, csv, os\n"
+        "fd, p = tempfile.mkstemp(dir=os.getcwd())\n"
+        "os.write(fd, b'roundtrip'); os.close(fd)\n"
+        "print(open(p).read())\n"
+    )
+    assert out == "roundtrip"
+
+
+@requires_sandbox
+def test_sandbox_read_jail_hides_all_user_homes_tmp_and_etc(kernel_factory, tmp_path):
+    # Denial half: beyond $HOME the jail now hides every user home (/Users/...),
+    # the world-writable /tmp, and host config under /etc — roots the child was
+    # never handed. A denied subpath fails with EPERM *before* the file's
+    # existence is checked, so a path under a nonexistent other-user home proves
+    # the deny without any file to plant there. /etc/passwd and the /tmp probe do
+    # exist, so their denial is a read that would otherwise succeed. The repo's
+    # own .env (under the developer's home, or /private/tmp on a /tmp checkout)
+    # is denied too, whether or not it exists on this machine.
+    import pyharness
+
+    repo_dotenv = Path(pyharness.__file__).resolve().parent.parent / ".env"
+    tmp_probe = Path("/private/tmp/pyharness_readjail_tmp_probe")
+    tmp_probe.write_text("secret")
+    try:
+        # Workspace under pytest's tmp dir (/private/var/folders), a sibling of
+        # neither /Users nor /private/tmp, so no re-allow re-exposes a probe.
+        ws = Workspace(tmp_path / "ws")
+        kernel = kernel_factory(_broker(tmp_path), workspace=ws)
+        out = kernel.run(
+            "def readable(p):\n"
+            "    try:\n"
+            "        open(p).read(); return True\n"
+            "    except OSError:\n"
+            "        return False\n"
+            "print('etc', readable('/etc/passwd'))\n"
+            f"print('tmp', readable({str(tmp_probe)!r}))\n"
+            "print('otheruser', readable('/Users/pyharness_absent_user/.ssh/id_rsa'))\n"
+            f"print('dotenv', readable({str(repo_dotenv)!r}))\n"
+        )
+    finally:
+        tmp_probe.unlink(missing_ok=True)
+    assert out.splitlines() == [
+        "etc False",
+        "tmp False",
+        "otheruser False",
+        "dotenv False",
+    ]
+
+
+@requires_sandbox
 @pytest.mark.parametrize("where", ["home", "temp"])
 def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where, monkeypatch):
     # The child reaches around the broker and writes straight to disk. The OS
