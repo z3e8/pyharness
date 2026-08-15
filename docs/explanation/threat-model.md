@@ -383,7 +383,19 @@ floor directly.
   environment, so it reaches no network, writes nothing outside the workspace,
   and reads nothing under `$HOME` (asserted by
   `test_sandbox_is_inherited_by_a_subprocess_agent_code_spawns` and
-  `test_no_escape_by_exec`). *Not audited:* the chain records what crosses the
+  `test_no_escape_by_exec`). One caveat on that last clause: reads mediated by a
+  macOS system daemon over Mach IPC are a *distinct* boundary from the `$HOME`
+  file jail, because the daemon opens the file, not the child. `security
+  dump-keychain` used this to return keychain *metadata* — the service and
+  account names of every stored credential, though not their values, which need
+  a separate GUI-gated unlock — since `securityd` read `~/Library/Keychains`
+  on the far side of the jail. That specific channel is now closed: the profile
+  denies `mach-lookup` to `com.apple.SecurityServer`
+  (`test_bash_keychain_metadata_denied_over_ipc`). This is a named deny, not a
+  general one — Mach IPC is a broad surface and the profile does not deny
+  `mach-lookup` wholesale (doing so breaks child boot), so a not-yet-found
+  daemon that leaks the same class of data would be a gap until denied by name.
+  *Not audited:* the chain records what crosses the
   perimeter, not what happens inside the box — and no other option exists, since
   any interception placed in the child is advisory against code that owns that
   process. `bash` is gated for a different reason: it runs parent-side, where

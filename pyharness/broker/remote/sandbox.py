@@ -158,6 +158,15 @@ def _seatbelt_profile(workspace: Path | None) -> str:
         "(deny network*)",
         "(deny file-write*)",
         '(allow file-write-data (literal "/dev/null") (regex #"^/dev/tty"))',
+        # IPC boundary, distinct from the $HOME file jail below. The `security`
+        # tool (and its ctypes-reachable equivalent) reads the keychain by
+        # asking the `securityd` daemon over Mach IPC, not by opening
+        # ~/Library/Keychains/, so the file jail never sees the read. Denying
+        # mach-lookup to SecurityServer closes that channel — dump-keychain and
+        # the find-*-password lookups all route through it. Kept narrow on
+        # purpose: a blanket mach-lookup deny would break the long tail of Mach
+        # services CoreFoundation touches at import time.
+        '(deny mach-lookup (global-name "com.apple.SecurityServer"))',
     ]
     if workspace is not None:
         ws = workspace.resolve()
@@ -203,6 +212,10 @@ def _install_profile(write_roots: list[Path]) -> str:
         "(allow default)",
         "(deny file-write*)",
         '(allow file-write-data (literal "/dev/null") (regex #"^/dev/tty"))',
+        # Same IPC boundary as the child profile: a build hook that runs
+        # `security dump-keychain` would otherwise read keychain metadata over
+        # Mach IPC, on the far side of the $HOME file jail. See _seatbelt_profile.
+        '(deny mach-lookup (global-name "com.apple.SecurityServer"))',
     ]
     for root in write_roots:
         lines.append(

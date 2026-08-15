@@ -82,6 +82,22 @@ def test_bash_read_jail_denies_home_files(tmp_path):
         probe.unlink(missing_ok=True)
 
 
+@requires_sandbox
+def test_bash_keychain_metadata_denied_over_ipc(tmp_path):
+    # The $HOME read jail hides ~/Library/Keychains, but `security dump-keychain`
+    # reads it by asking securityd over Mach IPC, not by opening the file — a
+    # boundary the file jail never sees. The profile denies mach-lookup to
+    # SecurityServer so the metadata (service + account names of every stored
+    # credential) stays inside the box. Real exec through the actual profile.
+    out = ShellCapability(Workspace(tmp_path)).bash(
+        "security dump-keychain 2>/dev/null; echo rc=$?"
+    )
+    # Denied: securityd never answers, so no metadata reaches stdout and the
+    # tool exits non-zero. Unsandboxed this dumps ~100KB starting "keychain:".
+    assert "keychain:" not in out
+    assert out.strip() == "rc=1"
+
+
 def test_bash_falls_back_to_plain_run_without_os_sandbox(tmp_path, monkeypatch):
     # Where the platform has no OS sandbox, sandboxed_shell_argv returns None
     # and bash runs as before — env scrubbing the only containment. This state
