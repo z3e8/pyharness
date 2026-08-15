@@ -80,6 +80,18 @@ _CLOCK_PATTERN = re.compile(
 # because it shares no shape with the ISO form above.
 _HTTP_DATE_PATTERN = re.compile(r"(\w{3}, \d{1,2} \w{3} \d{4}) \d{2}:\d{2}:\d{2} GMT")
 
+# A session directory is named `<prefix>-YYYYMMDD-HHMMSS`, so the id itself is a
+# wall clock — the one that reached the published GIF recordings, where the page
+# header names the session. The date half is which run this is and stays; the
+# time half goes, exactly like the clock pattern above. Applied to display
+# surfaces (titles, the switcher's labels) as well as trace text; filenames and
+# hrefs keep the full id, because a link has to match the file it points at.
+_SESSION_TIME_PATTERN = re.compile(r"\b([A-Za-z][\w-]*-\d{8})-\d{6}\b")
+
+
+def _scrub_name(name: str) -> str:
+    return _SESSION_TIME_PATTERN.sub(r"\1", name)
+
 
 @lru_cache(maxsize=8)
 def _user_pattern(login: str) -> re.Pattern[str] | None:
@@ -125,6 +137,7 @@ def _redact(text: str, mapping: dict[str, str]) -> str:
     text = _TMP_PATTERN.sub("<tmp>", text)
     text = _CLOCK_PATTERN.sub(r"\1", text)
     text = _HTTP_DATE_PATTERN.sub(r"\1 GMT", text)
+    text = _SESSION_TIME_PATTERN.sub(r"\1", text)
     pattern = _user_pattern(Path.home().name)
     return pattern.sub("<user>", text) if pattern else text
 
@@ -256,9 +269,9 @@ def build_page(
             ended,
             siblings=siblings,
             nav=nav,
-            current=session_dir.name,
+            current=_scrub_name(session_dir.name),
         ),
-        title=title or f"pyharness — {session_dir.name}",
+        title=title or f"pyharness — {_scrub_name(session_dir.name)}",
     )
 
 
@@ -273,7 +286,7 @@ def _sidebar(digests: list[dict]) -> list[dict]:
     `audit`/`workspace` paths — this list is copied into all of them."""
     return [
         {
-            "name": d["name"],
+            "name": _scrub_name(d["name"]),
             "href": f"{d['name']}.html",
             "outcome": d["outcome"],
             "steps": d["steps"],
@@ -311,7 +324,8 @@ def build_index(
         )
         cards.append(
             f'<a class="card" href="{escape(d["name"])}.html">'
-            f'<span class="name"><i class="dot {cls}"></i>{escape(d["name"])}</span>'
+            f'<span class="name"><i class="dot {cls}"></i>'
+            f"{escape(_scrub_name(d['name']))}</span>"
             f'<span class="nums">{_fmt_usd(d["cost_usd"])}</span>'
             f'<span class="blurb">{escape((d.get("task") or "")[:220])}</span>'
             f'<span class="tail">{refused}'

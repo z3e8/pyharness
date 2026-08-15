@@ -302,6 +302,34 @@ def test_the_archived_stamp_carries_no_clock(tmp_path):
     assert not re.search(r"archived · \d{4}-\d{2}-\d{2} \d{2}:\d{2}", html)
 
 
+def test_a_session_id_loses_its_time_but_keeps_its_link(tmp_path):
+    """A session directory is named `<prefix>-YYYYMMDD-HHMMSS`, so the id is
+    itself a wall clock, and it reaches a page three ways: the title, the
+    switcher, and trace text quoting sibling sessions. All three drop the time
+    and keep the date; the href keeps the full id, because the link has to
+    match the file the site wrote."""
+    d = _session(tmp_path, name="cli-20310304-133700")
+    _write(
+        d / "trace.jsonl",
+        {"ts": 1003.0, "kind": "output", "text": "recent: cli-20310304-091522 ok"},
+    )
+    out = tmp_path / "site"
+    build_site([d], out)
+    html = (out / "cli-20310304-133700.html").read_text(encoding="utf-8")
+    index = (out / "index.html").read_text(encoding="utf-8")
+    assert "pyharness — cli-20310304<" in html
+    assert 'currentSession = "cli-20310304"' in html
+    assert any(
+        "recent: cli-20310304 ok" in e.get("text", "") for e in _baked_events(html)
+    )
+    for page in (html, index):
+        assert (
+            '"cli-20310304-133700.html"' in page or "cli-20310304-133700.html" in page
+        )
+    assert "133700" not in html.replace("cli-20310304-133700.html", "")
+    assert "091522" not in html
+
+
 def test_doc_pages_are_scrubbed_like_session_pages(tmp_path, monkeypatch):
     """`--doc` takes arbitrary markdown, and the throughput site points it at a
     control arm's transcript read straight out of gitignored `.sessions/`. That
@@ -375,6 +403,7 @@ def test_committed_pages_carry_no_host_identifiers():
 _CLOCK_PATTERNS = {
     "a dated wall clock": re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"),
     "an HTTP Date header": re.compile(r"\w{3}, \d{1,2} \w{3} \d{4} \d{2}:\d{2}:\d{2}"),
+    "a session id carrying a clock": re.compile(r"[A-Za-z][\w-]*-\d{8}-\d{6}"),
 }
 
 
