@@ -145,8 +145,9 @@ construction — a child's capability set never includes `spawn` — and the
 `spawn` call itself always needs human approval: approving it is approving
 the child's whole plan (task, capability set, host scope, budget slice).
 
-Everything a cell does still routes through [the broker](broker.md), so this
-freedom is bounded by policy, audit, and budget.
+Every capability a cell calls still routes through [the broker](broker.md), so
+this freedom is bounded by policy, audit, and budget; the code between those
+calls is bounded by the OS sandbox.
 
 ## The per-session venv
 

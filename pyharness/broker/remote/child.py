@@ -26,7 +26,7 @@ def child_main(
 
     The child is the agent's userland: it holds the persistent namespace and a
     proxy for each capability, but no broker, vault, LLM client, or capability
-    code. Every side effect is a proxy call that crosses the pipe to the parent;
+    code. Every capability call is a proxy call that crosses the pipe to the parent;
     pure computation (loops, data wrangling, the agent's own variables) stays
     here, unseen by the orchestrator."""
     # First, before any agent code can run: shrink the environment the child

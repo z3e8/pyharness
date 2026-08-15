@@ -69,7 +69,7 @@ Approver = Callable[["ApprovalRequest"], "ApprovalOutcome | bool"]
 
 
 class Broker:
-    """The single chokepoint every side effect flows through.
+    """The single chokepoint every capability call flows through.
 
     For each call, in order: policy check -> validate -> audit -> budget (for
     metered actions) -> execute. `validate` is the capability's optional

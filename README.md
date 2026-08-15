@@ -6,12 +6,12 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Arbitrary code, every action brokered.**
+**Arbitrary code, brokered at the boundary.**
 
 A [CodeAct](docs/explanation/action-space.md) agent with a containment and audit
-layer. Every side effect routes through one broker (policy → audit → budget →
-execute), and agent code runs in an OS sandbox with no network syscall available
-to it.
+layer. Agent code runs in an OS sandbox with no network syscall available to it,
+and every action that crosses that boundary routes through one broker (policy →
+audit → budget → execute).
 
 ![An operator instructing the agent to read an SSH private key, the read refused at the workspace boundary, and a follow-up attempt to exfiltrate over curl blocked at the network layer](docs/assets/rejection.gif)
 
@@ -50,7 +50,7 @@ the [builtins reference](docs/reference/builtins.md).
 
 ## Security model
 
-- **One broker for every side effect.** Files, shell, web, LLM calls, sub-agents
+- **One broker for every capability.** Files, shell, web, LLM calls, sub-agents
   and tools all route through a single dispatch: policy check, hash-chained
   audit entry, budget check, then execution. Centralised from the start — see
   [design decisions](docs/explanation/design-decisions.md).

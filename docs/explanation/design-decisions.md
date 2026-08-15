@@ -32,7 +32,7 @@ that bill coming due. See [The `run_python` action space](action-space.md).
 ## One dispatch chokepoint, decided at the start
 
 **The fork.** Let each capability do its own I/O and add policy where it turns
-out to be needed, or route every side effect through one function.
+out to be needed, or route every capability through one function.
 
 **The call.** Everything goes through `broker/dispatch.py`, which does
 policy → validate → audit → budget → execute in that order. A capability that

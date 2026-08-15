@@ -1,6 +1,6 @@
 # The broker
 
-## One chokepoint for every side effect
+## One chokepoint for every capability
 
 The agent writes arbitrary Python, but it cannot touch the outside world
 directly. Files, shell, web, LLM calls, sub-agents, tools, secrets, and package
@@ -108,5 +108,5 @@ Landlock+seccomp, plus POSIX rlimits) — see
 [Security & audit](security-and-audit.md). The point of the boundary: the child
 has no outbound network access and can't write outside its workspace (writes
 *inside* the workspace are allowed, so `savefig`/`to_csv`-style libraries just
-work), because every side effect that leaves the workspace goes back through
+work), because reaching past those walls is only possible through
 the broker in the parent.

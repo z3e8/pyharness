@@ -70,7 +70,7 @@ load-bearing seams are.
 | Path | What lives here |
 |------|-----------------|
 | `pyharness/core/` | `session.py`, `agent.py`, `kernel.py`, `workspace.py`, `media.py` (image blocks back to the model), `session_venv.py` (per-session venv, out-of-process only) — the orchestration loop and persistent kernel |
-| `pyharness/broker/` | `dispatch.py` — the single choke point every side effect routes through (policy → audit → budget → execute); `capabilities/` — 16 registered capabilities (browser, files, history, http, inbox, llm, notify, obs, packages, search, secrets, shell, skills, spawn, tools, web) plus three helper modules that register nothing (`exa`, `page`, `payload`); enumerate them from the live broker rather than this list — `tests/test_capability_policies.py` does; `remote/` — the out-of-process child (`child.py`, `host.py`, `protocol.py`, `sandbox.py`) |
+| `pyharness/broker/` | `dispatch.py` — the single choke point every capability call routes through (policy → audit → budget → execute); `capabilities/` — 16 registered capabilities (browser, files, history, http, inbox, llm, notify, obs, packages, search, secrets, shell, skills, spawn, tools, web) plus three helper modules that register nothing (`exa`, `page`, `payload`); enumerate them from the live broker rather than this list — `tests/test_capability_policies.py` does; `remote/` — the out-of-process child (`child.py`, `host.py`, `protocol.py`, `sandbox.py`) |
 | `pyharness/security/` | `policy.py`, `grants.py` (scoped approval grants), `vault.py`, `profiles.py` (encrypted browser login profiles), `totp.py` (RFC 6238 codes from vault seeds), `sink.py` (per-context secret masking) — action policy + the encrypted secrets vault |
 | `pyharness/tools/` | `registry.py`, `skills.py` — tool discovery (`search_tools`/`use_tool`) and saved skills; `mcp/` — MCP server client/config/transport |
 | `pyharness/llm/` | `client.py` — Anthropic client wrapper |
@@ -87,8 +87,8 @@ load-bearing seams are.
 ## Conventions
 
 - Python ≥ 3.11. Match surrounding style; keep changes surgical.
-- Every side effect the agent takes goes through `broker/dispatch.py` — add new
-  capabilities there, not by scattering I/O across modules.
+- Every capability the agent can call goes through `broker/dispatch.py` — add
+  new ones there, not by scattering I/O across modules.
 - The audit log is a tamper-evident hash chain; verify with
   `make verify-audit DIR=.sessions/<name>`.
 - A change that alters behavior, a builtin, a flag, or a config var updates the

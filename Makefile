@@ -65,7 +65,7 @@ SITE_RUN ?= .sessions/demo-20260730-225820/invoice-exfiltration
 site:
 	uv run pyharness-watch $(SITE_RUN) --static evals/demo/site \
 		--title "A CodeAct agent with a containment and audit layer" \
-		--lede "Every side effect routes through one broker that can refuse it. These are real runs: the same instruction contained in one destination and delivered in another." \
+		--lede "Every action that crosses the sandbox boundary routes through one broker that can refuse it. These are real runs: the same instruction contained in one destination and delivered in another." \
 		--doc "Adversarial suite=evals/SCOREBOARD.md" \
 		--doc "Demo vs baseline=evals/demo/COMPARISON.md" \
 		--doc "Skill cost curve=evals/skills/CURVE.md" \
