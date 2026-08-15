@@ -291,6 +291,15 @@ were changed after *a* paid run, and both are disclosed here:
   (the scrapped set's and the published set's), one bundled code and one saved
   prose only — though the prose-only author had never seen the full procedure
   work, since the scrapped set's terminal page was unreadable.
+- **The suite only sees the low end of the curve.** Both arms run 5-18 step
+  tasks costing $0.013-$0.043, and the reuse path pays a fixed overhead on
+  every run (`search_tools` → `describe_tool`/`use_tool` → `record_skill_use`)
+  that is a large fraction of a task that size and would be noise on a task
+  ten times longer. So the regime where a skill has the most to remove —
+  long-horizon work where run 1 spends most of its budget on dead ends and
+  guess-and-check before any of it is *doing* — is exactly the regime neither
+  arm enters. The conclusions above stand as stated, but they are conclusions
+  about short tasks; nothing here bounds what a skill saves on long ones.
 
 ## The boards
 
