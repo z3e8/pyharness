@@ -124,10 +124,15 @@ def _broker(tmp_path, policy=None, *, with_agents=False):
 
 
 @pytest.fixture
-def kernel_factory():
+def kernel_factory(tmp_path):
     kernels = []
 
     def make(broker, **kwargs):
+        # Default to the production shape: a sandboxed kernel is scoped to a
+        # workspace (matching the one `_broker` builds for its FilesCapability),
+        # so the suite exercises the read jail rather than the no-workspace form
+        # a sandboxed kernel now refuses to build. Tests may override.
+        kwargs.setdefault("workspace", Workspace(tmp_path))
         k = RemoteKernel(broker, **kwargs)
         kernels.append(k)
         return k
@@ -340,8 +345,9 @@ def test_sandbox_denies_filesystem_writes(kernel_factory, tmp_path, where, monke
     # deliberately rather than waved through as "just scratch".
     #
     # $HOME is redirected to a throwaway tmp dir so the "home" probe never lands in
-    # the real home dir on a crash. There is no workspace here, so the profile
-    # denies every write regardless of where the target sits.
+    # the real home dir on a crash. Both probes target paths *outside* the kernel's
+    # workspace (fake $HOME, and tmp_path itself, not tmp_path/workspace), so the
+    # profile denies them even though in-workspace writes are allowed.
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
@@ -586,7 +592,7 @@ def test_close_kills_and_reaps_child_wedged_mid_cell(tmp_path, monkeypatch):
     # Self-limiting — the child exits when its 60s sleep ends and stale
     # pyharness-sb-* dirs are cleared by _reap_stale_sandbox_dirs() on the next
     # start — but it is why a killed run can leave a process around for a minute.
-    kernel = RemoteKernel(_broker(tmp_path))
+    kernel = RemoteKernel(_broker(tmp_path), workspace=Workspace(tmp_path))
     kernel.run("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN)")
     proc = kernel._proc
     # The child must be *known* to be executing the cell before close() runs.

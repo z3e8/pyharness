@@ -19,7 +19,11 @@ from ...tools.skills import SKILL_DIR_ATTR, skill_load_order, skill_sources
 from .child import child_main
 from .linux_sandbox import linux_sandbox_supported
 from .protocol import RemoteError, RemoteSkillSpec, RemoteToolSpec, recv_json
-from .sandbox import check_unsandboxed_platform, make_child_executable
+from .sandbox import (
+    check_sandbox_has_workspace,
+    check_unsandboxed_platform,
+    make_child_executable,
+)
 
 # Serializes the set_executable -> Process.start critical section across every
 # RemoteKernel in the process (see _start_locked).
@@ -142,6 +146,11 @@ class RemoteKernel:
             # would execute unconfined, so refuse unless the user set the
             # explicit PYHARNESS_ALLOW_UNSANDBOXED opt-in (see sandbox.py).
             check_unsandboxed_platform()
+            # And where a real sandbox *will* apply, it must have a workspace to
+            # scope the write allowance and $HOME read jail to — otherwise the
+            # macOS profile silently ships without the read jail. Same loud-at-
+            # construction shape as the gate above (see sandbox.py).
+            check_sandbox_has_workspace(workspace)
         self._venv = venv
         self._workspace = workspace
         self._ctx = mp.get_context("spawn")

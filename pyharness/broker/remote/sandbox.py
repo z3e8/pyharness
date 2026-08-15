@@ -64,6 +64,33 @@ class UnsandboxedPlatformError(RuntimeError):
 _UNSANDBOXED_WARNED = False
 
 
+class SandboxWithoutWorkspaceError(RuntimeError):
+    """A sandboxed kernel was constructed without a workspace to scope its jail
+    to. The workspace defines both the in-workspace write allowance and the
+    $HOME read jail; on macOS, omitting it silently drops the read jail (so
+    `~/.ssh`, a repo `.env`, shell history become readable) while leaving the
+    network and write-outside-workspace denials intact — the one *silent*
+    sandbox degradation. Refused at construction rather than degraded."""
+
+
+def check_sandbox_has_workspace(workspace: object | None) -> None:
+    """The loud gate for the read jail's scope. When a real OS sandbox will
+    confine the child (this platform supports one), it must have a workspace to
+    scope the write allowance and $HOME read jail to; without one the macOS
+    profile silently ships without the read jail. Refuse instead, so the safe
+    shape is the only one a sandboxed kernel can be built in — as loud as the
+    platform gate above. A no-op where no OS sandbox applies (the unsandboxed
+    opt-in path has no jail to scope, so it needs no workspace)."""
+    if os_sandbox_supported() and workspace is None:
+        raise SandboxWithoutWorkspaceError(
+            "a sandboxed kernel needs a workspace to scope its jail to: the "
+            "workspace bounds in-workspace writes and the $HOME read jail. "
+            "Refusing to start a sandbox with no workspace, which on macOS "
+            "would silently run without the read jail. Pass workspace=, or set "
+            "sandbox=False to run deliberately unconfined."
+        )
+
+
 def check_unsandboxed_platform() -> None:
     """The loud opt-in gate for platforms with no OS sandbox (today: Windows, and
     Linux below the Landlock floor). There, agent code would run with the full

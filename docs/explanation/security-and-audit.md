@@ -673,7 +673,13 @@ That absence is loud, not silent. On a platform with no OS sandbox, pyharness
 constructs its out-of-process kernel — before any agent code or LLM spend).
 Running anyway requires the explicit `PYHARNESS_ALLOW_UNSANDBOXED=true` opt-in,
 which prints a one-time stderr warning that agent code is unconfined. On macOS
-the gate is a no-op and the variable is ignored — the sandbox is always on.
+the gate is a no-op and the variable is ignored — the sandbox is always on. A
+second construction-time gate keeps the read jail from degrading silently: where
+a real sandbox *will* apply, the kernel refuses to start without a workspace to
+scope the write allowance and `$HOME` read jail to
+(`check_sandbox_has_workspace`), because a sandbox with no workspace would ship
+on macOS without the read jail while keeping the other two invariants — the one
+degradation that would otherwise be silent.
 `shell.bash` composes with this: its no-sandbox fallback (env scrubbing only,
 still approval-gated per command) is only reachable behind the same opt-in,
 because without it the session never starts.

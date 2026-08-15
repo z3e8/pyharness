@@ -13,6 +13,7 @@ from pyharness.broker.remote import sandbox
 from pyharness.broker.remote.host import RemoteKernel
 from pyharness.broker.remote.sandbox import (
     ALLOW_UNSANDBOXED_ENV,
+    SandboxWithoutWorkspaceError,
     UnsandboxedPlatformError,
     check_unsandboxed_platform,
 )
@@ -68,3 +69,18 @@ def test_remote_kernel_constructs_under_opt_in(no_os_sandbox, monkeypatch, capsy
     kernel = RemoteKernel(object())  # no raise; no child started yet
     assert kernel._proc is None
     assert "UNCONFINED" in capsys.readouterr().err
+
+
+def test_sandboxed_kernel_refuses_without_a_workspace(monkeypatch):
+    # The second construction gate: where a real OS sandbox will confine the
+    # child, it must have a workspace to scope the write allowance and $HOME read
+    # jail to. Building one without a workspace would (on macOS) silently drop
+    # the read jail while keeping the network and write denials — the one silent
+    # sandbox degradation — so it is refused as loudly as the platform gate.
+    monkeypatch.setattr(sandbox, "os_sandbox_supported", lambda: True)
+    with pytest.raises(SandboxWithoutWorkspaceError):
+        RemoteKernel(object())  # sandbox=True default, no workspace
+    # Scope of the refusal: sandbox=False has no jail to scope, so the workspace
+    # is not required there even on a sandbox-capable platform.
+    kernel = RemoteKernel(object(), sandbox=False)
+    assert kernel._proc is None

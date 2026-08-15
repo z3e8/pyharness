@@ -140,7 +140,7 @@ def test_remote_kernel_masks_secret_bearing_exception(tmp_path):
     """The out-of-process path: the exception crosses the pipe to the child and
     is formatted into the child's traceback — the cleartext must not cross, so
     it can appear neither in the child's memory nor in the returned output."""
-    kernel = RemoteKernel(_leaky_broker(tmp_path))
+    kernel = RemoteKernel(_leaky_broker(tmp_path), workspace=Workspace(tmp_path))
     try:
         output = kernel.run("leak()")
     finally:
@@ -155,7 +155,7 @@ def test_remote_kernel_masks_secret_bearing_exception(tmp_path):
 def test_remote_kernel_keeps_clean_exception_types_catchable(tmp_path):
     """Masking must not tax the normal path: an ordinary secret-free error
     keeps its type across the pipe so agent code can catch it."""
-    kernel = RemoteKernel(_leaky_broker(tmp_path))
+    kernel = RemoteKernel(_leaky_broker(tmp_path), workspace=Workspace(tmp_path))
     try:
         output = kernel.run(
             "try:\n    cleanboom()\nexcept ValueError as e:\n    print('caught:', e)\n"
