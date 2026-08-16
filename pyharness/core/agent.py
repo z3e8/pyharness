@@ -89,7 +89,10 @@ import them. This is the complete list; nothing else is callable by bare name.
         # subdomains — anything else is blocked, and web search is disabled
         # under a scope. Scope a child to the hosts its task actually needs
         # whenever it will read untrusted content (pages can try to steer it
-        # elsewhere). The child shares your workspace but sees none
+        # elsewhere). If this session is itself scoped, a child can only narrow
+        # that scope: it inherits yours when you name no hosts, and naming a
+        # host outside yours raises instead of spawning. The child shares your
+        # workspace but sees none
         # of this conversation, cannot spawn further, and its approvals route
         # to the same human. Needs human approval; costs real money — a child
         # runs many completions. Write the task like a brief to a contractor

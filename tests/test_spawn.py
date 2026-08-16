@@ -610,6 +610,102 @@ def test_child_session_is_host_scoped(tmp_path):
         child.close()
 
 
+def test_child_scope_is_clamped_to_the_parents(tmp_path):
+    """A spawned child's reach only ever narrows. Same scope and a subdomain of
+    the parent's are legitimate narrowings; a host the parent cannot reach is
+    refused outright rather than silently intersected away."""
+    from pyharness.security.egress import normalize_scope_hosts
+
+    parent = _session(
+        tmp_path, ScriptedLLM([]), allowed_hosts=["github.com", "example.com"]
+    )
+    try:
+        ask = normalize_scope_hosts
+        # Equal, narrower by dropping a host, and narrower by subdomain — kept
+        # verbatim, using the same suffix rule the egress layer enforces.
+        assert parent._clamp_child_scope(ask(["github.com", "example.com"])) == ask(
+            ["github.com", "example.com"]
+        )
+        assert parent._clamp_child_scope(ask(["example.com"])) == ask(["example.com"])
+        assert parent._clamp_child_scope(ask(["api.github.com"])) == ask(
+            ["api.github.com"]
+        )
+        # A host outside the parent's reach — an unrelated one, a lookalike, and
+        # the parent-of-a-parent-scope case (github.com under api.github.com is
+        # a widening, even though the strings overlap).
+        for wider in (["attacker.test"], ["evil-example.com"], ["github.com.evil.net"]):
+            with pytest.raises(ValueError, match="can only narrow"):
+                parent._clamp_child_scope(ask(wider))
+        # Mixed asks fail as a whole: no half-granted scope.
+        with pytest.raises(ValueError, match="attacker.test"):
+            parent._clamp_child_scope(ask(["example.com", "attacker.test"]))
+    finally:
+        parent.close()
+
+
+def test_child_with_no_scope_inherits_the_parents(tmp_path):
+    """Asking for no hosts must not mean "unscoped" under a scoped parent —
+    that is the widest widening of all. The child inherits the parent's scope."""
+    from pyharness.security.egress import normalize_scope_hosts
+
+    parent = _session(tmp_path, ScriptedLLM([]), allowed_hosts=["example.com"])
+    try:
+        assert parent._clamp_child_scope(None) == normalize_scope_hosts(["example.com"])
+    finally:
+        parent.close()
+
+
+def test_unscoped_parent_still_scopes_its_children(tmp_path):
+    """An unscoped parent (None = unrestricted) clamps nothing — introducing a
+    scope for a child is the normal way scopes come into being."""
+    from pyharness.security.egress import normalize_scope_hosts
+
+    parent = _session(tmp_path, ScriptedLLM([]))
+    try:
+        assert parent.allowed_hosts is None
+        assert parent._clamp_child_scope(None) is None
+        assert parent._clamp_child_scope(
+            normalize_scope_hosts(["attacker.test"])
+        ) == normalize_scope_hosts(["attacker.test"])
+    finally:
+        parent.close()
+
+
+def test_spawn_refuses_a_wider_child_and_inherits_when_unasked(tmp_path):
+    """The clamp on the real spawn path: the widening spawn never builds a
+    child, and the child that asked for nothing is traced (and therefore
+    disclosed) with the parent's own scope."""
+    import json
+
+    llm = ScriptedLLM([_text("done")])
+    parent = _session(
+        tmp_path, llm, approver=lambda req: True, allowed_hosts=["example.com"]
+    )
+    try:
+        with pytest.raises(ValueError, match="can only narrow"):
+            parent.broker.call(
+                "spawn",
+                "spawn",
+                "reach further",
+                tools=("http",),
+                allowed_hosts=["attacker.test"],
+            )
+        # No child session was built for the refused spawn.
+        assert not (tmp_path / "s-spawn-01").exists()
+        # A child asking for nothing gets the parent's scope, not None — and it
+        # needs no network capability to inherit one.
+        handle = parent.broker.call("spawn", "spawn", "work", tools=())
+        parent.broker.call("spawn", "wait", handle)
+    finally:
+        parent.close()
+    spawns = [
+        json.loads(line)
+        for line in (tmp_path / "s" / "trace.jsonl").read_text().splitlines()
+        if json.loads(line)["kind"] == "spawn"
+    ]
+    assert [s["allowed_hosts"] for s in spawns] == [["example.com"]]
+
+
 def test_spawn_allowed_hosts_shown_to_approver_and_passed_to_child(tmp_path):
     llm = ScriptedLLM([_text("done")])
     summaries = []

@@ -7,7 +7,7 @@ and records everything.** Four mechanisms, all sitting at or behind
 
 > This page is the *mechanisms*. For the perimeter they add up to — the
 > adversary model, what is confined on each platform, and all
-> 12 gaps grouped by the decision behind them — see the
+> 11 gaps grouped by the decision behind them — see the
 > [threat model](threat-model.md).
 
 ## Policy — what may run
@@ -328,6 +328,16 @@ untrusted content (pages can try to steer it) cannot be talked into
 exfiltrating to an attacker host, and the human approving the spawn approves a
 *bounded* plan (the approval line shows the hosts). `Session(allowed_hosts=...)`
 is the general mechanism; spawn is its first user.
+
+**A scope only narrows going down.** A session that is itself host-scoped clamps
+every child it spawns to its own scope: a child that names no hosts inherits the
+parent's, and a child that names a host the parent cannot reach raises
+`ValueError` rather than spawning. Coverage uses the same suffix rule the egress
+layer enforces, so a parent scoped to `github.com` may hand a child
+`api.github.com` but not the other way round. The refusal is deliberate — a
+silent intersection would leave the human approving a spawn line listing hosts
+the child never receives. An unscoped session clamps nothing, which is how a
+scope is introduced in the first place.
 
 Enforcement rides the same egress layer as the SSRF guard, not the policy
 layer — a broker-level check sees only the initial URL of a call, while

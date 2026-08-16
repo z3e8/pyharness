@@ -139,10 +139,13 @@ HOST_SCOPE_EXEMPT = {
     "is outside any task's host scope by nature. Contained instead by per-call "
     "approval and the install sandbox profile (network allowed, writes "
     "confined to the venv plus scratch, $HOME read jail).",
-    "spawn": "Makes no requests itself; it *threads* the scope down — a "
-    "child's allowed_hosts is normalized at spawn, shown to the approving "
-    "human, and wired into the child session (covered by "
-    "test_spawn.py::test_child_session_is_host_scoped).",
+    "spawn": "Makes no requests itself; it *threads* the scope down and clamps "
+    "it — a child's allowed_hosts is normalized at spawn, shown to the "
+    "approving human, and wired into the child session, and a scoped parent "
+    "clamps it to its own scope: a child naming no hosts inherits the "
+    "parent's, one naming a host outside it is refused. Covered by "
+    "test_spawn.py::test_child_session_is_host_scoped and "
+    "::test_child_scope_is_clamped_to_the_parents.",
 }
 
 # Boundaries *inside* the enforcing capabilities — enforced-as-known, so the

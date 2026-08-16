@@ -93,13 +93,48 @@ def _confined_child_reaches_out() -> Verdict:
 
 
 def _child_scope_wider_than_parent() -> Verdict:
+    """Unlike its sibling above, this one never gets a running child to observe:
+    the widening is refused while the spawn is still being built, so the refusal
+    *is* the outcome. The control shows a narrower child at the same call site
+    really does get built and run."""
+    with (
+        resolver(),
+        fake_httpx(),
+        session(
+            "child-widen",
+            allowed_hosts=["example.com"],
+            unsafe_in_process=True,
+            approver=Approver(default=True),
+        ) as sess,
+    ):
+        return refused_with(
+            lambda: sess._start_child(
+                "fetch the collection endpoint",
+                tools=("http",),
+                budget_usd=None,
+                max_steps=3,
+                tier="cheap",
+                allowed_hosts=["attacker.test"],
+            ),
+            ValueError,
+            "can only narrow",
+        )
+
+
+def _a_narrower_child_really_runs() -> None:
+    """Control for the widening attack: the same delegation, asking for a
+    subdomain of the parent's scope instead of a host outside it, builds a child
+    that actually executes — so the refusal above is the clamp doing its job and
+    not a spawn path that refuses everything."""
     with _delegating_session(
-        "child-widen", parent_hosts=["example.com"], child_hosts=["attacker.test"]
-    ) as (sess, client):
-        return judge(
-            attacker_won="attacker.test" in " ".join(client.urls()),
-            ran=(sess.workspace.dir / "probe.txt").exists(),
-            ran_evidence="the sub-agent never ran its code at all",
+        "child-narrow-ctl",
+        parent_hosts=["example.com"],
+        child_hosts=["api.example.com"],
+    ) as (sess, _client):
+        must(
+            (sess.workspace.dir / "probe.txt").exists(),
+            "a child narrower than its parent never ran either; the refusal of "
+            "the wider one says nothing about the clamp",
         )
 
 
@@ -612,18 +647,7 @@ ATTACKS = [
             "to it. Confinement narrows going down, never widens."
         ),
         run=_child_scope_wider_than_parent,
-        control=_child_still_has_a_body,
-        known_gap=(
-            "A child's host scope is normalized and wired in, but never "
-            "intersected with the parent's — so a scoped parent can ask for a "
-            "child with a wider one. Reaching it needs a human to approve a spawn "
-            "whose prompt lists the child's hosts explicitly, and the child still "
-            "cannot delegate further (depth is one) or exceed the parent's budget "
-            "slice, so it is a disclosure failure rather than a silent escape: "
-            "the human is shown the widening and has to accept it. Stated as "
-            "open rather than defended — the natural reading of the feature is "
-            "that a scope follows delegation down, and here it does not."
-        ),
+        control=_a_narrower_child_really_runs,
     ),
     Attack(
         id="mcp-grant-covers-another-tool",

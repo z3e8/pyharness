@@ -67,7 +67,9 @@ the [builtins reference](docs/reference/builtins.md).
   broker and bound to a host, so agent code cannot read a secret or send it to a
   host it was not sanctioned for.
 - **Scope follows delegation.** `spawn(allowed_hosts=[...])` confines a
-  sub-agent's reach at the egress layer.
+  sub-agent's reach at the egress layer, and the confinement only narrows going
+  down: a scoped session's child inherits that scope by default and cannot be
+  spawned with a host outside it.
 
 Where each mechanism stops working, and why:
 [threat model](docs/explanation/threat-model.md).
@@ -76,7 +78,7 @@ Where each mechanism stops working, and why:
 
 ### Adversarial suite
 
-49 attacks against the containment claims: **37 blocked, 12 known gaps, 0
+49 attacks against the containment claims: **38 blocked, 11 known gaps, 0
 unexpected successes.** [`evals/SCOREBOARD.md`](evals/SCOREBOARD.md) publishes
 every attack in four buckets, with the reason each gap is a design boundary
 rather than an oversight. `make test` fails if any result stops matching the

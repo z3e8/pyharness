@@ -167,7 +167,10 @@ never spawn — delegation depth is one by construction.
 to those hosts and their subdomains: anything else is refused at the egress
 layer (including redirect hops and browser navigations), and `web.search` is
 disabled under a scope (the query would leave it); requires a network
-capability in `tools`. `shell`, `packages`, and local (command-run) MCP
+capability in `tools`. A scope only ever narrows going down: in a session that
+is itself host-scoped, a child asking for no hosts inherits the session's scope,
+and a child asking for a host outside it raises `ValueError` instead of
+spawning. `shell`, `packages`, and local (command-run) MCP
 servers are not host-scoped — they stay behind per-call approval and the OS
 sandbox. See
 [security](../explanation/security-and-audit.md#host-scoped-sessions). It shares the parent's

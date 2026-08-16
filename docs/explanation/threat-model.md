@@ -196,7 +196,7 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**37 of 49 adversarial attacks blocked. 12 known gaps, 0 unexpected successes, 0
+**38 of 49 adversarial attacks blocked. 11 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
 the *decision* that produced them, because there are fewer decisions than gaps.
@@ -327,22 +327,7 @@ by construction — the OS sandbox confines its writes to the workspace, and bot
 `audit.jsonl` and its anchor live one level above it — so reaching this gap means
 already being outside the box.
 
-### 7. Host scope does not narrow going down — the one open gap
-
-`child-scope-wider-than-parent`
-
-Every other gap here is a defended trade-off. This one is stated as **open, not
-defended**: a child's host scope is normalized and wired in but never intersected
-with the parent's, so a scoped parent can ask for a child with a wider one. The
-natural reading of the feature is that a scope follows delegation down, and here
-it does not.
-
-It is a disclosure failure rather than a silent escape: reaching it needs a human
-to approve a spawn whose prompt lists the child's hosts explicitly, the child
-still cannot delegate further (depth is one), and it cannot exceed the parent's
-budget slice. The human is shown the widening and has to accept it.
-
-### 8. A skill's "this worked before" marker is self-reported
+### 7. A skill's "this worked before" marker is self-reported
 
 `skill-marks-itself-verified`
 

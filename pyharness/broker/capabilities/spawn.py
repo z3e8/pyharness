@@ -98,7 +98,15 @@ class SpawnCapability:
         """The approval line shows exactly what the child would be granted —
         task, capability set, host scope, budget slice, step ceiling — because
         approving a spawn is approving that whole plan (OUTWARD: the child can
-        reach out with everything it was granted)."""
+        reach out with everything it was granted).
+
+        The hosts shown are what the caller *asked for*, and they are an upper
+        bound on what the child gets: a scoped session clamps its children to
+        its own scope, refusing the spawn outright if a requested host lies
+        outside it, and a child that names no hosts inherits the parent's scope.
+        So approving this line can never grant reach the approver did not
+        already have — the line either describes the child exactly or the spawn
+        does not happen."""
         task = str(kwargs.get("task") or (args[0] if args else "?"))
         tools = kwargs.get("tools") or (args[1] if len(args) > 1 else DEFAULT_TOOLS)
         budget = kwargs.get("budget_usd")

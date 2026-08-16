@@ -37,7 +37,7 @@ from ..budget import Budget
 from ..llm.client import AnthropicLLM
 from ..obs import telemetry
 from ..obs.trace import TraceLog
-from ..security.egress import normalize_scope_hosts
+from ..security.egress import host_in_scope, normalize_scope_hosts
 from ..security.policy import Policy
 from ..security.profiles import ProfileStore
 from ..security.sink import SecretSink
@@ -681,6 +681,47 @@ class Session:
             "  point at files instead."
         )
 
+    def _clamp_child_scope(
+        self, requested: frozenset[str] | None
+    ) -> frozenset[str] | None:
+        """The host scope a spawned child actually gets: never wider than this
+        session's own.
+
+        Two rules, and the asymmetry between them is deliberate.
+
+        **A child that asks for nothing inherits the parent's scope.** Leaving it
+        None would hand an unscoped child to a scoped parent, which is the widest
+        possible widening and the easiest one to reach by accident. Inheriting is
+        silent because it can only ever *narrow* what the child could have had.
+
+        **A child that asks for a host the parent cannot reach is refused**, not
+        quietly intersected. Silent intersection would let the human approve a
+        spawn line listing hosts the child never gets — and would let an empty
+        intersection produce a child that can reach nothing while its task says
+        otherwise. Refusing keeps the approval line true and puts a usable error
+        in front of the caller, matching `normalize_scope_hosts`, which raises
+        rather than let a scope silently cover less than was asked for.
+
+        Coverage uses `host_in_scope`, the same suffix rule the egress layer
+        enforces — so under a parent scoped to `github.com` a child asking for
+        `api.github.com` is a legitimate narrowing, while the reverse is not.
+        An unscoped parent (None = unrestricted) clamps nothing: it can still
+        scope its children, which is the normal way scopes get introduced."""
+        if self.allowed_hosts is None:
+            return requested
+        if requested is None:
+            return self.allowed_hosts
+        outside = sorted(
+            h for h in requested if not host_in_scope(h, self.allowed_hosts)
+        )
+        if outside:
+            raise ValueError(
+                f"allowed_hosts {outside} are outside this session's own host "
+                f"scope ({', '.join(sorted(self.allowed_hosts))}); a spawned "
+                "child's reach can only narrow, never widen"
+            )
+        return requested
+
     def _start_child(
         self,
         task: str,
@@ -713,6 +754,7 @@ class Session:
                     "allowed_hosts requires granting a network capability "
                     f"({', '.join(sorted(_NETWORK))}) in tools"
                 )
+        scope = self._clamp_child_scope(scope)
 
         self._spawn_seq += 1
         name = f"{self.workspace.root.name}-spawn-{self._spawn_seq:02d}"
