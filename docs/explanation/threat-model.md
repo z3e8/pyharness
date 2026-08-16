@@ -196,7 +196,7 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**37 of 49 adversarial attacks blocked. 12 known gaps, 0 unexpected successes, 0
+**38 of 50 adversarial attacks blocked. 12 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
 the *decision* that produced them, because there are fewer decisions than gaps.
@@ -261,6 +261,19 @@ text and for errors the agent can no longer handle. The boundary that actually
 holds is upstream: a resolved secret only ever travels to a host the vault and
 the human sanctioned, and never enters agent-visible output by design. The server
 in a position to re-encode a credential is one that was already given it.
+
+That upstream boundary covers unbound secrets too, and it takes two mechanisms to
+say so honestly. A secret bound with `--host` is re-checked against the live
+destination at the moment of injection, so the binding is what sanctions it. A
+secret with no binding is sanctioned by the approval prompt instead — and a
+prompt is a check at one instant, while the injection happens at another. The
+browser closes that window: `fill_secret` and `fill_totp` capture the page host
+the confirmation was built from and refuse if the live page has moved to another
+host by the time the keystroke lands, so a meta-refresh or a scripted
+`location` between the two gets a refusal rather than the credential
+(`secret-fill-after-redirect`). Navigation within the approved host is not
+refused — a login flow redirecting through its own paths is the ordinary case,
+and re-prompting on each one is how approval fatigue starts.
 
 ### 4. Reads are free, so arbitrary data can leave via a GET
 
@@ -446,7 +459,7 @@ floor directly.
 ## Checking any of this yourself
 
 ```bash
-make evals                            # re-run the 49 attacks, rewrite the scoreboard
+make evals                            # re-run the 50 attacks, rewrite the scoreboard
 make test                             # the suite plus the policy enumeration tests
 uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
 make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N
