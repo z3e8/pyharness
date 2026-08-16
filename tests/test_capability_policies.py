@@ -188,6 +188,47 @@ def test_host_scope_classification_covers_every_capability(sess):
         )
 
 
+# Two namespaces name the same capabilities and mostly coincide: the broker
+# registers under `cap.name`, while `spawn(tools=[...])` grants under the names
+# in CHILD_GRANTABLE. `vault` is the one that differs — it is granted as
+# "secrets" — so any cross-list check has to map before comparing.
+CAP_NAME_BY_GRANT = {"secrets": "vault"}
+
+
+def _granted_cap_names(grants) -> set[str]:
+    return {CAP_NAME_BY_GRANT.get(name, name) for name in grants}
+
+
+def test_session_network_list_matches_host_scope_classification(sess):
+    """`_NETWORK` in core/session.py is a second, session-side copy of this
+    policy: it is the set a scoped spawn must grant one of, since scoping a
+    child that holds no scope-carrying capability is a confused call. Two
+    hand-written lists of the same thing drift, so tie them together — a
+    capability added to one and not the other fails here.
+
+    The identity is exact rather than a containment: `_NETWORK` is precisely
+    the host-scope-enforcing capabilities a child can be granted. `tools` also
+    enforces the scope (it threads it into every MCP mount) but is never
+    granted by name — it comes along implicitly with an external capability —
+    so it is outside `_NETWORK` by construction, not by omission."""
+    from pyharness.core.session import CHILD_GRANTABLE, _NETWORK
+
+    caps = _caps(sess)
+    grantable = _granted_cap_names(CHILD_GRANTABLE)
+    assert set(_NETWORK) == set(HOST_SCOPE_ENFORCED) & grantable, (
+        "core/session.py::_NETWORK and HOST_SCOPE_ENFORCED disagree about "
+        "which grantable capabilities carry the host scope — a scoped spawn "
+        "would either refuse a legitimate grant or accept one it cannot scope: "
+        f"{sorted(set(_NETWORK) ^ (set(HOST_SCOPE_ENFORCED) & grantable))}"
+    )
+    # A grant name that matches no registered capability grants nothing, and
+    # `_has()` would answer False forever without anything failing loudly.
+    assert grantable <= set(caps), (
+        "spawn grant names that name no registered capability (they would "
+        f"grant nothing): {sorted(grantable - set(caps))}"
+    )
+
+
 def test_websocket_scope_gap_is_still_open_and_named(sess):
     """The WebSocket hole is a *stated* boundary: the browser's route
     interception does not cover WS and no page.route_web_socket handler exists.
