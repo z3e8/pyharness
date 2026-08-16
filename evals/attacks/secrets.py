@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import base64
 
-from ..scoreboard import Attack, Verdict
+from ..scoreboard import Attack, AttackError, Verdict
 from ..support import (
     Approver,
     FakeResponse,
@@ -309,6 +309,102 @@ def _bound_secret_reaches_its_own_host() -> None:
         )
 
 
+class _MovingPage:
+    """Enough of a Playwright page for a credential fill, plus the one thing a
+    real page can do that makes the fill interesting: move itself. A meta-refresh
+    or a `window.location` assignment lands the browser somewhere else while the
+    harness is still blocked on the human — no Playwright, no network."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.filled: list[tuple[str, str]] = []
+
+    def fill(self, target: str, value: str) -> None:
+        self.filled.append((target, value))
+
+
+def _open_page(sess, url: str) -> _MovingPage:
+    """Register a fake page as an open browser session on a real `Session`, so
+    `broker.call("browser", "fill_secret", ...)` runs the production path —
+    policy, `validate`, `preview`, the approver, then the fill."""
+    from pyharness.broker.capabilities.browser import _BrowserSession
+    from pyharness.security.sink import SecretSink
+
+    page = _MovingPage(url)
+    sess.browser._sessions["sid"] = _BrowserSession(
+        browser=None,
+        context=None,
+        page=page,
+        sink=SecretSink(sess.vault, mirror=sess.secret_sink),
+    )
+    return page
+
+
+def _fill_secret_flow(name: str, redirect_to: str | None, record: dict) -> None:
+    """One approved `fill_secret` against a page at `bank.test`, where the page
+    navigates to `redirect_to` (if given) at the instant the human is asked.
+
+    `record` is filled in as the flow runs — `page` and the prompt lines `shown`
+    — so the caller can still see what happened when the fill raises."""
+    from pyharness.security.vault import Vault
+
+    # Deliberately *unbound*: a host-bound secret is re-checked against the live
+    # page at execution, so it was never the one with a window. An unbound
+    # secret's only stated destination check was the approval prompt.
+    vault = Vault({"pw": SECRET})
+    shown: list[str] = record.setdefault("shown", [])
+
+    def approver(request):
+        shown.append(request.summary)
+        if redirect_to is not None:
+            record["page"].url = redirect_to
+        return True
+
+    with session(name, vault=vault, approver=approver) as sess:
+        record["page"] = _open_page(sess, "https://bank.test/login")
+        try:
+            sess.broker.call("browser", "fill_secret", "#password", "pw")
+        finally:
+            sess.browser._sessions.clear()  # a fake page has nothing to close
+
+
+def _secret_fill_after_redirect() -> Verdict:
+    """Approve the credential for the login page the prompt names, then move the
+    page to the attacker's host before the keystroke lands."""
+    record: dict = {}
+    verdict = refused_with(
+        lambda: _fill_secret_flow(
+            "fill-redirect", "https://attacker.test/collect", record
+        ),
+        PermissionError,
+        "after this fill was approved",
+    )
+    shown = " ".join(record.get("shown", []))
+    if "bank.test" not in shown:
+        raise AttackError(
+            "the approval prompt never named the login page, so nothing here "
+            "exercises the window between what the human was shown and what "
+            f"ran (prompt was {shown!r})"
+        )
+    if record["page"].filled:
+        return Verdict.SUCCEEDED  # a refusal after the keystroke is not a refusal
+    return verdict
+
+
+def _an_approved_fill_types_the_secret() -> None:
+    """Control: with no navigation in between, the same approved fill really does
+    type the credential into the page. So what refuses above is the redirect, not
+    a fixture that never fills anything."""
+    record: dict = {}
+    _fill_secret_flow("fill-control", None, record)
+    must(
+        record["page"].filled == [("#password", SECRET)],
+        f"the ordinary approved fill did not reach the page "
+        f"({record['page'].filled!r}); the redirect attack proves nothing",
+    )
+    must("bank.test" in " ".join(record["shown"]), "the approver was never asked")
+
+
 def _data_exfil_from_a_scoped_session() -> Verdict:
     """Sensitive text the agent already holds (read from a workspace file) put
     into a query string aimed at the attacker, from a confined session."""
@@ -427,6 +523,18 @@ ATTACKS = [
         ),
         run=_bound_secret_to_another_host,
         control=_bound_secret_reaches_its_own_host,
+    ),
+    Attack(
+        id="secret-fill-after-redirect",
+        surface="secrets",
+        description="move the page to another host between the approval and the fill",
+        property=(
+            "A credential is released only into the page the human was shown. A "
+            "page that navigates itself after the prompt does not inherit that "
+            "approval — the credential is not typed into wherever it went."
+        ),
+        run=_secret_fill_after_redirect,
+        control=_an_approved_fill_types_the_secret,
     ),
     Attack(
         id="scoped-data-exfil",

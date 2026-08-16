@@ -57,7 +57,15 @@ A `--host` is canonicalized to its bare hostname, so a pasted URL
 (`--host https://api.github.com/`) binds the same as `--host api.github.com`.
 
 Bind every credential you can. A secret set without `--host` stays unbound and
-works everywhere, with the approval prompt as its only destination check. Only
+works everywhere, with the approval prompt as its only destination check — a
+weaker check, because it is a human reading one line rather than a rule the
+harness enforces. What the harness does hold for an unbound browser fill is that
+the credential lands on the page that was approved: `fill_secret`/`fill_totp`
+capture the page's host when the confirmation is built and refuse if the live
+page has moved to a different host by the time they type, so a page that
+redirects itself after you click approve gets a refusal instead of the secret.
+Navigation inside the approved host (a login flow moving between its own paths)
+is not refused. Only
 file-vault entries carry bindings; env (`PYHARNESS_SECRET_*`) secrets are
 always unbound (in-memory `Vault(secrets=...)` entries may use the
 `{"value": ..., "hosts": [...]}` form directly).
@@ -151,7 +159,9 @@ secret="github_totp")`: the seed is resolved parent-side, the current
 6-digit code derived there (RFC 6238, stdlib), and typed into the field.
 Neither the seed nor the code ever reaches agent code, and both are masked out
 of later page reads. `fill_totp` prompts for approval every time — releasing a
-second factor is a credential release, never covered by a domain grant. With a
+second factor is a credential release, never covered by a domain grant — and,
+like `fill_secret`, it refuses to type the code if the page has navigated to a
+different host since that prompt. With a
 [site profile](site-profiles.md) keeping the agent logged in and a seed
 covering re-login, an expired session no longer needs a human in the loop
 beyond the approval prompt.
