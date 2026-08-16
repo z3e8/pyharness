@@ -42,6 +42,12 @@ _SELECTOR_POS_OPS = frozenset(
 _CREDENTIAL_OPS = frozenset({"fill_secret", "fill_totp"})
 
 
+def _host_of(url: str) -> str:
+    """The lowercased hostname of `url`, or `""` when it has none (`about:blank`,
+    a `data:` url). Empty is a real answer here, distinct from "not recorded"."""
+    return (urlsplit(url).hostname or "").lower()
+
+
 def _is_main_navigation(request) -> bool:
     """Whether a Playwright request is a top-level (main-frame) navigation — the
     kind that changes where the agent *is*, as opposed to a subresource or iframe
@@ -109,6 +115,12 @@ class _BrowserSession:
         # (`[ref=eN]`) are only valid against this snapshot; navigation clears it
         # since a new page's DOM makes every prior ref meaningless.
         self.last_snapshot: str | None = None
+        # The page host a pending credential fill was vetted against — set by the
+        # capability's `validate`/`preview` hooks (broker-side, before the human
+        # answers) and consumed by the fill itself, which refuses if the live page
+        # has moved to another host since. `""` is a page with no hostname; None
+        # means nothing is pinned. See `_pin_host` / `_release_host`.
+        self.pinned_host: str | None = None
 
     def close(self) -> None:
         for obj in (self.context, self.browser):
@@ -134,7 +146,11 @@ class BrowserCapability:
     agent never sees the value, and the audit log records the name (via
     `summarize_args`), never the value. `fill_totp` extends the rule to 2FA: the
     vault holds the TOTP *seed*, the current code is derived parent-side at the
-    moment of use, and neither seed nor code is ever returned.
+    moment of use, and neither seed nor code is ever returned. Both fills are
+    pinned to the page they were vetted on: the host is captured when the
+    confirmation is built and re-checked at the keystroke, so a page that
+    redirects itself between the prompt and the fill is refused rather than
+    handed the credential (see `_release_host`).
 
     Every method returns a structured result (url / title / status), not a bare
     string, so the agent can check its own work — assert on status, re-read to
@@ -237,6 +253,10 @@ class BrowserCapability:
         if op == "upload":  # name the file being staged into the page
             path = kwargs.get("path") or (args[0] if args else None)
             target = f"{target} file={path!r}".strip()
+        if op in _CREDENTIAL_OPS:
+            # Pin the host of the page named in the line below, so the fill can
+            # refuse if the page moves between this prompt and the keystroke.
+            self._pin_host(session)
         where = f" on {session.sink.redact(session.page.url)}" if session else ""
         return ActionCategory.OUTWARD, " ".join(f"{op} {target}{where}".split())
 
@@ -249,7 +269,15 @@ class BrowserCapability:
 
         Only `ref=` is checked: it is the one argument whose validity depends on
         session state the caller can't see. Everything else fails identically
-        whether it's caught here or in the op."""
+        whether it's caught here or in the op.
+
+        This hook is also where a credential fill's page host is pinned. Unlike
+        `preview` it runs on *every* call the broker did not deny, so the pin
+        exists even under a policy that lets the fill through without a prompt —
+        there it simply records the host as of the moment dispatch began, and the
+        fill still refuses a page that moved out from under it."""
+        if op in _CREDENTIAL_OPS:
+            self._pin_host(self._peek(kwargs))
         ref = kwargs.get("ref")
         if ref is None:
             return
@@ -273,8 +301,48 @@ class BrowserCapability:
         session = self._peek(kwargs)
         if session is None:
             return None
-        host = urlsplit(session.page.url).hostname
-        return GrantScope("browser", host.lower()) if host else None
+        host = _host_of(session.page.url)
+        return GrantScope("browser", host) if host else None
+
+    @staticmethod
+    def _pin_host(session: _BrowserSession | None) -> None:
+        """Record the host of the page a credential fill is being vetted against,
+        before the human is asked. `None` (an unresolvable session) pins nothing —
+        that call is going to fail in `_session` anyway."""
+        if session is not None:
+            session.pinned_host = _host_of(session.page.url)
+
+    @staticmethod
+    def _release_host(session: _BrowserSession) -> str:
+        """The host a credential is about to be released toward — the *live* page's
+        — checked against the host the approval was built from.
+
+        Closes the window between the prompt and the keystroke. `preview` renders
+        "fill_secret ... on https://bank.example/login" and the human approves
+        that page; a meta-refresh or a scripted `location` assignment can move the
+        page before the fill runs, and without this check the credential would be
+        typed into whatever page arrived. A host-*bound* secret is already safe
+        (`SecretSink.resolve` re-checks the live host), so this is what covers the
+        unbound ones, whose only destination check was the prompt.
+
+        The pin is consumed, so it can only ever authorize the one fill it was
+        taken for. Absent (a capability driven directly, outside the broker) means
+        no approval happened and there is no window to close, so the live host
+        stands. Comparison is by host, not url: a redirect within the approved
+        site is the ordinary shape of a login flow, and re-prompting on every path
+        change is how approval fatigue starts."""
+        live = _host_of(session.page.url)
+        pinned, session.pinned_host = session.pinned_host, None
+        if pinned is not None and pinned != live:
+            was = repr(pinned) if pinned else "a page with no host"
+            now = repr(live) if live else "a page with no host"
+            raise PermissionError(
+                f"the page moved from {was} to {now} after this fill was "
+                "approved; refusing to type the secret into a page the approval did not "
+                "cover. Take a fresh snapshot() and call again if the new page is "
+                "really where the credential belongs — it will ask again."
+            )
+        return live
 
     def _profile_domains(self, profile) -> str:
         """A capped, parenthesized list of the cookie domains a profile would
@@ -579,13 +647,18 @@ class BrowserCapability:
         (preferred) or a CSS/text `selector`. `secret` is the vault *name* of the
         credential (what `secrets()` lists), never the cleartext: the value is
         resolved parent-side, typed into the page, and recorded so later reads
-        mask it — it never reaches agent code."""
+        mask it — it never reaches agent code.
+
+        The fill lands on the page that was approved: if the page navigated
+        elsewhere after the prompt, this refuses rather than typing the
+        credential into wherever the page went."""
         session = self._session(session_id)
-        # A host-bound secret is refused unless the *current page's* host matches
-        # its binding — typing into a look-alike page fails before the keystroke.
-        cleartext = session.sink.resolve(
-            secret, target_host=urlsplit(session.page.url).hostname
-        )
+        # Where the credential would go, checked twice before it is resolved:
+        # against the host the approval was taken for (`_release_host`), and —
+        # for a host-bound secret — against its binding, so typing into a
+        # look-alike page fails before the keystroke.
+        host = self._release_host(session)
+        cleartext = session.sink.resolve(secret, target_host=host)
         session.page.fill(self._target(session, selector, ref), cleartext)
         return self._state(session)
 
@@ -602,11 +675,12 @@ class BrowserCapability:
         `secret` is the vault *name* of the seed (e.g. "github_totp" — `secrets()`
         lists what exists), never the seed itself: it is resolved parent-side and
         the RFC 6238 code derived here at the moment of use; neither the seed nor
-        the code ever reaches agent code, and later reads mask the code."""
+        the code ever reaches agent code, and later reads mask the code.
+
+        Like `fill_secret`, the code goes to the page that was approved: a page
+        that navigated after the prompt is refused, not typed into."""
         session = self._session(session_id)
-        seed = session.sink.resolve(
-            secret, target_host=urlsplit(session.page.url).hostname
-        )
+        seed = session.sink.resolve(secret, target_host=self._release_host(session))
         code = totp_code(seed)
         session.sink.track(
             code

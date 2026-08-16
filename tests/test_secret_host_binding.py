@@ -144,6 +144,100 @@ def test_browser_fill_secret_checks_page_host(tmp_path):
     assert page.filled == [("#password", "S3CRET")]
 
 
+class _MovingPage:
+    """A page that can be navigated out from under a pending call — the shape a
+    meta-refresh or a scripted `location` assignment produces."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.filled: list[tuple[str, str]] = []
+
+    def fill(self, target, value):
+        self.filled.append((target, value))
+
+
+def _pinned(cap: BrowserCapability, url: str, vault: Vault) -> _MovingPage:
+    """A browser session on `url`, registered on `cap`."""
+    page = _MovingPage(url)
+    cap._sessions["sid"] = _BrowserSession(
+        browser=None, context=None, page=page, sink=SecretSink(vault)
+    )
+    return page
+
+
+def _vet(cap: BrowserCapability, op: str, *args, **kwargs) -> None:
+    """The broker-side hooks that run before the human answers, in dispatch's
+    order — `validate`, then `preview` (which is what builds the line the human
+    reads). Calling them directly keeps the test about the capability's own
+    plumbing; `evals/attacks/secrets.py` drives the same path through a real
+    broker and a real approver."""
+    cap.validate(op, args, kwargs)
+    cap.preview(op, args, kwargs)
+
+
+UNBOUND = Vault({"pw": "OPEN-SESAME"})
+
+
+def test_unbound_fill_refuses_a_page_that_moved_after_approval(tmp_path):
+    # The TOCTOU the host binding does not cover: an *unbound* secret approved
+    # for one page, typed after the page redirected itself somewhere else.
+    cap = BrowserCapability(Workspace(tmp_path), vault=UNBOUND)
+    page = _pinned(cap, "https://bank.example/login", UNBOUND)
+    _vet(cap, "fill_secret", "#password", "pw")
+    page.url = "https://evil.example/collect"  # meta-refresh between the two
+    with pytest.raises(PermissionError, match="moved from 'bank.example'"):
+        cap.fill_secret("#password", "pw")
+    assert page.filled == []  # nothing was typed
+
+
+def test_unbound_totp_fill_refuses_a_page_that_moved_after_approval(tmp_path):
+    seed = Vault({"otp": "JBSWY3DPEHPK3PXP"})
+    cap = BrowserCapability(Workspace(tmp_path), vault=seed)
+    page = _pinned(cap, "https://bank.example/2fa", seed)
+    _vet(cap, "fill_totp", "#otp", "otp")
+    page.url = "https://evil.example/collect"
+    with pytest.raises(PermissionError, match="after this fill was approved"):
+        cap.fill_totp("#otp", "otp")
+    assert page.filled == []
+
+
+def test_a_same_host_navigation_does_not_refuse_the_fill(tmp_path):
+    # A login flow redirects within its own site all the time (/login ->
+    # /login?step=2). Re-prompting on every path change is approval fatigue, so
+    # the pin is on the host.
+    cap = BrowserCapability(Workspace(tmp_path), vault=UNBOUND)
+    page = _pinned(cap, "https://bank.example/login", UNBOUND)
+    _vet(cap, "fill_secret", "#password", "pw")
+    page.url = "https://bank.example/login?step=2"
+    cap.fill_secret("#password", "pw")
+    assert page.filled == [("#password", "OPEN-SESAME")]
+
+
+def test_the_pin_authorizes_exactly_one_fill(tmp_path):
+    # A second fill on the same approval would be a second credential release
+    # off one sign-off, so the pin is consumed. What remains is the live page's
+    # own host, which is all an unbrokered call ever had.
+    cap = BrowserCapability(Workspace(tmp_path), vault=UNBOUND)
+    page = _pinned(cap, "https://bank.example/login", UNBOUND)
+    _vet(cap, "fill_secret", "#password", "pw")
+    cap.fill_secret("#password", "pw")
+    page.url = "https://evil.example/collect"
+    cap.fill_secret("#password", "pw")  # no pin left: no approval to violate
+    assert cap._sessions["sid"].pinned_host is None
+
+
+def test_bound_fill_still_refuses_a_page_that_moved_after_approval(tmp_path):
+    # Belt and braces: the binding refuses the wrong host on its own, and the
+    # pin refuses it before the vault is even consulted.
+    cap = BrowserCapability(Workspace(tmp_path), vault=BOUND)
+    page = _pinned(cap, "https://api.github.com/login", BOUND)
+    _vet(cap, "fill_secret", "#password", "gh")
+    page.url = "https://api.github.com.evil.example/login"
+    with pytest.raises(PermissionError, match="moved from 'api.github.com'"):
+        cap.fill_secret("#password", "gh")
+    assert page.filled == []
+
+
 def test_cli_set_host_binds_and_list_shows_it(tmp_path, monkeypatch, capsys):
     from pyharness.cli import vault as cli_vault
 
