@@ -179,7 +179,7 @@ hand-written list — and forces each into one of two states:
   length-checks so a stub cannot stand in for a decision.
 
 Five policies are covered: host scoping, parent-side sandbox wrapping, dispatch
-mediation, approval classification, and secret-sink wiring. Registering a
+mediation, approval classification, and secret-sink redaction. Registering a
 seventeenth capability without classifying it fails the three that partition over
 the whole registry (host scope, agent-facing surface, approval), and the other
 two are detector-driven rather than declarative — a newcomer that execs a program
@@ -187,6 +187,22 @@ or takes the `Vault` fails those as well, and one that does neither has nothing
 to classify. The enforcement assertions are not vacuous either: un-threading the
 session scope from a single capability fails the host-scope test even though the
 attribute is still there.
+
+The secret-sink policy goes past wiring to the returned value. A result crossing
+to the child is sealed for the pipe but never redacted there, so the test walks
+the return paths of every op the three sink-holding capabilities export and
+requires each one to pass through the sink (directly, or through a helper that
+does) or to be a named exemption saying why its result cannot carry a resolved
+secret. A branch that redacts the happy path and returns raw text on an error
+path fails, and so does a new op that skips the sink entirely. That check is
+static; the behavioral half — that the sink actually masks what it is handed —
+is `test_components.py` and `test_inbox.py`, against a server and a mailbox that
+echo an injected secret back.
+
+The same shape of check ties the tables to the code they describe: the
+session's own list of scope-carrying capabilities (`_NETWORK`, which decides
+whether a scoped `spawn` is coherent) is asserted equal to the host-scope
+participants a child can be granted, so the two lists cannot drift apart.
 
 That does not make gaps impossible. It makes them **impossible to leave
 undecided**, which is the property that survives the next contributor. The

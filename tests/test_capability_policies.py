@@ -19,12 +19,20 @@ hand-written list of names — and assert an explicit classification:
 
 The classification tables below are therefore deliverables in their own right:
 each exemption is a stated design boundary (the raw material for the public
-threat-model page), and an unclassified newcomer fails every one of these tests
-until someone decides — in writing — how it relates to each policy.
+threat-model page).
+
+Two shapes of test live here, and the difference is worth stating plainly. The
+*partition* tests (host scoping, agent-facing surface, approval) enumerate the
+whole registry, so an unclassified newcomer fails them on registration alone.
+The *detector* tests (sandbox wrapping, secret-sink routing) start from a
+property of the capability — it execs a program, it holds a `Vault` — and only
+demand a classification from capabilities that have it. A newcomer that does
+neither has nothing to classify and passes those two, correctly.
 
 Policies covered: host scoping (`allowed_hosts`), parent-side sandbox wrapping,
 dispatch mediation (everything the agent can reach is a broker proxy), approval
-classification (preview/grant hooks), and secret-sink wiring. What each test
+classification (preview/grant hooks), and secret-sink wiring plus the
+redaction of every result those capabilities return. What each test
 does and does not prove is stated in its docstring; the honest limits matter as
 much as the assertions.
 """
@@ -32,7 +40,9 @@ much as the assertions.
 from __future__ import annotations
 
 import ast
+import inspect
 import sys
+import textwrap
 from types import ModuleType
 
 import pytest
@@ -184,6 +194,47 @@ def test_host_scope_classification_covers_every_capability(sess):
         )
 
 
+# Two namespaces name the same capabilities and mostly coincide: the broker
+# registers under `cap.name`, while `spawn(tools=[...])` grants under the names
+# in CHILD_GRANTABLE. `vault` is the one that differs — it is granted as
+# "secrets" — so any cross-list check has to map before comparing.
+CAP_NAME_BY_GRANT = {"secrets": "vault"}
+
+
+def _granted_cap_names(grants) -> set[str]:
+    return {CAP_NAME_BY_GRANT.get(name, name) for name in grants}
+
+
+def test_session_network_list_matches_host_scope_classification(sess):
+    """`_NETWORK` in core/session.py is a second, session-side copy of this
+    policy: it is the set a scoped spawn must grant one of, since scoping a
+    child that holds no scope-carrying capability is a confused call. Two
+    hand-written lists of the same thing drift, so tie them together — a
+    capability added to one and not the other fails here.
+
+    The identity is exact rather than a containment: `_NETWORK` is precisely
+    the host-scope-enforcing capabilities a child can be granted. `tools` also
+    enforces the scope (it threads it into every MCP mount) but is never
+    granted by name — it comes along implicitly with an external capability —
+    so it is outside `_NETWORK` by construction, not by omission."""
+    from pyharness.core.session import _NETWORK, CHILD_GRANTABLE
+
+    caps = _caps(sess)
+    grantable = _granted_cap_names(CHILD_GRANTABLE)
+    assert set(_NETWORK) == set(HOST_SCOPE_ENFORCED) & grantable, (
+        "core/session.py::_NETWORK and HOST_SCOPE_ENFORCED disagree about "
+        "which grantable capabilities carry the host scope — a scoped spawn "
+        "would either refuse a legitimate grant or accept one it cannot scope: "
+        f"{sorted(set(_NETWORK) ^ (set(HOST_SCOPE_ENFORCED) & grantable))}"
+    )
+    # A grant name that matches no registered capability grants nothing, and
+    # `_has()` would answer False forever without anything failing loudly.
+    assert grantable <= set(caps), (
+        "spawn grant names that name no registered capability (they would "
+        f"grant nothing): {sorted(grantable - set(caps))}"
+    )
+
+
 def test_websocket_scope_gap_is_still_open_and_named(sess):
     """The WebSocket hole is a *stated* boundary: the browser's route
     interception does not cover WS and no page.route_web_socket handler exists.
@@ -301,12 +352,20 @@ def test_sandbox_wrap_classification_covers_every_capability(sess):
     wrap, or is a named fixed-argv exemption. The detector walks each
     capability's own module plus its pyharness collaborators, so the next
     capability that shells out (the `packages.install` failure mode) is caught
-    whether the exec lives in the capability file or one level down. Limits:
-    execs buried in third-party packages or deeper harness modules are out of
-    scan reach — those are named per capability in EXEC_OUT_OF_SCAN_REACH
-    rather than silently out of frame."""
+    whether the exec lives in the capability file or one level down.
+
+    Detector-based, not declarative: a capability is asked to classify itself
+    only once the scan finds an exec site in it, so a newcomer that execs
+    nothing passes without an entry. Other limit: execs buried in third-party
+    packages or deeper harness modules are out of scan reach — those are named
+    per capability in EXEC_OUT_OF_SCAN_REACH rather than silently out of
+    frame."""
     caps = _caps(sess)
-    _assert_partition(set(caps), PARENT_EXEC, set(caps) - PARENT_EXEC)
+    # The per-capability scan below iterates the live registry, so it can never
+    # visit a PARENT_EXEC name that stopped being registered. Catch that here.
+    assert PARENT_EXEC <= set(caps), (
+        f"stale PARENT_EXEC entries: {sorted(PARENT_EXEC - set(caps))}"
+    )
     assert SANDBOX_WRAPPED <= PARENT_EXEC
     assert set(EXEC_OUT_OF_SCAN_REACH) <= set(caps) - PARENT_EXEC
     _assert_rationales(UNWRAPPED_EXEC_EXEMPT)
@@ -574,7 +633,7 @@ def test_grant_scope_classification_covers_every_capability(sess):
 
 
 # ---------------------------------------------------------------------------
-# Policy 5 — secret-sink wiring
+# Policy 5 — secret-sink wiring and result redaction
 # ---------------------------------------------------------------------------
 
 # Capabilities that resolve vault secrets into live request/connection state
@@ -601,11 +660,11 @@ def test_secret_sink_classification_covers_every_capability(sess):
     made to declare itself — either its sink mirror is provably the session
     sink, or it carries a written exemption. A new capability that takes the
     vault without wiring the mirror (the open per-capability-discipline seam
-    from the 2026-07-28 recon note) fails here. Honest limit: this asserts the
-    *wiring*, not the deep property that every success result is masked — that
-    still relies on each capability routing returned text through its sink,
-    which cannot be asserted generically without invoking every op against
-    live secrets."""
+    from the 2026-07-28 recon note) fails here. Scope: this asserts the
+    *wiring* — that every mask reaches the session-wide sink, which is what the
+    exception path and cell output redact through. That each success result is
+    itself routed through a sink is the separate property
+    test_every_sink_mirrored_op_redacts_its_result asserts, op by op."""
     caps = _caps(sess)
     vault_holding = {
         name
@@ -628,3 +687,207 @@ def test_secret_sink_classification_covers_every_capability(sess):
     # The broker's exception-path redaction is the session sink's, so an
     # audited repr(exc) can never carry a secret any capability resolved.
     assert sess.broker.redact.__self__ is sess.secret_sink
+
+
+# The success path is the other half, and the pipe does not cover it: a
+# structured result crossing to the child is sealed (`broker/remote/host.py`
+# ::_seal_for_wire) but never redacted, so a resolved secret stays out of agent
+# code only if the capability routed its own return value through the sink.
+# The methods that count as that routing:
+SINK_REDACTORS = frozenset({"redact", "redacted", "redact_bytes"})
+
+# Exported ops whose result cannot carry a resolved secret, so they need no
+# redaction — each with the reason. Every *other* op of a sink-mirrored
+# capability must provably route its return value through the sink, so a new op
+# is either redacted or fails until someone writes down why it need not be.
+RESULT_CARRIES_NO_SECRET = {
+    ("http", "open_session"): "Returns a harness-minted session id (uuid4 hex) "
+    "and nothing else — no request has been made yet, so no response content "
+    "and no injected secret exists on this path.",
+    ("http", "close_session"): "Returns a fixed sentence naming the session id "
+    "the agent itself passed in. No response content is read on this path.",
+    ("browser", "open_browser"): "Returns a harness-minted session id. The page "
+    "content it opens on is read only through goto/snapshot/read_text, which "
+    "redact.",
+    ("browser", "save_profile"): "Returns the agent-chosen profile name plus "
+    "*counts* of cookies and origins. The storage state itself — the actual "
+    "credential material — is written encrypted to the profile store and never "
+    "enters the result.",
+    ("browser", "list_profiles"): "Returns saved profile *names* only, the same "
+    "contract the vault capability keeps: a name is not a credential.",
+    ("browser", "screenshot"): "Returns the workspace path it wrote, not page "
+    "content. The image itself is the stated pixel boundary — a typed secret "
+    "cannot be masked out of a bitmap, so the policy gates the screenshot op "
+    "once a sink has injected into the page (SecretSink.has_injected) rather "
+    "than redacting after the fact.",
+    ("browser", "close_browser"): "Returns a fixed sentence naming the closed "
+    "session id. No page content is read on this path.",
+}
+
+
+def _class_methods(cap) -> dict[str, ast.FunctionDef]:
+    """{method name: def node} for the capability's own class, parsed from
+    source — the table the return-path scan resolves `self._helper()` against."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(type(cap))))
+    return {
+        node.name: node
+        for node in tree.body[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _return_values(node) -> list[ast.expr | None]:
+    """The expressions one function body returns, *not* descending into nested
+    functions or lambdas: a callback that redacts must never make the enclosing
+    op read as if it redacted."""
+    values: list[ast.expr | None] = []
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if isinstance(child, ast.Return):
+            values.append(child.value)
+        values.extend(_return_values(child))
+    return values
+
+
+def _is_literal(value) -> bool:
+    """A return that cannot carry response content: bare `return`, or a
+    constant the source spells out. An f-string is *not* literal — it can
+    interpolate anything."""
+    return value is None or isinstance(value, ast.Constant)
+
+
+def _routes_through_sink(expr, methods: dict, seen: frozenset[str]) -> bool:
+    """True when the returned expression passes through a sink redactor —
+    directly (`sink.redacted(...)`, `session.sink.redacted(...)`, matched on the
+    attribute name so any sink object counts) or through a helper method of the
+    same capability whose own returns all redact (browser's `_state`)."""
+    for node in ast.walk(expr):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr in SINK_REDACTORS:
+            return True
+        target = node.func.value
+        if (
+            isinstance(target, ast.Name)
+            and target.id == "self"
+            and node.func.attr in methods
+            and node.func.attr not in seen
+            and _redacts_every_return(methods[node.func.attr], methods, seen)
+        ):
+            return True
+    return False
+
+
+def _redacts_every_return(
+    node, methods: dict, seen: frozenset[str] = frozenset()
+) -> bool:
+    """True when every non-literal value a function returns routes through the
+    sink — so a second, unredacted branch (an early return on an error path)
+    fails even though the happy path redacts."""
+    seen = seen | {node.name}
+    values = [v for v in _return_values(node) if not _is_literal(v)]
+    return bool(values) and all(_routes_through_sink(v, methods, seen) for v in values)
+
+
+def _detector_verdict(source: str) -> bool:
+    """Run the return-path detector over a synthetic one-class source — used to
+    check the detector itself answers in both directions."""
+    tree = ast.parse(textwrap.dedent(source))
+    methods = {
+        node.name: node
+        for node in tree.body[0].body
+        if isinstance(node, ast.FunctionDef)
+    }
+    return _redacts_every_return(methods["op"], methods)
+
+
+def test_return_path_detector_answers_in_both_directions():
+    """The policy below is only as good as its detector, so pin the detector:
+    it must say no to a raw return, to a redacted happy path with an
+    unredacted branch, and to a redaction that only happens inside a nested
+    callback — and yes to a direct redaction and to one behind a helper."""
+    assert not _detector_verdict("""
+        class C:
+            def op(self):
+                return self.page.text()
+    """)
+    assert not _detector_verdict("""
+        class C:
+            def op(self):
+                if self.failed:
+                    return self.page.text()
+                return self.sink.redacted(self.page.text())
+    """)
+    assert not _detector_verdict("""
+        class C:
+            def op(self):
+                def on_response(resp):
+                    return self.sink.redacted(resp.text)
+                self.page.on("response", on_response)
+                return self.page.text()
+    """)
+    assert _detector_verdict("""
+        class C:
+            def op(self):
+                return self.sink.redacted({"text": self.page.text()})
+    """)
+    assert _detector_verdict("""
+        class C:
+            def op(self):
+                return self._state(title=self.page.title())
+            def _state(self, **extra):
+                return self.session.sink.redacted({"url": self.page.url, **extra})
+    """)
+
+
+def test_every_sink_mirrored_op_redacts_its_result(sess):
+    """The deep property the wiring test above cannot reach: for every op a
+    sink-mirrored capability exports, the value handed back to agent code
+    provably passes through the sink. Nothing downstream will do it — the
+    result is sealed for the pipe (`_seal_for_wire`) and pickled as-is — so an
+    op that skips the sink hands a resolved secret straight to the child.
+
+    Enumerated from the live `exports()`, so a *new* op on http/browser/inbox
+    fails here until it either redacts or is written into
+    RESULT_CARRIES_NO_SECRET as a stated decision. The detector resolves one
+    level of same-capability helper (browser's `_state`) and refuses to count a
+    redaction that only happens in a nested callback; it is pinned in both
+    directions by the test above.
+
+    Limits, stated rather than left out of frame. This is a static property of
+    the return path, not a live injection test — the behavioral end of it is
+    `test_components.py` (an http response echoing a query-string secret) and
+    `test_inbox.py` (a message body echoing the IMAP password), which prove the
+    sink actually masks what the detector proves it is handed. And `web` is not
+    scanned at all: it holds no Vault, so it never resolves a secret, and its
+    results are `http.request`'s already-redacted ones."""
+    caps = _caps(sess)
+    stale = {
+        (cap, op)
+        for cap, op in RESULT_CARRIES_NO_SECRET
+        if cap not in caps or op not in caps[cap].exports()
+    }
+    assert not stale, f"exemptions naming ops that no longer exist: {sorted(stale)}"
+    _assert_rationales(RESULT_CARRIES_NO_SECRET)
+
+    for name in sorted(SINK_MIRRORED):
+        cap = caps[name]
+        methods = _class_methods(cap)
+        for op, func in cap.exports().items():
+            if (name, op) in RESULT_CARRIES_NO_SECRET:
+                continue
+            node = methods.get(getattr(func, "__name__", ""))
+            assert node is not None, (
+                f"{name}.{op} is not a method of {type(cap).__name__} — the "
+                "return-path scan cannot see it; give it a written exemption "
+                "or keep the op on the capability class"
+            )
+            assert _redacts_every_return(node, methods), (
+                f"{name}.{op} returns a value that does not pass through the "
+                "secret sink. A result crossing to the child is sealed but "
+                "never redacted, so a resolved secret echoed into this result "
+                "reaches agent code. Route the return through "
+                "sink.redacted(...), or classify it in RESULT_CARRIES_NO_SECRET "
+                "with the reason its result cannot carry one."
+            )
