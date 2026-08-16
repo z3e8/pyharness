@@ -19,8 +19,15 @@ hand-written list of names — and assert an explicit classification:
 
 The classification tables below are therefore deliverables in their own right:
 each exemption is a stated design boundary (the raw material for the public
-threat-model page), and an unclassified newcomer fails every one of these tests
-until someone decides — in writing — how it relates to each policy.
+threat-model page).
+
+Two shapes of test live here, and the difference is worth stating plainly. The
+*partition* tests (host scoping, agent-facing surface, approval) enumerate the
+whole registry, so an unclassified newcomer fails them on registration alone.
+The *detector* tests (sandbox wrapping, secret-sink routing) start from a
+property of the capability — it execs a program, it holds a `Vault` — and only
+demand a classification from capabilities that have it. A newcomer that does
+neither has nothing to classify and passes those two, correctly.
 
 Policies covered: host scoping (`allowed_hosts`), parent-side sandbox wrapping,
 dispatch mediation (everything the agent can reach is a broker proxy), approval
@@ -298,12 +305,20 @@ def test_sandbox_wrap_classification_covers_every_capability(sess):
     wrap, or is a named fixed-argv exemption. The detector walks each
     capability's own module plus its pyharness collaborators, so the next
     capability that shells out (the `packages.install` failure mode) is caught
-    whether the exec lives in the capability file or one level down. Limits:
-    execs buried in third-party packages or deeper harness modules are out of
-    scan reach — those are named per capability in EXEC_OUT_OF_SCAN_REACH
-    rather than silently out of frame."""
+    whether the exec lives in the capability file or one level down.
+
+    Detector-based, not declarative: a capability is asked to classify itself
+    only once the scan finds an exec site in it, so a newcomer that execs
+    nothing passes without an entry. Other limit: execs buried in third-party
+    packages or deeper harness modules are out of scan reach — those are named
+    per capability in EXEC_OUT_OF_SCAN_REACH rather than silently out of
+    frame."""
     caps = _caps(sess)
-    _assert_partition(set(caps), PARENT_EXEC, set(caps) - PARENT_EXEC)
+    # The per-capability scan below iterates the live registry, so it can never
+    # visit a PARENT_EXEC name that stopped being registered. Catch that here.
+    assert PARENT_EXEC <= set(caps), (
+        f"stale PARENT_EXEC entries: {sorted(PARENT_EXEC - set(caps))}"
+    )
     assert SANDBOX_WRAPPED <= PARENT_EXEC
     assert set(EXEC_OUT_OF_SCAN_REACH) <= set(caps) - PARENT_EXEC
     _assert_rationales(UNWRAPPED_EXEC_EXEMPT)
