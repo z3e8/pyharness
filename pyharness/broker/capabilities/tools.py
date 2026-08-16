@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -30,24 +31,42 @@ def mcp_tool_meta(registry: Registry, tool, func) -> tuple[bool, dict | None]:
     return True, getattr(info.module, "_mcp_tools", {}).get(str(func))
 
 
-def unvetted_mcp_call(registry_getter):
-    """Build the `approve_if` predicate that forces approval on a `tools.invoke`
-    targeting an MCP server tool, unless the server declares it read-only
-    (`readOnlyHint`). `registry_getter` is called at decision time (the default
-    Policy is built before the Session's registry exists). Never connects a
-    server — an unresolved MCP target fails closed. Non-MCP targets (installed
-    modules, learned skills) stay ungated here."""
+def mcp_tool_call(registry_getter):
+    """Build the `approve_if` predicate that forces approval on any `tools.invoke`
+    targeting an MCP server tool. `registry_getter` is called at decision time
+    (the default Policy is built before the Session's registry exists). Never
+    connects a server — an unresolved MCP target fails closed. Non-MCP targets
+    (installed modules, learned skills) stay ungated here.
+
+    No server-declared annotation suppresses this. `readOnlyHint` used to, which
+    made the gate worth exactly what the server's own claim about itself was
+    worth: a hostile server marking every tool read-only bought silence for the
+    session. Whether a call is approved is the human's decision, taken per tool
+    (see `ToolsCapability.scope`); the server only gets to describe itself in the
+    prompt."""
 
     def predicate(action: str, args: tuple, kwargs: dict) -> bool:
         if action != "tools.invoke":
             return False
         tool, func, _, _ = _invoke_target(args, kwargs)
-        is_mcp, meta = mcp_tool_meta(registry_getter(), tool, func)
-        if not is_mcp:
-            return False
-        return meta is None or not meta["annotations"].get("readOnlyHint", False)
+        is_mcp, _ = mcp_tool_meta(registry_getter(), tool, func)
+        return is_mcp
 
     return predicate
+
+
+def mcp_annotation_pin(meta: dict) -> str:
+    """A short digest of the server-declared descriptor behind one tool — the
+    original MCP name it maps to, plus its annotations. Folded into the grant
+    scope so an approval covers the tool *as it was described when the human saw
+    it*: a server that renames what `demo.echo` forwards to, or that flips a
+    hint, no longer matches the grant and gets asked again."""
+    payload = json.dumps(
+        {"name": meta.get("name"), "annotations": meta.get("annotations") or {}},
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 def _invoke_target(args: tuple, kwargs: dict) -> tuple:
@@ -225,19 +244,25 @@ class ToolsCapability:
         path.write_text(json.dumps(config, indent=2) + "\n")
 
     def preview(self, op: str, args: tuple, kwargs: dict) -> tuple[ActionCategory, str]:
-        """Describe a gated call for the approver. For `invoke` on an MCP tool,
-        the category comes from the server's declared annotations: an explicit
-        `destructiveHint` is IRREVERSIBLE (always re-asks, never grantable),
-        anything else is OUTWARD. Deliberate deviation from the MCP spec's
-        default (absent destructiveHint *means* destructive): taking that
-        literally would class most tools IRREVERSIBLE and remove the one-grant-
-        per-server flow; the prompt itself is the safety net for the unknown."""
+        """Describe a gated call for the approver. An MCP `invoke` is OUTWARD:
+        the harness cannot know whether someone else's server tool can be taken
+        back, and IRREVERSIBLE means an effect the *harness* knows is permanent,
+        not one the server says is. A declared `destructiveHint` is shown to the
+        human as what it is — the server's own claim about itself — and decides
+        nothing: it neither raises the category nor withholds a grant, because a
+        server willing to lie about it would simply not declare it. What bounds
+        the call is that the grant covers this one tool only (see `scope`)."""
         if op == "invoke":
             tool, func, call_args, call_kwargs = _invoke_target(args, kwargs)
             summary = f"{tool}.{func}({summarize_args(call_args, call_kwargs)})"
             is_mcp, meta = mcp_tool_meta(self.registry, tool, func)
-            if is_mcp and meta and meta["annotations"].get("destructiveHint"):
-                return ActionCategory.IRREVERSIBLE, summary
+            if is_mcp:
+                if meta is None:
+                    summary += "  [MCP tool, server not yet connected]"
+                elif meta["annotations"].get("destructiveHint"):
+                    summary += "  [MCP tool the server declares destructive]"
+                else:
+                    summary += "  [MCP tool]"
             return ActionCategory.OUTWARD, summary
         if op == "add_mcp_server":
             # Secret-safe: env/header *names* only, never values (which may be
@@ -260,14 +285,19 @@ class ToolsCapability:
         return ActionCategory.OUTWARD, f"tools.{op}({summarize_args(args, kwargs)})"
 
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
-        """The grant key for a gated invoke: action-class "mcp" plus the server
-        name, so one approval can cover a server's (non-destructive) tools for
-        the session. Destructive and not-yet-resolved targets yield None (not
-        grantable — always prompt)."""
+        """The grant key for a gated invoke: action-class "mcp" on one
+        `server.tool` pair, pinned to the descriptor the human was shown. A
+        standing approval therefore covers repeat calls to *that* tool and
+        nothing else — approving `demo.echo` says nothing about `demo.getenv`,
+        which is a different decision the human never saw.
+
+        A not-yet-resolved target yields None (not grantable): with no descriptor
+        there is nothing to pin, and a grant minted now could not be tied to what
+        the server later turns out to offer."""
         if op != "invoke":
             return None
         tool, func, _, _ = _invoke_target(args, kwargs)
         is_mcp, meta = mcp_tool_meta(self.registry, tool, func)
-        if not is_mcp or meta is None or meta["annotations"].get("destructiveHint"):
+        if not is_mcp or meta is None:
             return None
-        return GrantScope("mcp", str(tool))
+        return GrantScope("mcp", f"{tool}.{func}", pin=mcp_annotation_pin(meta))

@@ -30,7 +30,7 @@ from ..broker.capabilities import (
 from ..broker.capabilities.browser import MUTATING_ACTIONS as MUTATING_BROWSER_ACTIONS
 from ..broker.capabilities.http import MUTATING_METHODS
 from ..broker.capabilities.spawn import ChildRun, SpawnCapability, SpawnResult
-from ..broker.capabilities.tools import unvetted_mcp_call
+from ..broker.capabilities.tools import mcp_tool_call
 from ..broker.dispatch import Approver, Broker
 from ..broker.remote import RemoteKernel
 from ..budget import Budget
@@ -290,9 +290,10 @@ class Session:
                 _request_carries_secret,
                 _look_after_injected_secret,
                 _opens_with_profile,
-                # MCP tool calls prompt unless the server marks them read-only;
-                # the registry is read at decision time (it's built below).
-                unvetted_mcp_call(lambda: self.registry),
+                # Every MCP tool call prompts on first use, whatever the server
+                # says about itself; the registry is read at decision time (it's
+                # built below).
+                mcp_tool_call(lambda: self.registry),
             ],
         )
         self.vault = vault or Vault.from_env()

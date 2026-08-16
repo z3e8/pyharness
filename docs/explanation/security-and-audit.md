@@ -7,7 +7,7 @@ and records everything.** Four mechanisms, all sitting at or behind
 
 > This page is the *mechanisms*. For the perimeter they add up to — the
 > adversary model, what is confined on each platform, and all
-> 11 gaps grouped by the decision behind them — see the
+> 10 gaps grouped by the decision behind them — see the
 > [threat model](threat-model.md).
 
 ## Policy — what may run
@@ -81,28 +81,49 @@ needing a separate action name per method.
 
 **MCP tool calls** gate the same way. Every call on a loaded tool module routes
 through one action, `tools.invoke`, and a default predicate
-(`broker/capabilities/tools.py:unvetted_mcp_call`) forces approval when the
-target is an MCP server tool — unless the server's descriptor declares
-`readOnlyHint`. An explicit `destructiveHint` classes the call IRREVERSIBLE
-(always re-asks, never grantable); everything else, including un-annotated
-tools, is OUTWARD and grantable per server (below). Two caveats are deliberate:
+(`broker/capabilities/tools.py:mcp_tool_call`) forces approval whenever the
+target is an MCP server tool. Every one of them, on first use — no annotation
+the server declares about itself suppresses the prompt.
 
-- Annotations are *server-supplied* hints. Trusting them is acceptable because
-  installing the server is itself human-gated (`tools.add_mcp_server` requires
-  approval; the config file is human-edited) and the per-call prompt guards
-  against agent mistakes, not server malice.
-- The MCP spec reads an *absent* `destructiveHint` as destructive. Taking that
-  literally would class most tools IRREVERSIBLE and remove the
-  one-grant-per-server flow, so pyharness prompts (grantable) instead of
-  always-re-asking for the un-annotated case.
+That last point is the whole design here, because an MCP server is the one thing
+in the harness that describes itself and runs outside the sandbox. Its tool
+names and its `readOnlyHint` / `destructiveHint` annotations are *claims*, not
+facts, and nothing can check them. So they decide nothing:
+
+- **`readOnlyHint` buys no silence.** It used to skip approval entirely, which
+  made the gate worth exactly what a hostile server's self-description was
+  worth — mark every tool read-only, and the session never prompts again.
+- **`destructiveHint` is shown, not obeyed.** The prompt line says the server
+  declares this tool destructive, and the human weighs that for what it is. It
+  does not raise the category and does not withhold a grant. IRREVERSIBLE means
+  an effect *the harness* knows cannot be taken back; the harness knows nothing
+  of the sort about someone else's server. And a server willing to lie would
+  simply omit the hint, so resting a defense on it defends against honest
+  servers only.
+
+What actually bounds an MCP approval is its **grant key**: action class `mcp` on
+one `server.tool` pair, plus a **pin** — a digest of the descriptor the human was
+shown (the tool's annotations and the server-side name it forwards to). So
+approving `demo.echo` covers repeat calls to `demo.echo` and nothing else;
+`demo.getenv` is a decision nobody was ever asked to make, and it asks. The pin
+closes the follow-on move: annotations are re-read from the server at every
+decision, so a server that re-describes an approved tool mid-session no longer
+matches the grant it was given and is put back in front of the human. The digest
+also lands in the audit record that mints the grant, so the chain records which
+version of the tool was approved.
 
 Deciding policy never connects a server: an MCP target that is not yet resolved
-fails closed (prompts). Per-server rules are predicates over `tools.invoke`'s
-arguments (`args[0]` is the server, `args[1]` the function), the same pattern as
-the HTTP-method gate. Mounting a server at runtime (`tools.add_mcp_server`) is
-itself in the default `require_approval` set — it installs code, like
+fails closed (prompts, and is never grantable — with no descriptor there is
+nothing to pin). Per-server rules are predicates over `tools.invoke`'s arguments
+(`args[0]` is the server, `args[1]` the function), the same pattern as the
+HTTP-method gate. Mounting a server at runtime (`tools.add_mcp_server`) is itself
+in the default `require_approval` set — it installs code, like
 `packages.install` — and refuses a name already in the registry, so a server
 can't shadow `http`/`web` and launder its approval summaries.
+
+Servers declared in a saved MCP config file mount without a prompt, because an
+operator put them there. That provenance covers **connecting** and stops there:
+their tool calls hit the same per-tool approval as any other.
 
 ### What the human is shown — preview and taxonomy
 

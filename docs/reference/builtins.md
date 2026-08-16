@@ -205,10 +205,10 @@ Find a tool, inspect it, then load and call it.
 | `use_tool(name) -> module` | load it, then call its functions on the returned module |
 | `add_mcp_server(name, command=None, args=(), url=None, env=None, headers=None, summary=None, keywords=(), category=None, timeout=30.0, save=False) -> str` | mount an MCP server (local `command` or remote `url`) as a tool named `name`; **requires approval**. Credentials go as `"secret:NAME"` vault refs. `summary`/`keywords`/`category` feed `search_tools` ranking; `timeout` (seconds) bounds each request. `save=True` persists it to the session's MCP config for later sessions (refuses cleartext env/header values) |
 
-MCP tool calls made through a loaded module are broker-gated per call: reads
-declared `readOnlyHint` flow, anything else prompts (grantable per server), and
-a declared `destructiveHint` always re-asks — see
-[the approval policy](../explanation/security-and-audit.md).
+MCP tool calls made through a loaded module are broker-gated per call: every one
+prompts on first use, whatever the server declares about itself, and a standing
+grant covers that one tool as it was described — not the rest of the server —
+see [the approval policy](../explanation/security-and-audit.md).
 
 ## Skills
 

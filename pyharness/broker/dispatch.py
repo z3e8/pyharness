@@ -418,6 +418,11 @@ class Broker:
                             "target": minted.scope.target,
                             "expires_at": minted.expires_at,
                         }
+                        if minted.scope.pin is not None:
+                            # The descriptor digest the grant is tied to, so the
+                            # chain records not just what was approved but the
+                            # version of it the human was shown.
+                            fields["grant"]["pin"] = minted.scope.pin
                     if outcome is ApprovalOutcome.DENY:
                         # A refused approval ends the action: its decision record
                         # doubles as the outcome record. Guard it so a call

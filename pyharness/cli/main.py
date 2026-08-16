@@ -156,7 +156,7 @@ def _resolve_root(dir_arg: str | None, env: Mapping[str, str], now: str) -> Path
 _GRANT_CLASS_LABEL = {
     "browser": "state-changing browser actions",
     "http": "state-changing HTTP requests",
-    "mcp": "non-destructive MCP tool calls",
+    "mcp": "calls to this MCP tool",
     "spawn": "sub-agent spawns",
 }
 
@@ -187,10 +187,13 @@ def _ask(prompt: str) -> str:
 def _grant_offer(scope) -> str:
     """The '[a] …' line for a grantable approval. Host-scoped classes read
     'all X on <host>'; the session-wide spawn grant has no host, so it reads
-    'all sub-agent spawns this session'."""
+    'all sub-agent spawns this session'; an MCP grant names the one tool it
+    covers, since it covers that tool and no other on the same server."""
     label = _GRANT_CLASS_LABEL.get(scope.action_class, scope.action_class)
     if scope.action_class == "spawn":
         return f"all {label} this session"
+    if scope.action_class == "mcp":
+        return f"all {label} ({scope.target}) this session"
     return f"all {label} on {scope.target} this session"
 
 

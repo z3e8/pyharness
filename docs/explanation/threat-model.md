@@ -212,23 +212,28 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**39 of 50 adversarial attacks blocked. 11 known gaps, 0 unexpected successes, 0
+**41 of 51 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
 the *decision* that produced them, because there are fewer decisions than gaps.
 
 ### 1. A grant's unit of trust is coarser than the prompt's
 
-`host-grant-covers-any-path` · `spawn-grant-covers-wider-child` ·
-`mcp-grant-covers-another-tool`
+`host-grant-covers-any-path` · `spawn-grant-covers-wider-child`
 
-Grants are keyed on `(action class, host)`, on `("spawn", "session")`, and on the
-MCP server rather than the tool. In each case the human is shown one concrete
-thing and grants a slightly wider class of it. The alternative — a grant keyed on
-the exact request, the exact child, the exact tool — re-prompts on every URL of a
-normal multi-step task and on every tool of a twenty-tool server, and the
-reliable outcome of prompt fatigue is that humans approve everything, so the
-precision is lost in practice.
+Grants are keyed on `(action class, host)` and on `("spawn", "session")`. In each
+case the human is shown one concrete thing and grants a slightly wider class of
+it. The alternative — a grant keyed on the exact request, the exact child —
+re-prompts on every URL of a normal multi-step task, and the reliable outcome of
+prompt fatigue is that humans approve everything, so the precision is lost in
+practice.
+
+MCP tool calls used to be in this group, keyed on the server. They are not any
+more: a grant there is keyed on the `server.tool` pair and pinned to the
+descriptor the human was shown. The trade that justified a coarse key elsewhere
+did not hold here, because the wider class was not the harness's to define — the
+*server* decided which of its tools an approval swept in, by declaring itself
+non-destructive, and a server willing to lie declares whatever it likes.
 
 What bounds it: a grant never widens policy, only short-circuits the prompt;
 IRREVERSIBLE actions are never covered and never mint; grants are exact-match
@@ -460,7 +465,7 @@ floor directly.
 ## Checking any of this yourself
 
 ```bash
-make evals                            # re-run the 50 attacks, rewrite the scoreboard
+make evals                            # re-run the 51 attacks, rewrite the scoreboard
 make test                             # the suite plus the policy enumeration tests
 uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
 make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N

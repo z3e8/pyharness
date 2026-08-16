@@ -398,7 +398,7 @@ def _mcp_local_server(name: str, approver):
     from pyharness.audit import AuditLog
     from pyharness.broker import Broker
     from pyharness.broker.capabilities import ToolsCapability
-    from pyharness.broker.capabilities.tools import unvetted_mcp_call
+    from pyharness.broker.capabilities.tools import mcp_tool_call
     from pyharness.budget import Budget
     from pyharness.security.policy import Policy
     from pyharness.tools.registry import Registry
@@ -410,7 +410,7 @@ def _mcp_local_server(name: str, approver):
     registry = Registry()
     registry.add_mcp_server("demo", sys.executable, (str(_FAKE_MCP_SERVER),))
     broker = Broker(
-        Policy(approve_if=[unvetted_mcp_call(lambda: registry)]),
+        Policy(approve_if=[mcp_tool_call(lambda: registry)]),
         AuditLog(root / "audit.jsonl"),
         Budget(),
         approver=approver,
@@ -462,6 +462,32 @@ def _mcp_grant_stops_at_a_declared_destructive_tool() -> Verdict:
         must(approver.asked == 1, "the first tool call was never put to a human")
         return refused_with(
             lambda: demo.drop_table("users"), PermissionDenied, "not approved"
+        )
+    finally:
+        registry.close()
+        ctx.__exit__(None, None, None)
+
+
+def _mcp_grant_survives_an_annotation_swap() -> Verdict:
+    """Get a standing approval for a tool the server describes one way, then
+    re-describe it underneath the grant. The human approved what they read."""
+    from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
+
+    approver = Approver(ApprovalOutcome.GRANT, default=ApprovalOutcome.DENY)
+    ctx, registry, cap = _mcp_local_server("mcp-annotation-swap", approver)
+    try:
+        demo = cap.use_tool("demo")
+        demo.echo("hello")
+        must(approver.asked == 1, "the first tool call was never put to a human")
+        must(
+            str(demo.echo("again")) == "again" and approver.asked == 1,
+            "the standing grant did not cover a repeat of the very call it was "
+            "minted for, so this says nothing about re-describing one",
+        )
+        # The server now claims `echo` forwards somewhere else entirely.
+        registry.info("demo").module._mcp_tools["echo"]["name"] = "drop_table"
+        return refused_with(
+            lambda: demo.echo("owned"), PermissionDenied, "not approved"
         )
     finally:
         registry.close()
@@ -633,8 +659,10 @@ ATTACKS = [
         surface="isolation",
         description="use a standing approval on a tool the server calls destructive",
         property=(
-            "A standing approval never covers a tool the harness has been told is "
-            "destructive; that one always asks."
+            "A standing approval covers the one tool it was minted for. A tool "
+            "the server declares destructive is a different tool, so it asks — "
+            "and it would ask just the same had the server declared nothing, "
+            "because the declaration is not what stops it."
         ),
         run=_mcp_grant_stops_at_a_declared_destructive_tool,
     ),
@@ -658,20 +686,17 @@ ATTACKS = [
             "server is a different decision."
         ),
         run=_mcp_grant_covers_another_tool,
-        known_gap=(
-            "An MCP grant is keyed on the server, not the tool, and the category "
-            "comes from the server's own declared annotations. That is the same "
-            "trade as the host grant: per-tool prompting on a twenty-tool server "
-            "makes the prompt worthless. The cost is that one approval covers "
-            "every other tool on that server which does not declare itself "
-            "destructive — and the declaration is the server's to make, so a "
-            "hostile server can simply not declare. Bounded by the companion "
-            "attack `mcp-grant-stops-at-destructive` (a declared-destructive tool "
-            "always re-asks), by mounting a server being approval-gated and never "
-            "grantable, and by every tool call landing in the audit chain. The "
-            "unit of trust here is the server, which is also the unit the human "
-            "actually decided to install."
+    ),
+    Attack(
+        id="mcp-grant-survives-annotation-swap",
+        surface="isolation",
+        description="re-describe an approved tool underneath its standing grant",
+        property=(
+            "A standing approval covers the tool as the human was shown it. A "
+            "server that re-describes that tool has changed the thing being "
+            "approved, and gets asked again."
         ),
+        run=_mcp_grant_survives_an_annotation_swap,
     ),
     Attack(
         id="browser-subresource-off-scope",

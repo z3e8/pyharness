@@ -17,7 +17,7 @@ from pyharness import Budget, Policy, Registry, Session
 from pyharness.audit import AuditLog
 from pyharness.broker import Broker
 from pyharness.broker.capabilities import ToolsCapability
-from pyharness.broker.capabilities.tools import unvetted_mcp_call
+from pyharness.broker.capabilities.tools import mcp_tool_call
 from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
 from pyharness.security.policy import ActionCategory
 
@@ -37,7 +37,7 @@ class _Approver:
 def _setup(tmp_path, approver=None):
     registry = Registry()
     registry.add_mcp_server("demo", sys.executable, (str(FAKE),))
-    policy = Policy(approve_if=[unvetted_mcp_call(lambda: registry)])
+    policy = Policy(approve_if=[mcp_tool_call(lambda: registry)])
     broker = Broker(
         policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver
     )
@@ -52,10 +52,11 @@ def _audited_actions(tmp_path):
 
 
 def test_use_tool_routes_mcp_calls_through_the_broker(tmp_path):
-    registry, broker, cap = _setup(tmp_path)
+    registry, broker, cap = _setup(tmp_path, approver=_Approver())
     try:
         demo = cap.use_tool("demo")
-        # Read-only per the server's annotations: flows without approval.
+        # A tool the server declares read-only is gated like any other: the
+        # declaration is the server's own claim, so it buys no silence.
         assert demo.read_status() == "[]"
         assert "tools.invoke" in _audited_actions(tmp_path)
         # The gated proxy keeps the generated signature and docstring.
@@ -65,17 +66,32 @@ def test_use_tool_routes_mcp_calls_through_the_broker(tmp_path):
         registry.close()
 
 
-def test_mutating_mcp_call_requires_approval(tmp_path):
+def test_read_only_annotation_does_not_suppress_approval(tmp_path):
+    registry, broker, cap = _setup(tmp_path)  # no approver
+    try:
+        demo = cap.use_tool("demo")
+        with pytest.raises(PermissionDenied):
+            demo.read_status()
+    finally:
+        registry.close()
+
+
+def test_mcp_call_requires_approval_scoped_to_the_one_tool(tmp_path):
     approver = _Approver()
     registry, broker, cap = _setup(tmp_path, approver=approver)
     try:
         demo = cap.use_tool("demo")
-        assert demo.echo(message="hi") == "hi"  # un-annotated -> prompted, allowed
+        assert demo.echo(message="hi") == "hi"
         (request,) = approver.requests
         assert request.category is ActionCategory.OUTWARD
         assert "demo.echo(" in request.summary
         assert request.scope is not None
-        assert (request.scope.action_class, request.scope.target) == ("mcp", "demo")
+        # The grant key names the tool, not just the server that carries it.
+        assert (request.scope.action_class, request.scope.target) == (
+            "mcp",
+            "demo.echo",
+        )
+        assert request.scope.pin  # pinned to the descriptor the human was shown
     finally:
         registry.close()
 
@@ -90,30 +106,74 @@ def test_mutating_mcp_call_denied_without_approver(tmp_path):
         registry.close()
 
 
-def test_grant_covers_the_server_for_the_session(tmp_path):
+def test_grant_covers_one_tool_not_the_whole_server(tmp_path):
     approver = _Approver(outcome=ApprovalOutcome.GRANT)
     registry, broker, cap = _setup(tmp_path, approver=approver)
     try:
         demo = cap.use_tool("demo")
         assert demo.echo(message="one") == "one"
         assert demo.echo(message="two") == "two"  # covered by the minted grant
-        assert demo.add(a=1, b=2) == "3"  # same server, same grant
         assert len(approver.requests) == 1
+        assert demo.add(a=1, b=2) == "3"  # a different tool: a different decision
+        assert len(approver.requests) == 2
+        assert approver.requests[-1].scope.target == "demo.add"
     finally:
         registry.close()
 
 
-def test_destructive_mcp_call_is_irreversible_and_never_grantable(tmp_path):
+def test_grant_is_pinned_to_the_annotations_the_human_saw(tmp_path):
+    approver = _Approver(outcome=ApprovalOutcome.GRANT)
+    registry, broker, cap = _setup(tmp_path, approver=approver)
+    try:
+        demo = cap.use_tool("demo")
+        assert demo.echo(message="one") == "one"
+        assert demo.echo(message="two") == "two"  # same descriptor, grant holds
+        assert len(approver.requests) == 1
+        # The server re-declares the tool under the standing grant. The grant was
+        # for what the human read, so the changed tool has to be asked again.
+        registry.info("demo").module._mcp_tools["echo"]["annotations"] = {
+            "destructiveHint": True
+        }
+        assert demo.echo(message="three") == "three"
+        assert len(approver.requests) == 2
+        assert approver.requests[0].scope.pin != approver.requests[1].scope.pin
+    finally:
+        registry.close()
+
+
+def test_grant_is_pinned_to_the_mcp_name_behind_the_python_function(tmp_path):
+    approver = _Approver(outcome=ApprovalOutcome.GRANT)
+    registry, broker, cap = _setup(tmp_path, approver=approver)
+    try:
+        demo = cap.use_tool("demo")
+        assert demo.echo(message="one") == "one"
+        # Swapping which server-side tool `echo` forwards to is the same trick as
+        # changing its hints, and the pin covers it too.
+        registry.info("demo").module._mcp_tools["echo"]["name"] = "drop_table"
+        demo.echo(message="two")
+        assert len(approver.requests) == 2
+    finally:
+        registry.close()
+
+
+def test_destructive_hint_is_shown_but_decides_nothing(tmp_path):
     approver = _Approver(outcome=ApprovalOutcome.GRANT)
     registry, broker, cap = _setup(tmp_path, approver=approver)
     try:
         demo = cap.use_tool("demo")
         assert demo.drop_table(table="users") == "dropped users"
+        (request,) = approver.requests
+        # The server's claim reaches the human as a claim, and nothing else: the
+        # category stays what the harness itself can vouch for, and the call is
+        # grantable per tool like any other.
+        assert request.category is ActionCategory.OUTWARD
+        assert "declares destructive" in request.summary
+        assert request.scope.target == "demo.drop_table"
+        # ... and the grant it minted still stops at that one tool.
         assert demo.drop_table(table="orders") == "dropped orders"
-        # Both calls prompted (GRANT could not mint for an IRREVERSIBLE call).
+        assert len(approver.requests) == 1
+        demo.echo(message="hi")
         assert len(approver.requests) == 2
-        assert all(r.category is ActionCategory.IRREVERSIBLE for r in approver.requests)
-        assert all(r.scope is None for r in approver.requests)
     finally:
         registry.close()
 
@@ -164,7 +224,7 @@ def _mount_setup(tmp_path, approver=None, config_path=None, vault=None):
     registry = Registry()
     policy = Policy(
         require_approval={"tools.add_mcp_server"},
-        approve_if=[unvetted_mcp_call(lambda: registry)],
+        approve_if=[mcp_tool_call(lambda: registry)],
     )
     broker = Broker(
         policy, AuditLog(tmp_path / "audit.jsonl"), Budget(), approver=approver
@@ -276,8 +336,12 @@ def test_session_wires_mcp_gating_in_process(tmp_path):
     try:
         use_tool = session.broker.namespace()["use_tool"]
         demo = use_tool("demo")
-        assert demo.read_status() == "[]"  # read-only flows
+        # A server declared in the session's MCP config mounts without a prompt —
+        # an operator put it there. That provenance covers *connecting*, and
+        # stops there: every call still needs its own human, in-process too.
         with pytest.raises(PermissionDenied):
-            demo.echo(message="hi")  # mutating is gated, in-process too
+            demo.read_status()  # even the one the server calls read-only
+        with pytest.raises(PermissionDenied):
+            demo.echo(message="hi")
     finally:
         session.close()
