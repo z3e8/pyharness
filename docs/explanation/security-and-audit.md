@@ -520,20 +520,42 @@ design); masking cleans up the incidental echo and is deliberately not relied on
 as the perimeter. Widening the encodings covered would trade a few more catches
 for `***` false positives on innocent text, so it is intentionally left narrow.
 
-Masking covers the **exception path** too, as a defense-in-depth invariant. An
-exception is a perfectly good exfiltration envelope — an `httpx` error's repr
-embeds the full request URL (query params included), `TimeoutExpired` the whole
-argv — and success-path masking inside a capability never sees it. So every
-per-context sink mirrors its masks into one session-wide `SecretSink`
-(`Session.secret_sink`), and three surfaces redact through it: the broker masks
-the audited `repr(exc)` of a failing call (so `audit.jsonl`, the trace, and
-telemetry never carry cleartext), the in-process kernel masks the returned cell
-output (traceback included), and the out-of-process host rewrites a
-secret-bearing exception as a `RemoteError` with a masked message *before* it
-crosses the pipe — cleartext never even enters the child process. Clean,
-secret-free exceptions pass through untouched, type intact, so agent code can
-still catch them; the redaction runs only on error paths and is a no-op while no
-secret has been resolved.
+Masking inside a capability only reaches results the capability composed itself,
+so two things escape it: an **exception**, and a **result the harness never
+wrote**. Both are covered from one place. Every per-context sink mirrors its
+masks into one session-wide `SecretSink` (`Session.secret_sink`), and four
+surfaces redact through it.
+
+- The broker masks the audited `repr(exc)` of a failing call, so `audit.jsonl`,
+  the trace, and telemetry never carry cleartext. An exception is a perfectly
+  good exfiltration envelope — an `httpx` error's repr embeds the full request
+  URL, query params included; `TimeoutExpired` embeds the whole argv.
+- The in-process kernel masks the returned cell output, traceback included.
+- The out-of-process host rewrites a secret-bearing exception as a `RemoteError`
+  with a masked message *before* it crosses the pipe. Clean, secret-free
+  exceptions pass through untouched, type intact, so agent code can still catch
+  them.
+- The out-of-process host also masks every **structured success result** on the
+  same crossing. This is the one that does not depend on any capability doing
+  the right thing: whatever a capability returns, the value is walked and masked
+  before it is pickled to the child, so cleartext never enters the child
+  process. It exists because per-capability redaction cannot reach a result the
+  harness did not compose — an MCP server handed a `secret:` credential can echo
+  it straight back from a `whoami` endpoint or quote the auth header in an error
+  body, and `tools.invoke` returns what the server said. No amount of care
+  inside the harness covers someone else's process; masking where every result
+  passes does.
+
+The redactions are no-ops while no secret has been resolved (the sink checks its
+mask set first), so a session that never touches the vault pays nothing for any
+of them.
+
+The in-process kernel is deliberately *not* a fourth crossing to defend. Agent
+code there runs in the parent process and can reach the broker and the vault
+through ordinary introspection, so masking a return value in that mode is
+housekeeping rather than containment. Capabilities still redact their own
+results there, which keeps a credential out of ordinary output, but the mode's
+own documentation is what it has always been: out-of-process is the boundary.
 
 The sink is also where **host binding** is enforced. A vault entry can be bound
 to the host(s) it belongs to at config time (`pyharness-vault set github --host

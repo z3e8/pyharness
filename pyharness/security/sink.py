@@ -110,6 +110,8 @@ class SecretSink:
         this sink injected are masked — no need to scan for arbitrary secrets.
         The mask set is snapshotted first: a session-wide mirror can be read
         (a broker error path) while another thread's sink is still absorbing."""
+        if not self._masks:
+            return text
         for mask in tuple(self._masks):
             text = text.replace(mask, "***")
         return text
@@ -125,13 +127,27 @@ class SecretSink:
 
     def redacted(self, value):
         """Redact `value` wherever a string can hide a resolved secret: a bare
-        string, or the string leaves of a nested mapping or list such as an HTTP
-        result, its headers, and its parsed links/forms. Non-string leaves pass
-        through."""
+        string, or the string leaves of a nested mapping, list or tuple such as
+        an HTTP result, its headers, and its parsed links/forms. Non-string
+        leaves pass through.
+
+        This runs on every structured result crossing to the child kernel (see
+        `broker/remote/host.py::_serve`), so it starts with the emptiness check:
+        a session that never resolved a secret pays one set test per capability
+        call and nothing else. When there *are* masks the walk is proportional to
+        a value that is about to be pickled onto a pipe anyway."""
+        if not self._masks:
+            return value
         if isinstance(value, str):
             return self.redact(value)
         if isinstance(value, dict):
             return {key: self.redacted(item) for key, item in value.items()}
         if isinstance(value, list):
             return [self.redacted(item) for item in value]
+        # Pickle preserves a tuple, so an unwalked tuple leaf would reach the
+        # child with its cleartext intact. Plain tuples only — a namedtuple or
+        # other tuple subclass would not survive being rebuilt this way, so it is
+        # left alone rather than silently degraded.
+        if type(value) is tuple:
+            return tuple(self.redacted(item) for item in value)
         return value

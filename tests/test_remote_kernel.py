@@ -577,6 +577,53 @@ def test_child_environment_has_no_secrets(kernel_factory, tmp_path, monkeypatch)
     assert out == "None\nNone\nNone\nTrue"
 
 
+class EchoingCapability:
+    """A capability that resolves a credential and then hands it straight back
+    in a structured result, redacting nothing itself.
+
+    Not a strawman: this is the shape of any result the harness did not compose.
+    An MCP server given a credential can echo it from a `whoami` endpoint or
+    quote the auth header in an error body, and `tools.invoke` returns whatever
+    it says. No per-capability discipline reaches inside someone else's process,
+    so the mask has to be applied where every result passes."""
+
+    name = "echoing"
+
+    def __init__(self, sink):
+        self._sink = sink
+
+    def exports(self):
+        return {"echo_secret": self._echo}
+
+    def _echo(self):
+        secret = self._sink.resolve("tok")
+        return {"whoami": [{"token": secret}], "pair": ("token", secret)}
+
+
+def test_structured_results_are_redacted_before_they_cross(kernel_factory, tmp_path):
+    """Session-wide, not per-capability: a result nobody redacted at the source
+    still reaches the child masked, in every container `redacted` walks."""
+    from pyharness.security.sink import SecretSink
+    from pyharness.security.vault import Vault
+
+    secret = "S3CR3T-mcp-token"
+    session_sink = SecretSink(Vault({"tok": secret}))
+    broker = _broker(tmp_path)
+    broker.redact_result = session_sink.redacted
+    cap = EchoingCapability(SecretSink(Vault({"tok": secret}), mirror=session_sink))
+    broker.register(cap)
+
+    # Control first: called parent-side, the capability genuinely returns the
+    # cleartext. So what follows is the seam masking it, not a fixture that
+    # never had a secret to leak.
+    assert cap._echo() == {"whoami": [{"token": secret}], "pair": ("token", secret)}
+
+    kernel = kernel_factory(broker)
+    out = kernel.run("r = echo_secret()\nprint(r['whoami'][0]['token'], r['pair'][1])")
+    assert out == "*** ***"
+    assert secret not in out
+
+
 requires_posix_signals = pytest.mark.skipif(
     os.name != "posix", reason="SIGINT/SIGTERM forwarding is POSIX-only"
 )

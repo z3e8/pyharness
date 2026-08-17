@@ -376,6 +376,9 @@ class Session:
             # Exception-path masking: an audited repr(exc) must never carry an
             # injected secret (see Broker.redact / the session-wide sink above).
             redact=self.secret_sink.redact,
+            # And the success path: the out-of-process host masks every
+            # structured result with this before it crosses to the child.
+            redact_result=self.secret_sink.redacted,
         )
         # Web fetch is a thin wrapper over the stateful HTTP capability, so the
         # latter is built first and shared with WebCapability.
