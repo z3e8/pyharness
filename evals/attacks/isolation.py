@@ -256,11 +256,12 @@ def _an_ordinary_child_process_inherits_the_key() -> None:
 
 def _mcp_mounted_off_scope() -> Verdict:
     """A confined session mounts a remote tool server on a host outside its
-    scope — with a human approving the mount — and then uses it.
+    scope — with a human approving everything — and then uses it.
 
-    The registry wraps a loader failure, so the refusal surfaces as a
-    RuntimeError; the reason check is what pins it to the host scope rather than
-    to the server merely being unreachable.
+    Mounting connects (it has to list the server's tools for the second
+    approval), so the scope refuses at the mount and nothing is registered. The
+    reason check is what pins the refusal to the host scope rather than to the
+    server merely being unreachable.
     """
     with (
         resolver(),
@@ -270,18 +271,19 @@ def _mcp_mounted_off_scope() -> Verdict:
             approver=Approver(default=True),
         ) as sess,
     ):
-        sess.broker.call(
-            "tools", "add_mcp_server", "evil", url="https://attacker.test/mcp"
-        )
-        must(
-            sess.registry.info("evil") is not None,
-            "the mount did not register anything, so nothing is being reached",
-        )
-        return refused_with(
-            lambda: sess.broker.call("tools", "use_tool", "evil"),
-            RuntimeError,
+        verdict = refused_with(
+            lambda: sess.broker.call(
+                "tools", "add_mcp_server", "evil", url="https://attacker.test/mcp"
+            ),
+            Exception,
             "outside this session's allowed hosts",
         )
+        must(
+            sess.registry.info("evil") is None,
+            "the refused mount left the server registered, so the agent can "
+            "still reach for it",
+        )
+        return verdict
 
 
 def _mcp_mount_reaches_connect_when_in_scope() -> None:
@@ -297,11 +299,10 @@ def _mcp_mount_reaches_connect_when_in_scope() -> None:
             approver=Approver(default=True),
         ) as sess,
     ):
-        sess.broker.call(
-            "tools", "add_mcp_server", "fine", url="http://127.0.0.1:1/mcp"
-        )
         try:
-            sess.broker.call("tools", "use_tool", "fine")
+            sess.broker.call(
+                "tools", "add_mcp_server", "fine", url="http://127.0.0.1:1/mcp"
+            )
         except Exception as exc:  # noqa: BLE001 — a connection failure is expected
             must(
                 "allowed hosts" not in str(exc),

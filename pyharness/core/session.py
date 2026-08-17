@@ -273,7 +273,12 @@ class Session:
                 # degrades to nothing where there is no OS sandbox, so a human
                 # signs each one. Full reasoning in ShellCapability.preview.
                 "shell.bash",
-                "tools.add_mcp_server",  # mounting a server installs code
+                # Mounting a server installs code, in two decisions: the
+                # connection (all anyone can judge before contact), then the tool
+                # surface it turns out to offer. Both must be listed — dropping
+                # the second silently reverts mounting to a single blind prompt.
+                "tools.add_mcp_server",
+                "tools.confirm_mcp_tools",
                 # Approving a spawn is approving the child's whole plan: task,
                 # capability set, budget slice (see SpawnCapability.preview).
                 "spawn.spawn",

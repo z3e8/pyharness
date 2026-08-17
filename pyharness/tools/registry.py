@@ -362,6 +362,24 @@ class Registry:
             'search_tools("*") to list everything)'
         )
 
+    def remove(self, name: str) -> None:
+        """Drop a tool from the index, closing its MCP connection if it had one.
+
+        For unwinding a mount that was registered and then refused — a server
+        whose tool surface a human declined must be gone, not merely unused, or
+        the next `use_tool(name)` would reach code nobody approved."""
+        info = self._tools.pop(name, None)
+        if info is None:
+            return
+        client = getattr(info.module, "_mcp_client", None)
+        if client is None:
+            return
+        self._mcp_clients = [c for c in self._mcp_clients if c is not client]
+        try:
+            client.close()
+        except Exception:  # noqa: BLE001 — matches close(): teardown never raises
+            pass
+
     def close(self) -> None:
         """Close every MCP server connection this registry opened."""
         for client in self._mcp_clients:

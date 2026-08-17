@@ -116,14 +116,40 @@ Deciding policy never connects a server: an MCP target that is not yet resolved
 fails closed (prompts, and is never grantable — with no descriptor there is
 nothing to pin). Per-server rules are predicates over `tools.invoke`'s arguments
 (`args[0]` is the server, `args[1]` the function), the same pattern as the
-HTTP-method gate. Mounting a server at runtime (`tools.add_mcp_server`) is itself
-in the default `require_approval` set — it installs code, like
-`packages.install` — and refuses a name already in the registry, so a server
+HTTP-method gate. It also refuses a name already in the registry, so a server
 can't shadow `http`/`web` and launder its approval summaries.
 
-Servers declared in a saved MCP config file mount without a prompt, because an
-operator put them there. That provenance covers **connecting** and stops there:
-their tool calls hit the same per-tool approval as any other.
+### Mounting a server takes two approvals
+
+Mounting installs code, like `packages.install`, so `tools.add_mcp_server` is in
+the default `require_approval` set. But asking once was asking the wrong
+question. Mounting used to be lazy, so the only thing the prompt could show was a
+command line or a URL — the tool surface did not exist yet. The human was
+agreeing to a server without knowing what it offered, which is most of what there
+is to agree to.
+
+So it is two decisions, and `tools.confirm_mcp_tools` is the second:
+
+1. **The connection.** The command or URL, plus the *names* of any env vars and
+   headers (never their values, which may be vault refs the agent was allowed to
+   pass). This is everything anyone can judge before contact.
+2. The harness connects and asks the server what it has.
+3. **The tool surface**, as a unit — what it turned out to offer. Decline, and
+   the mount unwinds: the server is unregistered and its connection closed, so
+   nothing the human refused is left for the agent to reach. A `save=True` mount
+   writes its config file only after this, since a saved server auto-mounts in
+   later sessions.
+
+Stage two is **never grantable**, and that is the point of it: if a standing
+approval could cover it, one blessed mount would license the next server's whole
+surface unseen. It is also not callable by agent code — `add_mcp_server` raises
+it itself. The tool names in that prompt come from the server, so they are fenced
+and labelled as its claims, and shown as the identifiers the harness coerced them
+to, so no server string can spill across lines and forge part of the question.
+
+Servers declared in a saved MCP config file mount without either prompt, because
+an operator put them there. That provenance covers **connecting** and stops
+there: their tool calls hit the same per-tool approval as any other.
 
 ### What the human is shown — preview and taxonomy
 

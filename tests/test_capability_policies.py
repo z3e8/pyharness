@@ -433,6 +433,10 @@ HIDDEN_OPS = {
     "through. It stays broker-gated (reachable via call()/call_op()) but is "
     "never bound as a builtin, so agent code cannot call it by bare name and "
     "sidestep the per-tool proxies.",
+    ("tools", "confirm_mcp_tools"): "Stage two of a mount: the approval that "
+    "puts a connected server's tool surface to the human. add_mcp_server raises "
+    "it on its own, so binding it as a builtin would only let agent code "
+    "'accept' a surface out of band. Approval-gated and never grantable.",
 }
 
 

@@ -223,7 +223,7 @@ def test_broker_gated_core_modules_are_not_wrapped_twice(tmp_path):
 def _mount_setup(tmp_path, approver=None, config_path=None, vault=None):
     registry = Registry()
     policy = Policy(
-        require_approval={"tools.add_mcp_server"},
+        require_approval={"tools.add_mcp_server", "tools.confirm_mcp_tools"},
         approve_if=[mcp_tool_call(lambda: registry)],
     )
     broker = Broker(
@@ -236,7 +236,7 @@ def _mount_setup(tmp_path, approver=None, config_path=None, vault=None):
     return registry, broker, cap
 
 
-def test_add_mcp_server_mounts_lazily_after_approval(tmp_path):
+def test_add_mcp_server_takes_two_approvals(tmp_path):
     approver = _Approver()
     registry, broker, cap = _mount_setup(tmp_path, approver=approver)
     try:
@@ -244,12 +244,44 @@ def test_add_mcp_server_mounts_lazily_after_approval(tmp_path):
             "tools", "add_mcp_server", "demo", sys.executable, (str(FAKE),)
         )
         assert "mounted MCP server 'demo'" in result
-        (request,) = approver.requests
-        assert "mount MCP server 'demo'" in request.summary
-        assert request.scope is None  # never grantable
+        connect, surface = approver.requests
+        # Stage one is the connection — all anyone can judge before contact.
+        assert "connect to MCP server 'demo'" in connect.summary
+        # Stage two is what the server turned out to offer.
+        assert "install the tool surface of MCP server 'demo'" in surface.summary
+        assert "demo.read_status" in surface.summary
+        assert "supplied by the server" in surface.summary
+        assert connect.scope is None and surface.scope is None  # never grantable
         assert registry.info("demo").kind == "mcp"
-        assert registry.info("demo").module is None  # lazy: not yet connected
-        assert cap.use_tool("demo").read_status() == "[]"
+        assert registry.info("demo").module is not None  # connected, to be listable
+    finally:
+        registry.close()
+
+
+def test_add_mcp_server_unwinds_when_the_tool_surface_is_refused(tmp_path):
+    """The human agreed to the connection, then saw what it offered and said no.
+    Nothing may stay mounted — a registered server is code the agent can reach."""
+
+    class _RefuseSurface:
+        def __init__(self):
+            self.requests = []
+
+        def __call__(self, request):
+            self.requests.append(request)
+            return (
+                ApprovalOutcome.DENY
+                if request.action == "tools.confirm_mcp_tools"
+                else ApprovalOutcome.ONCE
+            )
+
+    approver = _RefuseSurface()
+    registry, broker, cap = _mount_setup(tmp_path, approver=approver)
+    try:
+        with pytest.raises(PermissionDenied):
+            broker.call("tools", "add_mcp_server", "demo", sys.executable, (str(FAKE),))
+        assert len(approver.requests) == 2
+        assert registry.info("demo") is None
+        assert not registry._mcp_clients  # and its connection was closed
     finally:
         registry.close()
 
@@ -260,6 +292,19 @@ def test_add_mcp_server_denied_without_approver(tmp_path):
         with pytest.raises(PermissionDenied):
             broker.call("tools", "add_mcp_server", "demo", sys.executable, (str(FAKE),))
         assert registry.info("demo") is None
+    finally:
+        registry.close()
+
+
+def test_confirm_mcp_tools_is_hidden_and_never_grantable(tmp_path):
+    """Stage two is not a thing agent code can call, and no standing approval can
+    ever cover it — otherwise one granted mount would license the next server's
+    whole surface unseen."""
+    registry, broker, cap = _mount_setup(tmp_path)
+    try:
+        assert "confirm_mcp_tools" in ToolsCapability.hidden_ops
+        assert "confirm_mcp_tools" not in broker.namespace()
+        assert cap.scope("confirm_mcp_tools", ("demo",), {}) is None
     finally:
         registry.close()
 

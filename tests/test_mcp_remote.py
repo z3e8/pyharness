@@ -225,9 +225,11 @@ def test_http_transport_rechecks_scope_per_request(http_url, http_server):
 def test_scoped_session_cannot_reach_out_of_scope_mcp_server(tmp_path, http_url):
     """End to end through the broker: a spawned-child-shaped session holding a
     network capability (which implies `tools`) mounts a remote MCP server at an
-    out-of-scope URL; first contact is refused and the server never sees a
-    request. An in-scope URL works, proving the refusal is the scope, not a
-    broken transport."""
+    out-of-scope URL; contact is refused and the server never sees a request. An
+    in-scope URL works, proving the refusal is the scope, not a broken transport.
+
+    Mounting connects (it has to list the tools for the second approval), so the
+    scope refuses the mount itself and nothing is left registered."""
     from pyharness.core.session import Session
 
     server_host = http_url.split("//")[1].split(":")[0]
@@ -245,9 +247,9 @@ def test_scoped_session_cannot_reach_out_of_scope_mcp_server(tmp_path, http_url)
         assert child.broker.call("tools", "use_tool", "inscope").ping() == "pong"
 
         evil_url = http_url.replace(server_host, "attacker.example.net")
-        child.broker.call("tools", "add_mcp_server", "offscope", url=evil_url)
-        with pytest.raises(RuntimeError, match="allowed hosts"):
-            child.broker.call("tools", "use_tool", "offscope")
+        with pytest.raises(Exception, match="allowed hosts"):
+            child.broker.call("tools", "add_mcp_server", "offscope", url=evil_url)
+        assert child.registry.info("offscope") is None
     finally:
         child.close()
 

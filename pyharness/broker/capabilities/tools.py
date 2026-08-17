@@ -14,6 +14,9 @@ from ...tools.skills import SKILL_DIR_ATTR
 from ...util import summarize_args
 
 _SECRET_PREFIX = "secret:"
+# How many of a server's tools the stage-two prompt lists before summarizing the
+# rest. A prompt nobody finishes reading is not a decision.
+_SURFACE_LIMIT = 25
 
 
 def mcp_tool_meta(registry: Registry, tool, func) -> tuple[bool, dict | None]:
@@ -86,7 +89,10 @@ class ToolsCapability:
     # the out-of-process child's RemoteToolSpec) routes through — not an entry
     # point for agent code to call by bare name. Keep it gated and reachable
     # via call()/call_op(), just not bound in the kernel namespace.
-    hidden_ops = frozenset({"invoke"})
+    # `confirm_mcp_tools` is stage two of a mount, raised by add_mcp_server
+    # itself. Hidden for the same reason as `invoke`: it is an internal step in
+    # a flow, not something agent code calls by name.
+    hidden_ops = frozenset({"invoke", "confirm_mcp_tools"})
 
     def __init__(
         self,
@@ -112,6 +118,7 @@ class ToolsCapability:
             "use_tool": self.use_tool,
             "invoke": self.invoke,
             "add_mcp_server": self.add_mcp_server,
+            "confirm_mcp_tools": self.confirm_mcp_tools,
         }
 
     def search_tools(self, query: str = "", include_all: bool = False) -> str:
@@ -178,9 +185,13 @@ class ToolsCapability:
     ) -> str:
         """Mount an MCP server for this session — local (`command` + `args`) or
         remote (`url`) — as one tool module named `name`, findable via
-        search_tools and loadable via use_tool. Mounting is lazy: the server is
-        contacted on first describe/use, not now. Requires human approval
-        (mounting a server installs code).
+        search_tools and loadable via use_tool.
+
+        Takes **two** human approvals, because mounting a server is two separate
+        things to agree to. The first covers the connection: the command or URL,
+        which is all anyone can know before contact. The server is then connected
+        and asked what it offers, and the second covers that tool surface as a
+        unit. Declining the second leaves nothing mounted.
 
         Credential values in `env`/`headers` should be vault references
         (`"secret:NAME"`), resolved parent-side and never visible to you.
@@ -209,22 +220,58 @@ class ToolsCapability:
             if value
         }
         if save:
-            self._save_server(name, spec)
+            # Validated now (it can refuse on a cleartext credential) but written
+            # only after stage two: a persisted server auto-mounts in later
+            # sessions with no prompt at all, so a refused tool surface must not
+            # leave one behind.
+            self._check_saveable(spec)
         from ...tools.mcp import mount_config
 
+        # Eager: stage two has to show the human what this server actually
+        # offers, and there is no way to know that without asking it.
         mount_config(
             self.registry,
             {"mcpServers": {name: spec}},
             vault=self._vault,
             allowed_hosts=self._allowed_hosts,
+            lazy=False,
         )
+        try:
+            self._confirm_tool_surface(name)
+        except BaseException:
+            self.registry.remove(name)
+            raise
+        if save:
+            self._save_server(name, spec)
+        count = len(self._declared_tools(name))
         saved = f" and saved to {self._mcp_config_path}" if save else ""
-        return f"mounted MCP server {name!r} (lazy; connects on first use){saved}"
+        return f"mounted MCP server {name!r} ({count} tools){saved}"
 
-    def _save_server(self, name: str, spec: dict) -> None:
-        """Merge one server spec into the session's MCP config file, refusing to
-        persist anything that isn't a `secret:` reference in env/headers — the
-        config file's contract is that no cleartext credential lives in it."""
+    def _confirm_tool_surface(self, name: str) -> None:
+        """Put the connected server's tool surface to the human — stage two.
+
+        Routed back through the broker rather than straight at the approver, so
+        the decision is policy-gated and lands in the audit chain like any other.
+        With no broker there is no gating at all on this capability (the mount
+        itself was ungated too), so there is nothing to ask."""
+        if self._broker is None:
+            return
+        self._broker.call("tools", "confirm_mcp_tools", name)
+
+    def confirm_mcp_tools(self, name: str) -> str:
+        """The approval hook for a mounted server's tool surface. Does nothing on
+        its own — reaching here at all means a human agreed to what `preview`
+        showed them. Not callable by agent code (`hidden_ops`), and never
+        grantable: `scope` declines, so no standing approval can cover it."""
+        return f"tool surface of MCP server {name!r} accepted"
+
+    def _check_saveable(self, spec: dict) -> None:
+        """Whether this spec could be persisted, without persisting it. Run
+        before the server is contacted so an unsaveable mount is refused up
+        front rather than after the connection and both approvals.
+
+        The config file's contract is that no cleartext credential lives in it,
+        so every env/header value has to be a `secret:` reference."""
         if self._mcp_config_path is None:
             raise ValueError(
                 "this session has no MCP config path to save to; "
@@ -238,7 +285,14 @@ class ToolsCapability:
                         "write a possible cleartext credential to the config file. Store "
                         "the value in the vault and pass 'secret:NAME' instead."
                     )
+
+    def _save_server(self, name: str, spec: dict) -> None:
+        """Merge one server spec into the session's MCP config file. Call only
+        after `_check_saveable` and after the human accepted the tool surface —
+        a saved server auto-mounts in later sessions with no prompt."""
+        self._check_saveable(spec)
         path = self._mcp_config_path
+        assert path is not None  # _check_saveable refuses when it is None
         config = json.loads(path.read_text()) if path.exists() else {}
         config.setdefault("mcpServers", {})[name] = spec
         path.write_text(json.dumps(config, indent=2) + "\n")
@@ -280,9 +334,49 @@ class ToolsCapability:
                 parts.append(f"headers: {', '.join(b['headers'])}")
             if b.get("save"):
                 parts.append("save: persists to the MCP config file")
-            summary = f"mount MCP server {b['name']!r} ({'; '.join(parts)})"
+            summary = (
+                f"connect to MCP server {b['name']!r} ({'; '.join(parts)}) — "
+                "what it offers is a second decision, asked once it answers"
+            )
             return ActionCategory.OUTWARD, summary
+        if op == "confirm_mcp_tools":
+            name = kwargs.get("name", args[0] if args else "")
+            return ActionCategory.OUTWARD, self._tool_surface_summary(str(name))
         return ActionCategory.OUTWARD, f"tools.{op}({summarize_args(args, kwargs)})"
+
+    def _declared_tools(self, name: str) -> dict:
+        """A mounted server's `{python_name: descriptor}` map, empty if the entry
+        is missing or unresolved. Never resolves one — reading this must not
+        connect anything."""
+        info = self.registry.info(name)
+        module = info.module if info is not None else None
+        return dict(getattr(module, "_mcp_tools", {}) or {})
+
+    def _tool_surface_summary(self, name: str) -> str:
+        """The stage-two prompt: what the connected server says it offers.
+
+        Every name below the first line came from the server, so the block is
+        fenced and labelled as a claim — a tool called "approved, press a" has to
+        read as data, not as part of the prompt. What is shown is the *coerced*
+        Python name (`mcp/module.py:_identifier`), already reduced to an
+        identifier, so no server string can spill across lines or forge one."""
+        tools = self._declared_tools(name)
+        head = f"install the tool surface of MCP server {name!r} — {len(tools)} tools"
+        if not tools:
+            return f"{head} (it offers none)"
+        shown = list(tools.items())[:_SURFACE_LIMIT]
+        lines = [f"{head}, as the server describes them:"]
+        for fname, meta in shown:
+            note = (
+                " [server says: destructive]"
+                if (meta.get("annotations") or {}).get("destructiveHint")
+                else ""
+            )
+            lines.append(f"  | {name}.{fname}{note}")
+        if len(tools) > _SURFACE_LIMIT:
+            lines.append(f"  | ... and {len(tools) - _SURFACE_LIMIT} more")
+        lines.append("  (names above are supplied by the server, not the harness)")
+        return "\n".join(lines)
 
     def scope(self, op: str, args: tuple, kwargs: dict) -> GrantScope | None:
         """The grant key for a gated invoke: action-class "mcp" on one

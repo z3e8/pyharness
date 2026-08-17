@@ -212,7 +212,7 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**41 of 51 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
+**42 of 52 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
 the *decision* that produced them, because there are fewer decisions than gaps.
@@ -465,7 +465,7 @@ floor directly.
 ## Checking any of this yourself
 
 ```bash
-make evals                            # re-run the 51 attacks, rewrite the scoreboard
+make evals                            # re-run the 52 attacks, rewrite the scoreboard
 make test                             # the suite plus the policy enumeration tests
 uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
 make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N
