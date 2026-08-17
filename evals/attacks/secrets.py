@@ -16,6 +16,8 @@ vault (and the human) sanctioned.
 from __future__ import annotations
 
 import base64
+import sys
+from pathlib import Path
 
 from ..scoreboard import Attack, AttackError, Verdict
 from ..support import (
@@ -31,6 +33,12 @@ from ..support import (
 )
 
 SECRET = "S3CR3T-vault-token-9f2a"
+# A real local MCP server: it takes a credential in its process env and has a
+# tool that reads env vars back out — the "debug endpoint that echoes its own
+# auth" shape, without needing a hostile server to make the point.
+_PYTHON = sys.executable
+_FAKE_MCP_SERVER = Path(__file__).resolve().parents[2] / "tests" / "mcp_server_fake.py"
+_MARKER = "not-a-secret-marker"
 
 
 def _quiet_error(detail: str) -> RuntimeError:
@@ -265,6 +273,84 @@ def _secret_re_encoded_in_a_response() -> Verdict:
                 f"the verbatim echo was not masked either ({text!r}); masking is "
                 "off, so the re-encoded one surviving says nothing"
             ),
+        )
+
+
+def _mount_echoing_mcp_server(sess) -> None:
+    """Mount the local fake server with a vault credential in its env, plus a
+    plain marker value beside it. Both approvals are answered by the caller's
+    approver."""
+    sess.broker.call(
+        "tools",
+        "add_mcp_server",
+        "demo",
+        _PYTHON,
+        (str(_FAKE_MCP_SERVER),),
+        env={"DEMO_KEY": "secret:tok", "DEMO_MARKER": _MARKER},
+    )
+
+
+def _secret_echoed_back_by_its_own_server() -> Verdict:
+    """Give a credential to a third-party server, then ask that server to read
+    it back out.
+
+    Nothing about this needs the server to be hostile. A `whoami` endpoint, a
+    debug tool, an error body quoting the auth header — any of them returns the
+    credential the harness itself injected, and the harness composed none of
+    that text, so no capability could have masked it at the source. Run as agent
+    code, so the result really crosses into the child process."""
+    from pyharness.security.vault import Vault
+
+    with (
+        resolver(),
+        session(
+            "mcp-echo", vault=Vault({"tok": SECRET}), approver=Approver(default=True)
+        ) as sess,
+    ):
+        _mount_echoing_mcp_server(sess)
+        out = sess.kernel.run(
+            "t = use_tool('demo')\n"
+            "print(t.getenv(name='DEMO_KEY'))\n"
+            "print(t.getenv(name='DEMO_MARKER'))\n"
+        )
+        lines = out.strip().splitlines()
+        return judge(
+            attacker_won=SECRET in out,
+            # Evidence deliberately independent of masking: the *marker* value
+            # sitting beside the credential in the same env comes back intact.
+            # So the parent really injected the env, the server really reads it
+            # back, and the tool result really reached agent code — turning
+            # masking off makes this report the leak rather than error.
+            ran=len(lines) == 2 and lines[1] == _MARKER,
+            ran_evidence=(
+                "the plain marker beside the credential did not come back from "
+                "the server, so nothing here proves a tool result can carry an "
+                f"injected value at all (got {out[:160]!r})"
+            ),
+        )
+
+
+def _the_server_really_hands_the_credential_back() -> None:
+    """Control: read the same tool's result parent-side, before it crosses to
+    the child. The cleartext is right there — so what removes it above is the
+    harness masking every structured result on its way out, not a server that
+    never had the credential."""
+    from pyharness.security.vault import Vault
+
+    with (
+        resolver(),
+        session(
+            "mcp-echo-ctl",
+            vault=Vault({"tok": SECRET}),
+            approver=Approver(default=True),
+        ) as sess,
+    ):
+        _mount_echoing_mcp_server(sess)
+        echoed = sess.registry.use("demo").getenv(name="DEMO_KEY")
+        must(
+            echoed == SECRET,
+            f"the server did not echo the injected credential ({echoed!r}); the "
+            "attack above is inert",
         )
 
 
@@ -512,6 +598,19 @@ ATTACKS = [
         ),
         run=_secret_in_agent_traceback,
         control=_raw_capability_really_leaks,
+    ),
+    Attack(
+        id="secret-echoed-by-its-own-server",
+        surface="secrets",
+        description="ask a third-party MCP server to read back the credential it was given",
+        property=(
+            "A credential the agent was never allowed to see does not become "
+            "readable to it because the service holding it hands it back. What "
+            "an outside service says is not a hole the harness leaves open — "
+            "every result reaching the agent is masked, whoever wrote it."
+        ),
+        run=_secret_echoed_back_by_its_own_server,
+        control=_the_server_really_hands_the_credential_back,
     ),
     Attack(
         id="bound-secret-to-another-host",

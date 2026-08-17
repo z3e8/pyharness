@@ -18,14 +18,17 @@ carries:
       }
     }
 
-`secret:NAME` values in `env`/`headers` are resolved through the session `Vault`
-in the parent — so no cleartext credential lives in the config file (design §5).
+`secret:NAME` values in `env`/`headers` are resolved through a `SecretSink` in
+the parent — so no cleartext credential lives in the config file (design §5),
+and the sink learns every value it hands out so the session can mask it back out
+of anything the agent later reads.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _SECRET_PREFIX = "secret:"
 
@@ -38,7 +41,7 @@ def mount_config(
     registry,
     config: dict | str | Path,
     *,
-    vault=None,
+    sink=None,
     lazy: bool = True,
     allowed_hosts: frozenset[str] | None = None,
 ) -> list[str]:
@@ -49,7 +52,11 @@ def mount_config(
     first searches or uses them, so a slow or down server can neither delay nor
     abort session startup (it surfaces as unavailable only when reached). Pass
     `lazy=False` to connect eagerly and fail fast. `secret:NAME` credentials are
-    resolved through the vault now, in the parent, in either mode.
+    resolved through `sink` now, in the parent, in either mode — a `SecretSink`,
+    not a bare `Vault`, so every value handed to a server is one the session can
+    mask back out of what the agent reads (an MCP server that echoes its own
+    credential in a tool result is a real shape, and the harness cannot stop it
+    echoing — only stop the echo reaching agent code).
     `allowed_hosts` is the mounting session's host scope, enforced on every
     remote (HTTP) server's URL at connect and per request."""
     if isinstance(config, (str, Path)):
@@ -57,8 +64,15 @@ def mount_config(
     servers = config.get("mcpServers", config)
     names = []
     for name, spec in servers.items():
-        env = _resolve_secrets(spec.get("env"), vault)
-        headers = _resolve_secrets(spec.get("headers"), vault)
+        # Where this server's credentials are about to travel, for the sink's
+        # host-binding check. A remote server has one: its URL's host. A local
+        # (stdio) server has none — the credential goes into a subprocess env,
+        # which is not a host at all — so a host-bound secret is refused there
+        # rather than silently released into a destination the binding cannot
+        # describe. Unbound secrets are unaffected in both cases.
+        target_host = urlsplit(spec["url"]).hostname if spec.get("url") else None
+        env = _resolve_secrets(spec.get("env"), sink, target_host)
+        headers = _resolve_secrets(spec.get("headers"), sink, target_host)
         # Discovery metadata declared alongside the server, forwarded to the
         # registry so a lazily-mounted server is findable by more than its name.
         meta = dict(
@@ -124,17 +138,22 @@ def _loader(
     return load
 
 
-def _resolve_secrets(mapping: dict | None, vault) -> dict | None:
-    """Replace `secret:NAME` values with the vault's cleartext (parent-side)."""
+def _resolve_secrets(
+    mapping: dict | None, sink, target_host: str | None = None
+) -> dict | None:
+    """Replace `secret:NAME` values with cleartext (parent-side), through the
+    sink rather than the vault directly: the sink enforces the secret's host
+    binding against `target_host` and records the cleartext's mask forms, so a
+    value this server later echoes back is masked out of what the agent reads."""
     if not mapping:
         return None
     resolved = {}
     for key, value in mapping.items():
         if isinstance(value, str) and value.startswith(_SECRET_PREFIX):
-            if vault is None:
+            if sink is None:
                 raise ValueError(
-                    f"{key!r} references a secret but no vault was provided"
+                    f"{key!r} references a secret but no secret sink was provided"
                 )
-            value = vault.get(value[len(_SECRET_PREFIX) :])
+            value = sink.resolve(value[len(_SECRET_PREFIX) :], target_host=target_host)
         resolved[key] = value
     return resolved

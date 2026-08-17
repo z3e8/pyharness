@@ -9,6 +9,7 @@ from types import ModuleType
 
 from ...security.grants import GrantScope
 from ...security.policy import ActionCategory
+from ...security.sink import SecretSink
 from ...tools.registry import Registry, _public_functions
 from ...tools.skills import SKILL_DIR_ATTR
 from ...util import summarize_args
@@ -100,12 +101,18 @@ class ToolsCapability:
         *,
         broker=None,
         vault=None,
+        sink_mirror: SecretSink | None = None,
         mcp_config_path=None,
         allowed_hosts: frozenset[str] | None = None,
     ):
         self.registry = registry
         self._broker = broker  # set by Session; None leaves use_tool ungated
         self._vault = vault  # resolves secret:NAME refs when mounting a server
+        # The session-wide sink every per-mount sink reports its masks into. An
+        # MCP credential is resolved through a sink like any other injected
+        # secret, so the session can mask it out of anything the agent later
+        # reads — including a tool result from the very server holding it.
+        self._sink_mirror = sink_mirror
         self._mcp_config_path = Path(mcp_config_path) if mcp_config_path else None
         # The session's host scope, threaded into every MCP mount so a scoped
         # child's remote (HTTP) MCP reach is confined like its web/http reach.
@@ -194,7 +201,8 @@ class ToolsCapability:
         unit. Declining the second leaves nothing mounted.
 
         Credential values in `env`/`headers` should be vault references
-        (`"secret:NAME"`), resolved parent-side and never visible to you.
+        (`"secret:NAME"`), resolved parent-side and never visible to you — not
+        even if the server echoes its own credential back in a tool result.
         `save=True` also persists the server to the session's MCP config file so
         later sessions mount it automatically — that path *requires* `secret:`
         refs for every env/header value; a cleartext credential is refused."""
@@ -232,7 +240,7 @@ class ToolsCapability:
         mount_config(
             self.registry,
             {"mcpServers": {name: spec}},
-            vault=self._vault,
+            sink=SecretSink(self._vault, mirror=self._sink_mirror),
             allowed_hosts=self._allowed_hosts,
             lazy=False,
         )

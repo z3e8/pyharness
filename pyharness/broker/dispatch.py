@@ -90,20 +90,32 @@ class Broker:
         metered: frozenset[str] = frozenset({"llm", "web", "obs", "spawn"}),
         on_event: Callable[..., None] | None = None,
         redact: Callable[[str], str] | None = None,
+        redact_result: Callable[[object], object] | None = None,
     ):
         self.policy = policy
         self.audit = audit
         self.budget = budget
         self.approver = approver
-        # Secret masking for text the broker itself surfaces. Capabilities
-        # redact their *success* results; this hook covers the exception path —
-        # the audited `repr(exc)` and the error the trace/telemetry see — so a
-        # capability raising with an injected secret embedded (a URL in an
+        # Secret masking for text the broker itself surfaces: the audited
+        # `repr(exc)` of a failing call and the error the trace/telemetry see, so
+        # a capability raising with an injected secret embedded (a URL in an
         # httpx error, an argv in TimeoutExpired) can't leak it into
         # audit.jsonl. The session wires the session-wide SecretSink's redact;
         # identity by default, and only run on the error path, so it costs
         # nothing when no secret was ever resolved.
         self.redact = redact or (lambda text: text)
+        # The success-path counterpart, over structured values rather than text.
+        # Capabilities that compose a result out of remote content still redact
+        # at the source (see http/browser/inbox), which is the earliest point the
+        # content exists — but that is per-capability discipline, and a result
+        # the harness never composed (an MCP server's tool output, echoing the
+        # credential the harness itself gave it) has no such point. So the out-of
+        # -process host runs every structured result through this before it
+        # crosses to the child (`remote/host.py::_serve`): whatever a capability
+        # did or did not do, cleartext does not enter the child process. The
+        # session wires the session-wide SecretSink's `redacted`, which returns
+        # the value untouched while no secret has been resolved.
+        self.redact_result = redact_result or (lambda value: value)
         # Activity events (`action_start`/`action_end`, `approval_pending`/
         # `approval_resolved`) — the live "what is happening right now" stream,
         # written before/around execution where the audit log records only

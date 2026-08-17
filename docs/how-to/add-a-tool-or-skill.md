@@ -146,7 +146,10 @@ create it).
 
 Credential values in `env`/`headers` should be vault refs (`"secret:NAME"`) —
 resolved parent-side, never visible to the agent, and the only form the save
-paths will write to disk. However a server got mounted, calls on its
+paths will write to disk. They resolve through the session's secret sink like
+any other injected credential, so a vault entry bound to a host reaches only a
+remote server at that host (and is refused for a local one, which has no host at
+all). However a server got mounted, calls on its
 tools are broker-gated the same way: every one prompts on first use, whatever
 the server declares about itself, and a standing approval covers that one tool
 as it was described rather than the rest of the server — see

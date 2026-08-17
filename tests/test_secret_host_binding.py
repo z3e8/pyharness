@@ -117,6 +117,45 @@ def test_http_request_refuses_bound_secret_to_wrong_host(tmp_path, fake_httpx):
     assert result["status"] == 200
 
 
+def test_mcp_mount_binds_a_credential_to_the_server_url():
+    """An MCP server's `secret:` refs resolve through the sink, so the binding
+    holds there too: a remote server's URL host is the target, and a local
+    (stdio) server has no host at all — a bound credential cannot be released
+    into a subprocess env, since a binding it cannot describe cannot be
+    honored."""
+    from pyharness.tools.mcp.config import _resolve_secrets
+
+    sink = SecretSink(BOUND)
+    headers = {"Authorization": "secret:gh"}
+    assert _resolve_secrets(headers, sink, "api.github.com") == {
+        "Authorization": "S3CRET"
+    }
+    with pytest.raises(PermissionError, match="refusing to send it to"):
+        _resolve_secrets(headers, sink, "mcp.evil.example")
+    with pytest.raises(PermissionError, match="no target host"):
+        _resolve_secrets({"GH_TOKEN": "secret:gh"}, sink, None)
+    # An unbound credential still mounts on a local server, which is the
+    # ordinary stdio case.
+    assert _resolve_secrets({"K": "secret:free"}, sink, None) == {"K": "OPEN"}
+
+
+def test_mcp_mount_derives_the_target_host_from_the_server_url(tmp_path):
+    """End to end through `mount_config`: the host checked is the one taken
+    from the declared server URL, so a bound credential reaches its own server
+    and no other. Neither mount connects — both are lazy."""
+    from pyharness import Registry
+    from pyharness.tools.mcp import mount_config
+
+    registry = Registry()
+    sink = SecretSink(BOUND)
+    spec = {"url": "https://api.github.com/mcp", "headers": {"A": "secret:gh"}}
+    assert mount_config(registry, {"mcpServers": {"gh": spec}}, sink=sink) == ["gh"]
+    evil = {**spec, "url": "https://mcp.evil.example/mcp"}
+    with pytest.raises(PermissionError, match="refusing to send it to"):
+        mount_config(registry, {"mcpServers": {"evil": evil}}, sink=sink)
+    assert registry.info("evil") is None
+
+
 def test_browser_fill_secret_checks_page_host(tmp_path):
     cap = BrowserCapability(Workspace(tmp_path), vault=BOUND)
 

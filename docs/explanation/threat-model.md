@@ -188,16 +188,26 @@ to classify. The enforcement assertions are not vacuous either: un-threading the
 session scope from a single capability fails the host-scope test even though the
 attribute is still there.
 
-The secret-sink policy goes past wiring to the returned value. A result crossing
-to the child is sealed for the pipe but never redacted there, so the test walks
-the return paths of every op the three sink-holding capabilities export and
-requires each one to pass through the sink (directly, or through a helper that
-does) or to be a named exemption saying why its result cannot carry a resolved
-secret. A branch that redacts the happy path and returns raw text on an error
-path fails, and so does a new op that skips the sink entirely. That check is
-static; the behavioral half — that the sink actually masks what it is handed —
-is `test_components.py` and `test_inbox.py`, against a server and a mailbox that
-echo an injected secret back.
+The secret-sink policy goes past wiring to the returned value, in two layers.
+Every structured result is masked centrally on its way out of the parent — the
+out-of-process host runs it through the session-wide sink before it crosses to
+the child — so no capability can leak one by forgetting, and a result the
+harness never composed (an MCP server's tool output, which can echo the very
+credential the harness injected into that server) is covered by the same pass.
+That is the layer the containment claim rests on, and it is pinned behaviorally
+in `test_remote_kernel.py`.
+
+On top of it, a capability that reads remote content into its own result is
+required to redact at the source, which is the earliest point the content exists
+and the only masking the in-process kernel gets. The test walks the return paths
+of every op the three content-reading sink-holders export and requires each one
+to pass through the sink (directly, or through a helper that does) or to be a
+named exemption saying why its result cannot carry a resolved secret. A branch
+that redacts the happy path and returns raw text on an error path fails, and so
+does a new op that skips the sink entirely. That check is static; the behavioral
+half — that the sink actually masks what it is handed — is `test_components.py`
+and `test_inbox.py`, against a server and a mailbox that echo an injected secret
+back.
 
 The same shape of check ties the tables to the code they describe: the
 session's own list of scope-carrying capabilities (`_NETWORK`, which decides
@@ -212,7 +222,7 @@ prose and behavior cannot drift apart.
 
 ## The published gaps
 
-**42 of 52 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
+**43 of 53 adversarial attacks blocked. 10 known gaps, 0 unexpected successes, 0
 errors.** The per-attack rationales are in
 [`evals/SCOREBOARD.md`](../../evals/SCOREBOARD.md); what follows groups them by
 the *decision* that produced them, because there are fewer decisions than gaps.
@@ -465,7 +475,7 @@ floor directly.
 ## Checking any of this yourself
 
 ```bash
-make evals                            # re-run the 52 attacks, rewrite the scoreboard
+make evals                            # re-run the 53 attacks, rewrite the scoreboard
 make test                             # the suite plus the policy enumeration tests
 uv run pytest tests/test_capability_policies.py -q   # the exemption tables, asserted
 make verify-audit DIR=.sessions/<name>              # a session's chain: ✓ intact / ✗ broken at N

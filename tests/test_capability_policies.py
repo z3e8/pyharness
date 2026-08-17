@@ -674,7 +674,7 @@ def _assert_mcp_scope_is_per_tool():
 # must mirror every mask into the session-wide sink, so surfaces that outlive
 # the injection context (audited exception reprs, returned cell output) can
 # redact anything the session ever resolved.
-SINK_MIRRORED = frozenset({"http", "browser", "inbox"})
+SINK_MIRRORED = frozenset({"http", "browser", "inbox", "tools"})
 
 # Capabilities that hold the vault without resolving values into returned
 # content, with the reason no mirror is needed.
@@ -682,10 +682,6 @@ VAULT_HOLDING_EXEMPT = {
     "vault": "Returns secret *names* only; create_login returns the signup "
     "email (non-secret by contract) and stores the generated password without "
     "ever returning it. No resolved secret value enters a result.",
-    "tools": "Resolves secret: refs only into an MCP server's env/headers "
-    "parent-side at mount; the values are never returned to agent code. "
-    "Stated boundary: what an external MCP server does with (or echoes of) "
-    "its own credential is outside the harness's reach.",
 }
 
 
@@ -696,9 +692,12 @@ def test_secret_sink_classification_covers_every_capability(sess):
     vault without wiring the mirror (the open per-capability-discipline seam
     from the 2026-07-28 recon note) fails here. Scope: this asserts the
     *wiring* — that every mask reaches the session-wide sink, which is what the
-    exception path and cell output redact through. That each success result is
-    itself routed through a sink is the separate property
-    test_every_sink_mirrored_op_redacts_its_result asserts, op by op."""
+    exception path and cell output redact through. Success results are a
+    separate property, asserted two ways: masked at the source, op by op, for
+    the capabilities that compose a result out of remote content
+    (test_every_sink_mirrored_op_redacts_its_result), and masked centrally at
+    the pipe for every result whoever wrote it — which is what covers `tools`,
+    whose only credential-bearing result comes from someone else's process."""
     caps = _caps(sess)
     vault_holding = {
         name
@@ -718,16 +717,30 @@ def test_secret_sink_classification_covers_every_capability(sess):
             "mirror into the session-wide sink — exception-path and "
             "cell-output redaction would miss its masks"
         )
-    # The broker's exception-path redaction is the session sink's, so an
-    # audited repr(exc) can never carry a secret any capability resolved.
+    # Both of the broker's redaction hooks are the session sink's: an audited
+    # repr(exc) can never carry a secret any capability resolved, and neither
+    # can a structured result on its way to the child.
     assert sess.broker.redact.__self__ is sess.secret_sink
+    assert sess.broker.redact_result.__self__ is sess.secret_sink
 
 
-# The success path is the other half, and the pipe does not cover it: a
-# structured result crossing to the child is sealed (`broker/remote/host.py`
-# ::_seal_for_wire) but never redacted, so a resolved secret stays out of agent
-# code only if the capability routed its own return value through the sink.
-# The methods that count as that routing:
+# The success path is the other half, and it is covered twice over. Every
+# structured result is masked centrally before it crosses to the child
+# (`broker/remote/host.py::_serve`, pinned behaviorally by
+# test_remote_kernel.py::test_structured_results_are_redacted_before_they_cross),
+# so no capability can leak one by forgetting. On top of that, a capability that
+# reads remote content into its own result redacts it at the source — the
+# earliest point the content exists, and the only masking the in-process kernel
+# gets, since that mode has no pipe to cross. The scan below pins the second.
+#
+# `tools` is deliberately not scanned: the values it resolves are an MCP
+# server's mount-time env/headers, which no op returns, and the one result that
+# *could* carry a credential is whatever an external server chooses to echo back
+# through `tools.invoke`. That is content the harness never composed and cannot
+# classify op by op — exactly the case the central seam exists for.
+RETURN_PATH_SCANNED = frozenset({"http", "browser", "inbox"})
+
+# The methods that count as routing a return value through a sink:
 SINK_REDACTORS = frozenset({"redact", "redacted", "redact_bytes"})
 
 # Exported ops whose result cannot carry a resolved secret, so they need no
@@ -876,11 +889,19 @@ def test_return_path_detector_answers_in_both_directions():
 
 
 def test_every_sink_mirrored_op_redacts_its_result(sess):
-    """The deep property the wiring test above cannot reach: for every op a
-    sink-mirrored capability exports, the value handed back to agent code
-    provably passes through the sink. Nothing downstream will do it — the
-    result is sealed for the pipe (`_seal_for_wire`) and pickled as-is — so an
-    op that skips the sink hands a resolved secret straight to the child.
+    """Redaction at the source, for every op of a capability that reads remote
+    content into its own result: the value handed back provably passes through
+    the sink before anything downstream sees it.
+
+    This is no longer the only thing standing between a resolved secret and the
+    child — `_serve` masks every structured result centrally now — but it is
+    still the property worth pinning here, for two reasons. It is the earliest
+    point the content exists, so a secret is masked before it can be written to
+    a workspace file, logged, or handed to another capability parent-side. And
+    it is the *only* masking the in-process kernel gets, which has no pipe to
+    cross (that mode is not a containment boundary either way — agent code
+    shares the parent process — but a capability that redacts its own result
+    keeps it out of ordinary output there too).
 
     Enumerated from the live `exports()`, so a *new* op on http/browser/inbox
     fails here until it either redacts or is written into
@@ -905,7 +926,7 @@ def test_every_sink_mirrored_op_redacts_its_result(sess):
     assert not stale, f"exemptions naming ops that no longer exist: {sorted(stale)}"
     _assert_rationales(RESULT_CARRIES_NO_SECRET)
 
-    for name in sorted(SINK_MIRRORED):
+    for name in sorted(RETURN_PATH_SCANNED):
         cap = caps[name]
         methods = _class_methods(cap)
         for op, func in cap.exports().items():
@@ -919,9 +940,11 @@ def test_every_sink_mirrored_op_redacts_its_result(sess):
             )
             assert _redacts_every_return(node, methods), (
                 f"{name}.{op} returns a value that does not pass through the "
-                "secret sink. A result crossing to the child is sealed but "
-                "never redacted, so a resolved secret echoed into this result "
-                "reaches agent code. Route the return through "
-                "sink.redacted(...), or classify it in RESULT_CARRIES_NO_SECRET "
-                "with the reason its result cannot carry one."
+                "secret sink. The central seam at the pipe would still mask it "
+                "on its way to the child, but until then the cleartext is live "
+                "parent-side — writable to a file, loggable, passable to another "
+                "capability — and the in-process kernel has no pipe at all. "
+                "Route the return through sink.redacted(...), or classify it in "
+                "RESULT_CARRIES_NO_SECRET with the reason its result cannot "
+                "carry one."
             )

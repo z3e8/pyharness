@@ -279,8 +279,18 @@ class RemoteKernel:
                 self._discard()
                 return "(kernel protocol error — session state lost)"
             try:
-                value = _seal_for_wire(self.broker.call_op(op, *args, **kwargs))
-                reply = ("ok", value)
+                # Mask the result *before* it crosses, the success-path twin of
+                # `_redact_exc` below. A capability composing its own result
+                # redacts at the source, but a result the harness never composed
+                # — an MCP server's tool output, which can echo the very
+                # credential the harness injected into that server — has no such
+                # point, and per-capability discipline cannot cover a value that
+                # came from someone else's process. Doing it here means no
+                # capability can forget: cleartext never enters the child.
+                result = self.broker.redact_result(
+                    self.broker.call_op(op, *args, **kwargs)
+                )
+                reply = ("ok", _seal_for_wire(result))
             except Exception as exc:  # noqa: BLE001 - errors cross back to the agent
                 reply = ("err", _safe_exc(_redact_exc(exc, self.broker.redact)))
             try:
