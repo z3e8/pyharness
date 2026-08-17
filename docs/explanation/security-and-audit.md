@@ -494,13 +494,15 @@ the `secrets()` builtin); the value is resolved in the parent and injected at th
 point of use — on the discovered web/http/browser tools, not in agent-visible
 text (e.g. `web.fetch(url, auth="github")`, or `http.request(..., auth=...)`
 and `http.request(..., secret_fields={"password": "name"})` for a stateful HTTP
-session, or `browser.fill_secret` typing into a browser field — every action
-surface is another injection sink under the same rule, not an exception to it).
+session, or `browser.fill_secret` typing into a browser field, or the
+`env`/`headers` of an MCP server the agent mounts — every action surface is
+another injection sink under the same rule, not an exception to it).
 `Vault.get()` is deliberately *not* in the kernel namespace.
 
 Each injection surface routes through one small primitive,
 `security/sink.py:SecretSink`, scoped to a single injection context (one browser
-session, one HTTP request). It is the only place a name becomes cleartext, and it
+session, one HTTP request, one mounted MCP server). It is the only place a name
+becomes cleartext, and it
 records every value it resolves so the capability can mask it (`***`) back out of
 anything the agent then reads — a browser `read_text` or `snapshot` tree, or an
 HTTP response `url` (a `"query"`-style secret can survive into the final url),
@@ -536,14 +538,20 @@ secret has been resolved.
 The sink is also where **host binding** is enforced. A vault entry can be bound
 to the host(s) it belongs to at config time (`pyharness-vault set github --host
 api.github.com`); every injection surface passes the concrete destination — the
-request URL's host, the browser page's host, the IMAP server — into
-`SecretSink.resolve`, which refuses a bound secret toward any other host before
-anything goes out. Sending a bound credential to the wrong host is thereby
-*impossible*, not merely visible in the approval prompt; the prompt remains the
-check for unbound secrets. Matching is exact per hostname, case-insensitive, no
-wildcards — the same shape as grant scopes. (A secret-carrying HTTP request
-never follows redirects, so the checked host is the only one the credential can
-reach.)
+request URL's host, the browser page's host, the IMAP server, a remote MCP
+server's URL host — into `SecretSink.resolve`, which refuses a bound secret
+toward any other host before anything goes out. Sending a bound credential to
+the wrong host is thereby *impossible*, not merely visible in the approval
+prompt; the prompt remains the check for unbound secrets. Matching is exact per
+hostname, case-insensitive, no wildcards — the same shape as grant scopes. (A
+secret-carrying HTTP request never follows redirects, so the checked host is the
+only one the credential can reach.)
+
+One surface has no host to pass: a **local (stdio) MCP server**, where the
+credential goes into a subprocess environment rather than to a destination. A
+bound secret is refused there rather than released into something the binding
+cannot describe — the same fail-closed answer `resolve` gives any context with
+no target host. Unbound secrets mount on a local server as before.
 
 The same rule covers values *derived* from a secret. A TOTP seed is a plain
 vault secret (by convention `<site>_totp`); `browser.fill_totp` resolves it

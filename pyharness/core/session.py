@@ -327,7 +327,10 @@ class Session:
                 mount_config(
                     self.registry,
                     mcp_config,
-                    vault=self.vault,
+                    # A per-mount sink mirroring into the session's, like every
+                    # other injection context: the credentials this server is
+                    # handed become masks the whole session can redact with.
+                    sink=SecretSink(self.vault, mirror=self.secret_sink),
                     allowed_hosts=self.allowed_hosts,
                 )
 
@@ -414,6 +417,7 @@ class Session:
                     self.registry,
                     broker=self.broker,
                     vault=self.vault,
+                    sink_mirror=self.secret_sink,
                     mcp_config_path=self.mcp_config_path,
                     allowed_hosts=self.allowed_hosts,
                 )

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from pyharness import Registry, Vault
+from pyharness.security.sink import SecretSink
 from pyharness.tools.mcp import MCPClient, mount_config
 
 FAKE = Path(__file__).parent / "mcp_server_fake.py"
@@ -102,7 +103,7 @@ def test_registry_add_remote_server(http_url):
 
 def test_config_mounts_local_and_resolves_secrets():
     registry = Registry()
-    vault = Vault({"api_key": "sk-from-vault"})
+    sink = SecretSink(Vault({"api_key": "sk-from-vault"}))
     config = {
         "mcpServers": {
             "demo": {
@@ -112,11 +113,14 @@ def test_config_mounts_local_and_resolves_secrets():
             }
         }
     }
-    mount_config(registry, config, vault=vault)
+    mount_config(registry, config, sink=sink)
     try:
         # The secret was resolved from the vault and injected into the server's
         # process env — the tool reads it back, proving parent-side injection.
         assert registry.use("demo").getenv(name="DEMO_KEY") == "sk-from-vault"
+        # And it went through the sink, not the vault directly, so the session
+        # can mask it back out of anything this server later echoes.
+        assert sink.redact("leaked sk-from-vault") == "leaked ***"
     finally:
         registry.close()
 
@@ -147,11 +151,11 @@ def test_config_forwards_discovery_metadata():
     assert info.module is None
 
 
-def test_config_secret_without_vault_errors():
+def test_config_secret_without_sink_errors():
     registry = Registry()
     config = {"mcpServers": {"demo": {"command": "x", "env": {"K": "secret:missing"}}}}
     with pytest.raises(ValueError, match="secret"):
-        mount_config(registry, config, vault=None)
+        mount_config(registry, config, sink=None)
 
 
 def test_lazy_mount_does_not_connect_and_tolerates_down_servers():

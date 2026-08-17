@@ -674,7 +674,7 @@ def _assert_mcp_scope_is_per_tool():
 # must mirror every mask into the session-wide sink, so surfaces that outlive
 # the injection context (audited exception reprs, returned cell output) can
 # redact anything the session ever resolved.
-SINK_MIRRORED = frozenset({"http", "browser", "inbox"})
+SINK_MIRRORED = frozenset({"http", "browser", "inbox", "tools"})
 
 # Capabilities that hold the vault without resolving values into returned
 # content, with the reason no mirror is needed.
@@ -682,10 +682,6 @@ VAULT_HOLDING_EXEMPT = {
     "vault": "Returns secret *names* only; create_login returns the signup "
     "email (non-secret by contract) and stores the generated password without "
     "ever returning it. No resolved secret value enters a result.",
-    "tools": "Resolves secret: refs only into an MCP server's env/headers "
-    "parent-side at mount; the values are never returned to agent code. "
-    "Stated boundary: what an external MCP server does with (or echoes of) "
-    "its own credential is outside the harness's reach.",
 }
 
 
@@ -723,11 +719,17 @@ def test_secret_sink_classification_covers_every_capability(sess):
     assert sess.broker.redact.__self__ is sess.secret_sink
 
 
-# The success path is the other half, and the pipe does not cover it: a
-# structured result crossing to the child is sealed (`broker/remote/host.py`
-# ::_seal_for_wire) but never redacted, so a resolved secret stays out of agent
-# code only if the capability routed its own return value through the sink.
-# The methods that count as that routing:
+# The success path is the other half. Sink-mirrored capabilities that read
+# remote content back into their own results redact it at the source, at the
+# earliest point the content exists — the return-path scan below pins that.
+# `tools` is deliberately not scanned: the values it resolves are an MCP
+# server's mount-time env/headers, which no op returns, and the one result that
+# *could* carry a credential is whatever an external server chooses to echo back
+# through `tools.invoke`. That is content the harness never composed and cannot
+# classify op by op, so it is covered where every result is, not here.
+RETURN_PATH_SCANNED = frozenset({"http", "browser", "inbox"})
+
+# The methods that count as routing a return value through a sink:
 SINK_REDACTORS = frozenset({"redact", "redacted", "redact_bytes"})
 
 # Exported ops whose result cannot carry a resolved secret, so they need no
@@ -905,7 +907,7 @@ def test_every_sink_mirrored_op_redacts_its_result(sess):
     assert not stale, f"exemptions naming ops that no longer exist: {sorted(stale)}"
     _assert_rationales(RESULT_CARRIES_NO_SECRET)
 
-    for name in sorted(SINK_MIRRORED):
+    for name in sorted(RETURN_PATH_SCANNED):
         cap = caps[name]
         methods = _class_methods(cap)
         for op, func in cap.exports().items():
