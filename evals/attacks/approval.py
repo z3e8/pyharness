@@ -13,6 +13,9 @@ is published as one rather than left to be discovered.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from ..scoreboard import Attack, Verdict
 from ..support import (
     Approver,
@@ -26,6 +29,10 @@ from ..support import (
 )
 
 HOST = "https://example.com"
+# A real local MCP server, because a mount now connects before its second
+# approval — there is no tool surface to put to a human otherwise.
+_PYTHON = sys.executable
+_FAKE_MCP_SERVER = Path(__file__).resolve().parents[2] / "tests" / "mcp_server_fake.py"
 
 
 def _post(broker, path: str, method: str = "POST"):
@@ -128,13 +135,57 @@ def _irreversible_action_is_granted() -> Verdict:
 
 def _mounting_code_is_granted() -> Verdict:
     """Mounting an external tool server installs code the agent can then call.
-    One approval must not license the next mount."""
+    One approval must not license the next mount.
+
+    A mount asks twice — once for the connection, once for the tool surface the
+    server turns out to offer — so the human here says "always allow" to the
+    first question and yes to the second, then tries to ride that into a second
+    server. Runs a real local server: stage two cannot be reached without one."""
     from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
 
-    approver = Approver(ApprovalOutcome.GRANT, default=ApprovalOutcome.DENY)
+    approver = Approver(
+        ApprovalOutcome.GRANT,  # stage one of the first mount: "always allow"
+        ApprovalOutcome.ONCE,  # stage two of the first mount: its tool surface
+        default=ApprovalOutcome.DENY,
+    )
     with resolver(), session("mcp-mount", approver=approver) as sess:
         sess.broker.call(
-            "tools", "add_mcp_server", "first", url="http://127.0.0.1:1/mcp"
+            "tools", "add_mcp_server", "first", _PYTHON, (str(_FAKE_MCP_SERVER),)
+        )
+        must(
+            sess.registry.info("first") is not None,
+            "the first mount did not register anything, so the second refusal "
+            "may just be a broken op",
+        )
+        must(
+            approver.asked == 2,
+            f"the mount asked {approver.asked} times, not twice — the two-stage "
+            "flow is not what is under test here",
+        )
+        return refused_with(
+            lambda: sess.broker.call(
+                "tools", "add_mcp_server", "second", _PYTHON, (str(_FAKE_MCP_SERVER),)
+            ),
+            PermissionDenied,
+            "not approved",
+        )
+
+
+def _mounted_tool_surface_is_granted() -> Verdict:
+    """Stage two is the approval that says "yes, install *these* tools". If a
+    standing grant could ever cover it, one blessed mount would license the next
+    server's whole surface unseen — so it must not be grantable at all."""
+    from pyharness.broker.dispatch import ApprovalOutcome, PermissionDenied
+
+    approver = Approver(
+        ApprovalOutcome.ONCE,  # stage one: connect
+        ApprovalOutcome.GRANT,  # stage two: "always allow" a tool surface
+        ApprovalOutcome.ONCE,  # stage one of the second mount
+        default=ApprovalOutcome.DENY,  # ... and nothing left for its stage two
+    )
+    with resolver(), session("mcp-surface", approver=approver) as sess:
+        sess.broker.call(
+            "tools", "add_mcp_server", "first", _PYTHON, (str(_FAKE_MCP_SERVER),)
         )
         must(
             sess.registry.info("first") is not None,
@@ -143,7 +194,7 @@ def _mounting_code_is_granted() -> Verdict:
         )
         return refused_with(
             lambda: sess.broker.call(
-                "tools", "add_mcp_server", "second", url="http://127.0.0.1:1/mcp"
+                "tools", "add_mcp_server", "second", _PYTHON, (str(_FAKE_MCP_SERVER),)
             ),
             PermissionDenied,
             "not approved",
@@ -297,6 +348,18 @@ ATTACKS = [
             "standing approval carries over to the next."
         ),
         run=_mounting_code_is_granted,
+        control=_grant_covers_a_second_call,
+    ),
+    Attack(
+        id="grant-covers-a-mounted-tool-surface",
+        surface="approval",
+        description="get a standing approval to cover a server's tool surface",
+        property=(
+            "The second half of a mount — agreeing to the tools a server turned "
+            "out to offer — is never covered by a standing approval. Each "
+            "server's surface is seen before it is installed."
+        ),
+        run=_mounted_tool_surface_is_granted,
         control=_grant_covers_a_second_call,
     ),
     Attack(

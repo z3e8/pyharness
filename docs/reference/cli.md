@@ -32,10 +32,11 @@ pyharness [repl] [SESSION_DIR]
 - Actions that require approval print `⚠ approval required [category]: action`
   and a one-line summary of the effect (method + url + body fields, or a browser
   action with the page it lands on), then ask `allow? [y/N]`. When the action is
-  grantable (state-changing on a known host, or a `spawn`, and not irreversible),
-  it instead asks `allow? [y/a/N]` — `a` mints a session grant so all matching
-  actions flow without re-prompting: all state-changing actions of that class on
-  that host, or (for `spawn`) every sub-agent spawn this session. IRREVERSIBLE
+  grantable (state-changing on a known host, an MCP tool call, or a `spawn`, and
+  not irreversible), it instead asks `allow? [y/a/N]` — `a` mints a session grant
+  so all matching actions flow without re-prompting: all state-changing actions
+  of that class on that host, all calls to that one MCP tool as it was described
+  to you, or (for `spawn`) every sub-agent spawn this session. IRREVERSIBLE
   actions (e.g. HTTP `DELETE`) and credential steps (`fill_secret`, secret-gated
   `look`) never offer `a`. See
   [scoped grants](../explanation/security-and-audit.md#scoped-grants--approve-a-domain-not-every-click).

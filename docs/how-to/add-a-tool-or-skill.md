@@ -102,7 +102,7 @@ returns the bundled code as a module.
 
 ## Mount an MCP server
 
-Three ways in, same result — one lazily-connected tool module per server:
+Three ways in, same result — one tool module per server:
 
 1. **Config file.** Declare servers in `.mcp.json` at the repo root (or point
    `PYHARNESS_MCP_CONFIG` elsewhere); the CLI mounts them when the file exists:
@@ -130,21 +130,26 @@ Three ways in, same result — one lazily-connected tool module per server:
    its name. `timeout` (seconds) bounds each request to that server.
 2. **`pyharness-mcp add/list/rm`** edits the same file from the shell — see
    [CLI](../reference/cli.md).
-3. **`add_mcp_server(...)` in-session** (approval-gated): the agent mounts a
-   server mid-session; `save=True` persists it to the config file for later
-   sessions. See [Builtins](../reference/builtins.md).
+3. **`add_mcp_server(...)` in-session**: the agent mounts a server
+   mid-session; `save=True` persists it to the config file for later sessions.
+   This path takes **two** approvals — the connection, then the tool surface the
+   server turns out to offer — so it connects while it runs rather than lazily.
+   See [Builtins](../reference/builtins.md).
 
-Each server's tools are wrapped as one tool module named after the server,
-connected **lazily** on first `describe`/`use` — so a slow or down server never
-delays startup or browsing. In code, pass `Session(mcp_config=...)` (a path or
-a dict; a path is remembered even before the file exists so `save=True` can
+The two config-file routes wrap each server's tools as one tool module named
+after the server, connected **lazily** on first `describe`/`use` — so a slow or
+down server never delays startup or browsing. An operator put those servers in
+the file, and that provenance is what buys them a promptless connection; it does
+not extend to their tool calls. In code, pass `Session(mcp_config=...)` (a path
+or a dict; a path is remembered even before the file exists so `save=True` can
 create it).
 
 Credential values in `env`/`headers` should be vault refs (`"secret:NAME"`) —
 resolved parent-side, never visible to the agent, and the only form the save
-paths will write to disk. Calls on MCP tools are broker-gated per the server's
-declared annotations (read-only flows; anything else prompts, grantable per
-server; destructive always re-asks) — see
+paths will write to disk. However a server got mounted, calls on its
+tools are broker-gated the same way: every one prompts on first use, whatever
+the server declares about itself, and a standing approval covers that one tool
+as it was described rather than the rest of the server — see
 [Security & audit](../explanation/security-and-audit.md).
 
 ## Install a package

@@ -60,8 +60,9 @@ modules, learned skills — gate through a single funnel action, `tools.invoke`:
 `use_tool` returns them as broker-gated proxies in-process, and the
 out-of-process child reaches them the same way via its `RemoteToolSpec` proxy.
 Modules built by `as_tool_module` are marked and passed through untouched, so
-nothing gates twice. MCP calls get per-call policy from the server's declared
-annotations — see [Security & audit](security-and-audit.md).
+nothing gates twice. Every MCP call is approval-gated per tool, and what the
+server declares about itself is shown to the human rather than acted on — see
+[Security & audit](security-and-audit.md).
 
 ## Why a single seam
 

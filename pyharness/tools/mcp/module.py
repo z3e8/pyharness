@@ -39,9 +39,10 @@ def build_module(client, name: str, *, summary: str | None = None) -> ModuleType
     """Generate a module exposing one function per tool on `client`.
 
     The module carries `_mcp_tools` — `{python_name: {"name": original,
-    "annotations": {...}}}` — so gating can map a generated function back to
-    its MCP descriptor (readOnlyHint/destructiveHint) without re-asking the
-    server."""
+    "annotations": {...}}}` — so gating can map a generated function back to the
+    descriptor the server declared for it without re-asking the server. That
+    descriptor is what an approval prompt shows and what a grant is pinned to;
+    none of it decides anything on its own (see `ToolsCapability.preview`)."""
     tools = client.list_tools()
     module = ModuleType(name)
     module.__doc__ = summary or f"MCP server {name!r} ({len(tools)} tools)."

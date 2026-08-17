@@ -433,6 +433,10 @@ HIDDEN_OPS = {
     "through. It stays broker-gated (reachable via call()/call_op()) but is "
     "never bound as a builtin, so agent code cannot call it by bare name and "
     "sidestep the per-tool proxies.",
+    ("tools", "confirm_mcp_tools"): "Stage two of a mount: the approval that "
+    "puts a connected server's tool surface to the human. add_mcp_server raises "
+    "it on its own, so binding it as a builtin would only let agent code "
+    "'accept' a surface out of band. Approval-gated and never grantable.",
 }
 
 
@@ -630,6 +634,36 @@ def test_grant_scope_classification_covers_every_capability(sess):
     # vault defines the hook precisely to always decline: minting an identity
     # is never covered by a standing grant.
     assert caps["vault"].scope("create_login", (), {}) is None
+    _assert_mcp_scope_is_per_tool()
+
+
+def _assert_mcp_scope_is_per_tool():
+    """The shape of the one grant key built from data the harness does not own.
+    An MCP server names its own tools and annotates them, so the key is the
+    `server.tool` pair *plus* a pin over the descriptor the human was shown —
+    never the server alone, which would let one approval cover every other tool
+    on it. Asserted against a stand-in registry: the enumeration session holds
+    no MCP entry on purpose, and resolving one would connect a server."""
+    from types import ModuleType
+
+    from pyharness.broker.capabilities import ToolsCapability
+    from pyharness.tools.registry import Registry
+
+    registry = Registry()
+    module = ModuleType("demo")
+    module._mcp_tools = {
+        "echo": {"name": "echo", "annotations": {"readOnlyHint": True}}
+    }
+    registry.register(module, source="installed", name="demo", kind="mcp")
+    scope = ToolsCapability(registry).scope("invoke", ("demo", "echo", (), {}), {})
+    assert (scope.action_class, scope.target) == ("mcp", "demo.echo")
+    assert scope.pin
+
+    # Re-declaring the tool moves the pin, so the old grant stops matching.
+    module._mcp_tools["echo"]["annotations"] = {"destructiveHint": True}
+    assert (
+        ToolsCapability(registry).scope("invoke", ("demo", "echo", (), {}), {}) != scope
+    )
 
 
 # ---------------------------------------------------------------------------

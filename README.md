@@ -78,7 +78,7 @@ Where each mechanism stops working, and why:
 
 ### Adversarial suite
 
-50 attacks against the containment claims: **39 blocked, 11 known gaps, 0
+52 attacks against the containment claims: **42 blocked, 10 known gaps, 0
 unexpected successes.** [`evals/SCOREBOARD.md`](evals/SCOREBOARD.md) publishes
 every attack in four buckets, with the reason each gap is a design boundary
 rather than an oversight. `make test` fails if any result stops matching the
@@ -186,7 +186,7 @@ across time rather than a third-party supply chain.
 make setup     # create .env + install (once); then set ANTHROPIC_API_KEY in .env
 make run       # the agent + its live viewer → http://localhost:6061
 make test      # tests + the adversarial suite (no API key needed)
-make evals     # re-run the 50 attacks and rewrite the scoreboard
+make evals     # re-run the 52 attacks and rewrite the scoreboard
 make lint      # ruff check + format (make format applies fixes)
 ```
 

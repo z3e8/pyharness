@@ -9,14 +9,21 @@ from uuid import uuid4
 @dataclass(frozen=True)
 class GrantScope:
     """What a grant covers: one harness-defined action class on one concrete
-    target host. Built only by capabilities from the structured call (via their
+    target. Built only by capabilities from the structured call (via their
     `scope()` hook) — never from agent- or page-supplied text. Matching is exact
-    equality on both fields; there are no wildcards, so a scope can only ever be
-    minted from, and matched against, a concrete real host."""
+    equality on every field; there are no wildcards, so a scope can only ever be
+    minted from, and matched against, a concrete real target."""
 
     action_class: str  # capability-defined constant, e.g. "http" | "browser" | "mcp"
     target: str  # concrete target: a normalized lowercase hostname (http/browser)
-    # or an MCP server's registry name ("mcp") — always harness-derived
+    # or an MCP "server.tool" pair ("mcp") — always harness-derived
+    pin: str | None = None
+    # An opaque digest of the *description the human was shown*, for targets whose
+    # meaning is supplied by something outside the harness. An MCP server declares
+    # its own tool names and annotations and can change them mid-session, so the
+    # mcp scope pins them: re-declare, and the pin no longer matches, and the human
+    # is asked again rather than silently covered by an approval of the old thing.
+    # None for targets the harness derives entirely on its own (a hostname).
 
 
 @dataclass(frozen=True)

@@ -231,6 +231,12 @@ def test_grant_offer_reads_naturally_for_each_scope():
         _grant_offer(GrantScope("http", "api.example.com"))
         == "all state-changing HTTP requests on api.example.com this session"
     )
+    # An MCP grant covers one tool, and the offer has to say so — "all calls to
+    # demo" would be an offer of something the human is not being given.
+    assert (
+        _grant_offer(GrantScope("mcp", "demo.echo", pin="abc123"))
+        == "all calls to this MCP tool (demo.echo) this session"
+    )
 
 
 def test_approve_spawn_offers_and_honors_session_grant(monkeypatch, capsys):
