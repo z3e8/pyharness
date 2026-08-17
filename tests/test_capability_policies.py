@@ -692,9 +692,12 @@ def test_secret_sink_classification_covers_every_capability(sess):
     vault without wiring the mirror (the open per-capability-discipline seam
     from the 2026-07-28 recon note) fails here. Scope: this asserts the
     *wiring* — that every mask reaches the session-wide sink, which is what the
-    exception path and cell output redact through. That each success result is
-    itself routed through a sink is the separate property
-    test_every_sink_mirrored_op_redacts_its_result asserts, op by op."""
+    exception path and cell output redact through. Success results are a
+    separate property, asserted two ways: masked at the source, op by op, for
+    the capabilities that compose a result out of remote content
+    (test_every_sink_mirrored_op_redacts_its_result), and masked centrally at
+    the pipe for every result whoever wrote it — which is what covers `tools`,
+    whose only credential-bearing result comes from someone else's process."""
     caps = _caps(sess)
     vault_holding = {
         name
